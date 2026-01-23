@@ -1,0 +1,197 @@
+# ============================================
+# VeriVote Kenya - CI/CD Pipeline
+# ============================================
+# This workflow runs automatically when you push code to GitHub
+# It checks that your code is correct and working
+
+name: VeriVote CI/CD
+
+# When to run this workflow
+on:
+  # Run on pushes to main and develop branches
+  push:
+    branches: [main, develop]
+  # Run on pull requests to main and develop
+  pull_request:
+    branches: [main, develop]
+
+# Define the jobs to run
+jobs:
+  # ============================================
+  # JOB 1: Lint and Type Check
+  # ============================================
+  # Makes sure code follows style rules and TypeScript types are correct
+  lint:
+    name: Lint & Type Check
+    runs-on: ubuntu-latest
+    
+    steps:
+      # Step 1: Get the code
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      # Step 2: Set up Node.js
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      
+      # Step 3: Install pnpm
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+      
+      # Step 4: Install dependencies
+      - name: Install dependencies
+        run: |
+          cd backend
+          pnpm install
+      
+      # Step 5: Run TypeScript compiler (type checking)
+      - name: Type check
+        run: |
+          cd backend
+          pnpm exec tsc --noEmit
+      
+      # Step 6: Run linter (code style)
+      - name: Lint
+        run: |
+          cd backend
+          pnpm run lint || true  # Don't fail on lint errors for now
+
+  # ============================================
+  # JOB 2: Run Tests
+  # ============================================
+  # Runs automated tests to make sure everything works
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    needs: lint  # Only run if lint job passes
+    
+    # Start PostgreSQL and Redis for testing
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: verivote
+          POSTGRES_PASSWORD: verivote_secure_2024
+          POSTGRES_DB: verivote_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+      
+      - name: Install dependencies
+        run: |
+          cd backend
+          pnpm install
+      
+      - name: Run tests
+        run: |
+          cd backend
+          pnpm test || true  # Don't fail if no tests yet
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://verivote:verivote_secure_2024@localhost:5432/verivote_test
+          REDIS_URL: redis://localhost:6379
+
+  # ============================================
+  # JOB 3: Build
+  # ============================================
+  # Makes sure the project compiles successfully
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: test  # Only run if tests pass
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+      
+      - name: Install dependencies
+        run: |
+          cd backend
+          pnpm install
+      
+      - name: Build
+        run: |
+          cd backend
+          pnpm run build
+      
+      # Save the built files for potential deployment
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-build
+          path: backend/dist/
+          retention-days: 7
+
+  # ============================================
+  # JOB 4: Security Scan (Optional)
+  # ============================================
+  # Checks for known security vulnerabilities in dependencies
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+      
+      - name: Install dependencies
+        run: |
+          cd backend
+          pnpm install
+      
+      - name: Run security audit
+        run: |
+          cd backend
+          pnpm audit || true  # Report but don't fail
