@@ -1,0 +1,31 @@
+{
+  "name": "verivote-kenya",
+  "version": "0.1.0",
+  "description": "Hybrid Electronic Voting System for Kenya - Secure, Transparent, Verifiable",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --filter backend dev",
+    "build": "pnpm --filter backend build",
+    "start": "pnpm --filter backend start",
+    "test": "pnpm --filter backend test",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f",
+    "db:migrate": "pnpm --filter backend db:migrate",
+    "db:seed": "pnpm --filter backend db:seed"
+  },
+  "keywords": [
+    "voting",
+    "election",
+    "blockchain",
+    "kenya",
+    "democracy",
+    "e-voting"
+  ],
+  "author": "VeriVote Kenya Team",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=8.0.0"
+  }
+}

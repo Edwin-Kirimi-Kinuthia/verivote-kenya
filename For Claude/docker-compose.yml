@@ -1,0 +1,48 @@
+# Docker Compose configuration for VeriVote Kenya
+# This file defines the database services needed for development
+
+services:
+  # PostgreSQL Database
+  # Stores: voters, polling stations, votes (encrypted), audit logs
+  postgres:
+    image: postgres:16-alpine
+    container_name: verivote-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: verivote
+      POSTGRES_PASSWORD: verivote_secure_2024
+      POSTGRES_DB: verivote_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./backend/src/database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U verivote -d verivote_dev"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache
+  # Used for: session management, rate limiting, real-time vote counts
+  redis:
+    image: redis:7-alpine
+    container_name: verivote-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+# Named volumes persist data even when containers are stopped
+volumes:
+  postgres-data:
+    name: verivote-postgres-data
+  redis-data:
+    name: verivote-redis-data
