@@ -1,53 +1,23 @@
 /**
  * VeriVote Kenya - Main Server Entry Point
  * =========================================
- * 
- * This is the main file that starts our backend server.
- * Think of it as the "front door" of our application.
- * 
- * What this file does:
- * 1. Loads environment variables (secrets, configuration)
- * 2. Creates an Express application (our web server)
- * 3. Sets up middleware (security, logging, JSON parsing)
- * 4. Defines API routes (endpoints that the frontend will call)
- * 5. Starts listening for requests
  */
 
-// ============================================
-// IMPORTS
-// ============================================
-
-// dotenv: Loads variables from .env file into process.env
-// This keeps secrets (passwords, API keys) out of our code
 import dotenv from 'dotenv';
 dotenv.config();
 
-// express: The web framework that handles HTTP requests
-// Think of it as the "waiter" that takes orders (requests) and brings food (responses)
-import express, { Request, Response, NextFunction } from 'express';
-
-// cors: Allows our API to be called from different domains (like our frontend)
-// Without this, browsers block requests from different origins for security
+import express, { Express, Request, Response, NextFunction } from 'express';
 import cors from 'cors';
-
-// helmet: Adds security headers to protect against common web vulnerabilities
-// It's like putting a helmet on your server!
 import helmet from 'helmet';
-
-// morgan: Logs every HTTP request (useful for debugging)
-// Shows: GET /api/voters 200 15ms
 import morgan from 'morgan';
 
 // ============================================
 // CREATE EXPRESS APPLICATION
 // ============================================
 
-const app = express();
+const app: Express = express();
 
-// Get port from environment variable or use 3000 as default
 const PORT = process.env.PORT || 3000;
-
-// ============================================
 // MIDDLEWARE SETUP
 // ============================================
 // Middleware = functions that run on EVERY request before reaching your routes
@@ -83,7 +53,7 @@ if (process.env.NODE_ENV !== 'production') {
 // This simple endpoint lets us verify the server is running
 // Used by Docker, load balancers, and monitoring tools
 
-app.get('/health', (req: Request, res: Response) => {
+app.get('/health', (_req: Request, res: Response) => {
   res.status(200).json({
     status: 'healthy',
     timestamp: new Date().toISOString(),
@@ -98,7 +68,7 @@ app.get('/health', (req: Request, res: Response) => {
 // We'll add more routes in separate files as the project grows
 
 // Root route - API information
-app.get('/', (req: Request, res: Response) => {
+app.get('/', (_req: Request, res: Response) => {
   res.json({
     name: 'VeriVote Kenya API',
     version: '0.1.0',
@@ -113,7 +83,7 @@ app.get('/', (req: Request, res: Response) => {
 });
 
 // Placeholder for voter routes (we'll implement these in Week 2)
-app.get('/api/voters', (req: Request, res: Response) => {
+app.get('/api/voters', (_req: Request, res: Response) => {
   res.json({
     message: 'Voter endpoints coming soon!',
     planned_endpoints: [
@@ -139,7 +109,9 @@ app.use((req: Request, res: Response) => {
 });
 
 // Global error handler
-app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
+// Note: _next is prefixed with underscore because it's required by Express
+// but we don't use it in this function
+app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   console.error('Error:', err.message);
   
   res.status(500).json({
