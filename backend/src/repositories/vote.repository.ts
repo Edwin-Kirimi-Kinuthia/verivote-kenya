@@ -1,20 +1,9 @@
 /**
- * ============================================================================
  * VeriVote Kenya - Vote Repository
- * ============================================================================
- * 
- * Handles all database operations for votes.
- * 
- * KEY PRIVACY PRINCIPLE:
- * Votes are NEVER linked to voters in the database. We link to polling
- * stations (for logistics) but not to individual voters (for anonymity).
- * 
- * ============================================================================
  */
 
 import { prisma } from '../database/client.js';
 import { BaseRepository } from './base.repository.js';
-import { VoteStatus } from '@prisma/client';
 import type {
   Vote,
   CreateVoteInput,
@@ -24,18 +13,15 @@ import type {
   VoteWithStation,
   VoteWithPrintStatus,
   PaginatedResponse,
+  VoteStatus,
 } from '../types/database.types.js';
 
 export class VoteRepository extends BaseRepository<Vote, CreateVoteInput, UpdateVoteInput> {
   
-  // ==========================================================================
-  // BASIC CRUD
-  // ==========================================================================
-
   async findById(id: string): Promise<Vote | null> {
     return prisma.vote.findUnique({
       where: { id },
-    });
+    }) as Promise<Vote | null>;
   }
 
   async findByIdWithDetails(id: string): Promise<VoteWithPrintStatus | null> {
@@ -45,33 +31,25 @@ export class VoteRepository extends BaseRepository<Vote, CreateVoteInput, Update
         pollingStation: true,
         printQueue: true,
       },
-    });
+    }) as Promise<VoteWithPrintStatus | null>;
   }
 
-  /**
-   * Find vote by serial number (for voter verification)
-   * 
-   * This is how voters verify their vote was recorded:
-   * They enter their serial number and see the vote status.
-   */
   async findBySerialNumber(serialNumber: string): Promise<Vote | null> {
     return prisma.vote.findUnique({
       where: { serialNumber },
-    });
+    }) as Promise<Vote | null>;
   }
 
-  /**
-   * Find vote by blockchain transaction hash
-   */
   async findByTxHash(blockchainTxHash: string): Promise<Vote | null> {
     return prisma.vote.findFirst({
       where: { blockchainTxHash },
-    });
+    }) as Promise<Vote | null>;
   }
 
   async findMany(params: VoteQueryParams = {}): Promise<PaginatedResponse<Vote>> {
     const { page, limit, skip } = this.getPagination(params);
     
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const where: any = {};
     
     if (params.status) {
@@ -82,7 +60,6 @@ export class VoteRepository extends BaseRepository<Vote, CreateVoteInput, Update
       where.pollingStationId = params.pollingStationId;
     }
     
-    // Date range filter
     if (params.fromDate || params.toDate) {
       where.timestamp = {};
       if (params.fromDate) where.timestamp.gte = params.fromDate;
@@ -90,7 +67,7 @@ export class VoteRepository extends BaseRepository<Vote, CreateVoteInput, Update
     }
     
     if (params.confirmedOnly) {
-      where.status = VoteStatus.CONFIRMED;
+      where.status = 'CONFIRMED';
     }
 
     const [data, total] = await Promise.all([
@@ -103,7 +80,7 @@ export class VoteRepository extends BaseRepository<Vote, CreateVoteInput, Update
       prisma.vote.count({ where }),
     ]);
 
-    return this.buildPaginatedResponse(data, total, page, limit);
+    return this.buildPaginatedResponse(data as Vote[], total, page, limit);
   }
 
   async findByPollingStation(
@@ -112,6 +89,7 @@ export class VoteRepository extends BaseRepository<Vote, CreateVoteInput, Update
   ): Promise<PaginatedResponse<VoteWithStation>> {
     const { page, limit, skip } = this.getPagination(params);
     
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const where: any = { pollingStationId };
     if (params.status) where.status = params.status;
 
@@ -126,7 +104,7 @@ export class VoteRepository extends BaseRepository<Vote, CreateVoteInput, Update
       prisma.vote.count({ where }),
     ]);
 
-    return this.buildPaginatedResponse(data, total, page, limit);
+    return this.buildPaginatedResponse(data as VoteWithStation[], total, page, limit);
   }
 
   async create(data: CreateVoteInput): Promise<Vote> {
@@ -139,35 +117,26 @@ export class VoteRepository extends BaseRepository<Vote, CreateVoteInput, Update
         pollingStationId: data.pollingStationId,
         previousVoteId: data.previousVoteId,
       },
-    });
+    }) as Promise<Vote>;
   }
 
   async update(id: string, data: UpdateVoteInput): Promise<Vote> {
     return prisma.vote.update({
       where: { id },
       data,
-    });
+    }) as Promise<Vote>;
   }
 
   async delete(id: string): Promise<Vote> {
     return prisma.vote.delete({
       where: { id },
-    });
+    }) as Promise<Vote>;
   }
 
   async count(): Promise<number> {
     return prisma.vote.count();
   }
 
-  // ==========================================================================
-  // BLOCKCHAIN OPERATIONS
-  // ==========================================================================
-
-  /**
-   * Confirm vote was recorded on blockchain
-   * 
-   * Call this after the blockchain transaction is confirmed.
-   */
   async confirmOnBlockchain(
     id: string,
     txHash: string,
@@ -179,53 +148,36 @@ export class VoteRepository extends BaseRepository<Vote, CreateVoteInput, Update
         blockchainTxHash: txHash,
         blockNumber,
         confirmedAt: new Date(),
-        status: VoteStatus.CONFIRMED,
+        status: 'CONFIRMED',
       },
-    });
+    }) as Promise<Vote>;
   }
 
-  /**
-   * Get votes pending blockchain submission
-   */
   async getPendingVotes(limit = 100): Promise<Vote[]> {
     return prisma.vote.findMany({
-      where: { status: VoteStatus.PENDING },
+      where: { status: 'PENDING' },
       take: limit,
-      orderBy: { timestamp: 'asc' },  // Oldest first (FIFO)
-    });
+      orderBy: { timestamp: 'asc' },
+    }) as Promise<Vote[]>;
   }
 
-  // ==========================================================================
-  // REVOTE OPERATIONS
-  // ==========================================================================
-
-  /**
-   * Mark a vote as superseded (replaced by revote)
-   */
   async markSuperseded(id: string): Promise<Vote> {
     return prisma.vote.update({
       where: { id },
-      data: { status: VoteStatus.SUPERSEDED },
-    });
+      data: { status: 'SUPERSEDED' },
+    }) as Promise<Vote>;
   }
 
-  /**
-   * Cast a revote (new vote replaces old)
-   * 
-   * This uses a transaction to ensure both operations succeed or fail together.
-   */
   async castRevote(
     previousVoteId: string,
     newVoteData: Omit<CreateVoteInput, 'previousVoteId'>
   ): Promise<{ newVote: Vote; previousVote: Vote }> {
     return prisma.$transaction(async (tx) => {
-      // Mark previous vote as superseded
       const previousVote = await tx.vote.update({
         where: { id: previousVoteId },
-        data: { status: VoteStatus.SUPERSEDED },
+        data: { status: 'SUPERSEDED' },
       });
 
-      // Create new vote linking to previous
       const newVote = await tx.vote.create({
         data: {
           ...newVoteData,
@@ -233,24 +185,10 @@ export class VoteRepository extends BaseRepository<Vote, CreateVoteInput, Update
         },
       });
 
-      return { newVote, previousVote };
+      return { newVote: newVote as Vote, previousVote: previousVote as Vote };
     });
   }
 
-  // ==========================================================================
-  // VERIFICATION
-  // ==========================================================================
-
-  /**
-   * Verify a vote by serial number (public API)
-   * 
-   * Returns minimal info for voter verification:
-   * - Does the vote exist?
-   * - What's its status?
-   * - When was it confirmed?
-   * 
-   * Does NOT return the actual vote content (it's encrypted anyway).
-   */
   async verifyBySerialNumber(serialNumber: string): Promise<{
     exists: boolean;
     status?: VoteStatus;
@@ -272,15 +210,11 @@ export class VoteRepository extends BaseRepository<Vote, CreateVoteInput, Update
 
     return {
       exists: true,
-      status: vote.status,
+      status: vote.status as VoteStatus,
       confirmedAt: vote.confirmedAt,
       blockchainTxHash: vote.blockchainTxHash,
     };
   }
-
-  // ==========================================================================
-  // STATISTICS
-  // ==========================================================================
 
   async getStats(): Promise<VoteStats> {
     const [total, statusCounts] = await Promise.all([
@@ -300,16 +234,16 @@ export class VoteRepository extends BaseRepository<Vote, CreateVoteInput, Update
 
     for (const item of statusCounts) {
       switch (item.status) {
-        case VoteStatus.PENDING:
+        case 'PENDING':
           byStatus.pending = item._count;
           break;
-        case VoteStatus.CONFIRMED:
+        case 'CONFIRMED':
           byStatus.confirmed = item._count;
           break;
-        case VoteStatus.SUPERSEDED:
+        case 'SUPERSEDED':
           byStatus.superseded = item._count;
           break;
-        case VoteStatus.INVALIDATED:
+        case 'INVALIDATED':
           byStatus.invalidated = item._count;
           break;
       }
@@ -322,19 +256,12 @@ export class VoteRepository extends BaseRepository<Vote, CreateVoteInput, Update
     };
   }
 
-  /**
-   * Get voting activity over time
-   * 
-   * Useful for:
-   * - Detecting unusual patterns (AI fraud detection)
-   * - Dashboard charts
-   * - Capacity planning
-   */
   async getVotesPerHour(
     fromDate: Date,
     toDate: Date,
     pollingStationId?: string
   ): Promise<{ hour: Date; count: number }[]> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const where: any = {
       timestamp: { gte: fromDate, lte: toDate },
     };
@@ -348,7 +275,6 @@ export class VoteRepository extends BaseRepository<Vote, CreateVoteInput, Update
       select: { timestamp: true },
     });
 
-    // Group by hour
     const hourMap = new Map<string, number>();
     for (const vote of votes) {
       const hourKey = new Date(vote.timestamp).toISOString().slice(0, 13) + ':00:00.000Z';
