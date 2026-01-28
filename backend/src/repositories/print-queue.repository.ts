@@ -2,21 +2,11 @@
  * ============================================================================
  * VeriVote Kenya - Print Queue Repository
  * ============================================================================
- * 
- * Manages the centralized ballot printing queue.
- * 
- * The system prints paper ballots AFTER the election as an audit trail.
- * This allows:
- * - Manual recounts if needed
- * - Verification by election observers
- * - Paper backup of the digital record
- * 
- * ============================================================================
  */
 
 import { prisma } from '../database/client.js';
 import { BaseRepository } from './base.repository.js';
-import { PrintStatus } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import type {
   PrintQueue,
   CreatePrintQueueInput,
@@ -50,7 +40,7 @@ export class PrintQueueRepository extends BaseRepository<
         vote: true,
         pollingStation: true,
       },
-    });
+    }) as Promise<PrintQueueWithDetails | null>;
   }
 
   async findByVoteId(voteId: string): Promise<PrintQueue | null> {
@@ -68,7 +58,7 @@ export class PrintQueueRepository extends BaseRepository<
   async findMany(params: PrintQueueQueryParams = {}): Promise<PaginatedResponse<PrintQueue>> {
     const { page, limit, skip } = this.getPagination(params);
     
-    const where: any = {};
+    const where: Prisma.PrintQueueWhereInput = {};
     if (params.status) where.status = params.status;
     if (params.pollingStationId) where.pollingStationId = params.pollingStationId;
     if (params.printerId) where.printerId = params.printerId;
@@ -79,8 +69,8 @@ export class PrintQueueRepository extends BaseRepository<
         skip,
         take: limit,
         orderBy: [
-          { priority: 'desc' },   // High priority first
-          { createdAt: 'asc' },   // Then oldest first (FIFO)
+          { priority: 'desc' },
+          { createdAt: 'asc' },
         ],
       }),
       prisma.printQueue.count({ where }),
@@ -95,7 +85,7 @@ export class PrintQueueRepository extends BaseRepository<
   ): Promise<PaginatedResponse<PrintQueueWithDetails>> {
     const { page, limit, skip } = this.getPagination(params);
     
-    const where: any = { pollingStationId };
+    const where: Prisma.PrintQueueWhereInput = { pollingStationId };
     if (params.status) where.status = params.status;
 
     const [data, total] = await Promise.all([
@@ -109,7 +99,7 @@ export class PrintQueueRepository extends BaseRepository<
       prisma.printQueue.count({ where }),
     ]);
 
-    return this.buildPaginatedResponse(data, total, page, limit);
+    return this.buildPaginatedResponse(data as PrintQueueWithDetails[], total, page, limit);
   }
 
   async create(data: CreatePrintQueueInput): Promise<PrintQueue> {
@@ -143,18 +133,9 @@ export class PrintQueueRepository extends BaseRepository<
   // PRINT JOB OPERATIONS
   // ==========================================================================
 
-  /**
-   * Get the next print job for a printer
-   * 
-   * 1. Finds highest priority pending job
-   * 2. Marks it as PRINTING
-   * 3. Assigns the printer ID
-   * 
-   * Called by printer service when ready for next job.
-   */
   async getNextJob(printerId: string): Promise<PrintQueueWithDetails | null> {
     const job = await prisma.printQueue.findFirst({
-      where: { status: PrintStatus.PENDING },
+      where: { status: 'PENDING' },
       orderBy: [
         { priority: 'desc' },
         { createdAt: 'asc' },
@@ -169,24 +150,21 @@ export class PrintQueueRepository extends BaseRepository<
       await prisma.printQueue.update({
         where: { id: job.id },
         data: {
-          status: PrintStatus.PRINTING,
+          status: 'PRINTING',
           printerId,
           printAttempts: { increment: 1 },
         },
       });
     }
 
-    return job;
+    return job as PrintQueueWithDetails | null;
   }
 
-  /**
-   * Mark job as successfully printed
-   */
   async markPrinted(id: string, ballotNumber: string, qrCodeData: string): Promise<PrintQueue> {
     return prisma.printQueue.update({
       where: { id },
       data: {
-        status: PrintStatus.PRINTED,
+        status: 'PRINTED',
         printedAt: new Date(),
         ballotNumber,
         qrCodeData,
@@ -194,26 +172,20 @@ export class PrintQueueRepository extends BaseRepository<
     });
   }
 
-  /**
-   * Mark job as failed
-   * 
-   * If under max attempts, resets to PENDING for retry.
-   * If at max attempts, stays FAILED.
-   */
   async markFailed(id: string, error: string): Promise<PrintQueue> {
     const job = await prisma.printQueue.findUnique({ where: { id } });
     const maxAttempts = 3;
     
     const newStatus = (job?.printAttempts || 0) >= maxAttempts
-      ? PrintStatus.FAILED
-      : PrintStatus.PENDING;
+      ? 'FAILED'
+      : 'PENDING';
 
     return prisma.printQueue.update({
       where: { id },
       data: {
         status: newStatus,
         lastError: error,
-        printerId: newStatus === PrintStatus.PENDING ? null : undefined,
+        printerId: newStatus === 'PENDING' ? null : undefined,
       },
     });
   }
@@ -221,7 +193,7 @@ export class PrintQueueRepository extends BaseRepository<
   async cancel(id: string): Promise<PrintQueue> {
     return prisma.printQueue.update({
       where: { id },
-      data: { status: PrintStatus.CANCELLED },
+      data: { status: 'CANCELLED' },
     });
   }
 
@@ -229,7 +201,7 @@ export class PrintQueueRepository extends BaseRepository<
     return prisma.printQueue.update({
       where: { id },
       data: {
-        status: PrintStatus.PENDING,
+        status: 'PENDING',
         lastError: null,
         printerId: null,
       },
@@ -245,26 +217,20 @@ export class PrintQueueRepository extends BaseRepository<
 
   async getPendingCount(): Promise<number> {
     return prisma.printQueue.count({
-      where: { status: PrintStatus.PENDING },
+      where: { status: 'PENDING' },
     });
   }
 
-  /**
-   * Reset jobs stuck in PRINTING state
-   * 
-   * Called periodically to handle crashed printers.
-   * Jobs in PRINTING for too long are reset to PENDING.
-   */
   async resetStuckJobs(stuckThresholdMinutes = 5): Promise<number> {
     const threshold = new Date(Date.now() - stuckThresholdMinutes * 60 * 1000);
 
     const result = await prisma.printQueue.updateMany({
       where: {
-        status: PrintStatus.PRINTING,
+        status: 'PRINTING',
         updatedAt: { lt: threshold },
       },
       data: {
-        status: PrintStatus.PENDING,
+        status: 'PENDING',
         printerId: null,
       },
     });
@@ -272,11 +238,6 @@ export class PrintQueueRepository extends BaseRepository<
     return result.count;
   }
 
-  /**
-   * Bulk add votes to print queue
-   * 
-   * Used after election ends to queue all votes for printing.
-   */
   async bulkCreate(
     voteIds: string[],
     pollingStationId: string,
@@ -290,7 +251,7 @@ export class PrintQueueRepository extends BaseRepository<
 
     const result = await prisma.printQueue.createMany({
       data,
-      skipDuplicates: true,  // Don't fail if vote already queued
+      skipDuplicates: true,
     });
 
     return result.count;
@@ -318,21 +279,22 @@ export class PrintQueueRepository extends BaseRepository<
     };
 
     for (const item of statusCounts) {
-      switch (item.status) {
-        case PrintStatus.PENDING:
-          byStatus.pending = item._count;
+      const statusItem = item as { status: string; _count: number };
+      switch (statusItem.status) {
+        case 'PENDING':
+          byStatus.pending = statusItem._count;
           break;
-        case PrintStatus.PRINTING:
-          byStatus.printing = item._count;
+        case 'PRINTING':
+          byStatus.printing = statusItem._count;
           break;
-        case PrintStatus.PRINTED:
-          byStatus.printed = item._count;
+        case 'PRINTED':
+          byStatus.printed = statusItem._count;
           break;
-        case PrintStatus.FAILED:
-          byStatus.failed = item._count;
+        case 'FAILED':
+          byStatus.failed = statusItem._count;
           break;
-        case PrintStatus.CANCELLED:
-          byStatus.cancelled = item._count;
+        case 'CANCELLED':
+          byStatus.cancelled = statusItem._count;
           break;
       }
     }

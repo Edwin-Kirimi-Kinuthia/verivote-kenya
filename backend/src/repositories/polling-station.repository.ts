@@ -2,16 +2,11 @@
  * ============================================================================
  * VeriVote Kenya - Polling Station Repository
  * ============================================================================
- * 
- * Handles database operations for polling stations.
- * Kenya has ~46,000 polling stations organized as:
- * County (47) > Constituency (290) > Ward (~1,450) > Polling Station
- * 
- * ============================================================================
  */
 
 import { prisma } from '../database/client.js';
 import { BaseRepository } from './base.repository.js';
+import type { Prisma } from '@prisma/client';
 import type {
   PollingStation,
   CreatePollingStationInput,
@@ -37,9 +32,6 @@ export class PollingStationRepository extends BaseRepository<
     });
   }
 
-  /**
-   * Find polling station by its unique code (e.g., "NAI-WL-001")
-   */
   async findByCode(code: string): Promise<PollingStation | null> {
     return prisma.pollingStation.findUnique({
       where: { code },
@@ -49,7 +41,7 @@ export class PollingStationRepository extends BaseRepository<
   async findMany(params: PollingStationQueryParams = {}): Promise<PaginatedResponse<PollingStation>> {
     const { page, limit, skip } = this.getPagination(params);
     
-    const where: any = {};
+    const where: Prisma.PollingStationWhereInput = {};
     
     if (params.county) where.county = params.county;
     if (params.constituency) where.constituency = params.constituency;
@@ -69,10 +61,6 @@ export class PollingStationRepository extends BaseRepository<
     return this.buildPaginatedResponse(data, total, page, limit);
   }
 
-  /**
-   * Get all active polling stations (no pagination)
-   * Used for dropdowns and selection lists
-   */
   async findActive(): Promise<PollingStation[]> {
     return prisma.pollingStation.findMany({
       where: { isActive: true },
@@ -162,22 +150,15 @@ export class PollingStationRepository extends BaseRepository<
   // LOCATION LOOKUPS
   // ==========================================================================
 
-  /**
-   * Get unique list of all counties
-   * Used for filtering dropdowns
-   */
   async getCounties(): Promise<string[]> {
     const result = await prisma.pollingStation.findMany({
       select: { county: true },
       distinct: ['county'],
       orderBy: { county: 'asc' },
     });
-    return result.map((r) => r.county);
+    return result.map((r: { county: string }) => r.county);
   }
 
-  /**
-   * Get constituencies in a county
-   */
   async getConstituenciesByCounty(county: string): Promise<string[]> {
     const result = await prisma.pollingStation.findMany({
       where: { county },
@@ -185,12 +166,9 @@ export class PollingStationRepository extends BaseRepository<
       distinct: ['constituency'],
       orderBy: { constituency: 'asc' },
     });
-    return result.map((r) => r.constituency);
+    return result.map((r: { constituency: string }) => r.constituency);
   }
 
-  /**
-   * Get wards in a constituency
-   */
   async getWardsByConstituency(constituency: string): Promise<string[]> {
     const result = await prisma.pollingStation.findMany({
       where: { constituency },
@@ -198,7 +176,7 @@ export class PollingStationRepository extends BaseRepository<
       distinct: ['ward'],
       orderBy: { ward: 'asc' },
     });
-    return result.map((r) => r.ward);
+    return result.map((r: { ward: string }) => r.ward);
   }
 
   async codeExists(code: string): Promise<boolean> {
@@ -234,15 +212,17 @@ export class PollingStationRepository extends BaseRepository<
       _count: true,
     });
 
-    const stationVoteMap = new Map(
-      votesByStation.map((v) => [v.pollingStationId, v._count])
+    const stationVoteMap = new Map<string, number>(
+      votesByStation.map((v: { pollingStationId: string; _count: number }) => [v.pollingStationId, v._count])
     );
 
     const stations = await prisma.pollingStation.findMany({
       select: { id: true, county: true },
     });
 
-    const stationCountyMap = new Map(stations.map((s) => [s.id, s.county]));
+    const stationCountyMap = new Map<string, string>(
+      stations.map((s: { id: string; county: string }) => [s.id, s.county])
+    );
 
     const votesByCounty = new Map<string, number>();
     for (const [stationId, voteCount] of stationVoteMap) {
@@ -252,10 +232,10 @@ export class PollingStationRepository extends BaseRepository<
       }
     }
 
-    const totalVotes = Array.from(votesByCounty.values()).reduce((a, b) => a + b, 0);
+    const totalVotes = Array.from(votesByCounty.values()).reduce((a: number, b: number) => a + b, 0);
     const totalRegistered = stationStats._sum.registeredVoters || 0;
 
-    const byCounty = countyStats.map((cs) => {
+    const byCounty = countyStats.map((cs: { county: string; _count: number; _sum: { registeredVoters: number | null } }) => {
       const votes = votesByCounty.get(cs.county) || 0;
       const voters = cs._sum.registeredVoters || 0;
       return {
@@ -279,9 +259,6 @@ export class PollingStationRepository extends BaseRepository<
     };
   }
 
-  /**
-   * Get turnout per station (for dashboard table)
-   */
   async getTurnoutByStation(): Promise<{
     stationId: string;
     code: string;
@@ -301,7 +278,7 @@ export class PollingStationRepository extends BaseRepository<
       },
     });
 
-    return stations.map((s) => ({
+    return stations.map((s: { id: string; code: string; name: string; registeredVoters: number; _count: { votes: number } }) => ({
       stationId: s.id,
       code: s.code,
       name: s.name,
