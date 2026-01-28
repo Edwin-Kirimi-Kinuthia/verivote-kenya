@@ -1,12 +1,9 @@
 /**
- * ============================================================================
  * VeriVote Kenya - Polling Station Repository
- * ============================================================================
  */
 
 import { prisma } from '../database/client.js';
 import { BaseRepository } from './base.repository.js';
-import type { Prisma } from '@prisma/client';
 import type {
   PollingStation,
   CreatePollingStationInput,
@@ -22,26 +19,23 @@ export class PollingStationRepository extends BaseRepository<
   UpdatePollingStationInput
 > {
   
-  // ==========================================================================
-  // BASIC CRUD
-  // ==========================================================================
-
   async findById(id: string): Promise<PollingStation | null> {
     return prisma.pollingStation.findUnique({
       where: { id },
-    });
+    }) as Promise<PollingStation | null>;
   }
 
   async findByCode(code: string): Promise<PollingStation | null> {
     return prisma.pollingStation.findUnique({
       where: { code },
-    });
+    }) as Promise<PollingStation | null>;
   }
 
   async findMany(params: PollingStationQueryParams = {}): Promise<PaginatedResponse<PollingStation>> {
     const { page, limit, skip } = this.getPagination(params);
     
-    const where: Prisma.PollingStationWhereInput = {};
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const where: any = {};
     
     if (params.county) where.county = params.county;
     if (params.constituency) where.constituency = params.constituency;
@@ -58,28 +52,28 @@ export class PollingStationRepository extends BaseRepository<
       prisma.pollingStation.count({ where }),
     ]);
 
-    return this.buildPaginatedResponse(data, total, page, limit);
+    return this.buildPaginatedResponse(data as PollingStation[], total, page, limit);
   }
 
   async findActive(): Promise<PollingStation[]> {
     return prisma.pollingStation.findMany({
       where: { isActive: true },
       orderBy: { code: 'asc' },
-    });
+    }) as Promise<PollingStation[]>;
   }
 
   async findByCounty(county: string): Promise<PollingStation[]> {
     return prisma.pollingStation.findMany({
       where: { county, isActive: true },
       orderBy: { code: 'asc' },
-    });
+    }) as Promise<PollingStation[]>;
   }
 
   async findByConstituency(constituency: string): Promise<PollingStation[]> {
     return prisma.pollingStation.findMany({
       where: { constituency, isActive: true },
       orderBy: { code: 'asc' },
-    });
+    }) as Promise<PollingStation[]>;
   }
 
   async create(data: CreatePollingStationInput): Promise<PollingStation> {
@@ -97,42 +91,38 @@ export class PollingStationRepository extends BaseRepository<
         deviceCount: data.deviceCount || 0,
         printerCount: data.printerCount || 0,
       },
-    });
+    }) as Promise<PollingStation>;
   }
 
   async update(id: string, data: UpdatePollingStationInput): Promise<PollingStation> {
     return prisma.pollingStation.update({
       where: { id },
       data,
-    });
+    }) as Promise<PollingStation>;
   }
 
   async delete(id: string): Promise<PollingStation> {
     return prisma.pollingStation.delete({
       where: { id },
-    });
+    }) as Promise<PollingStation>;
   }
 
   async count(): Promise<number> {
     return prisma.pollingStation.count();
   }
 
-  // ==========================================================================
-  // STATUS MANAGEMENT
-  // ==========================================================================
-
   async activate(id: string): Promise<PollingStation> {
     return prisma.pollingStation.update({
       where: { id },
       data: { isActive: true },
-    });
+    }) as Promise<PollingStation>;
   }
 
   async deactivate(id: string): Promise<PollingStation> {
     return prisma.pollingStation.update({
       where: { id },
       data: { isActive: false },
-    });
+    }) as Promise<PollingStation>;
   }
 
   async setOperatingHours(
@@ -143,12 +133,8 @@ export class PollingStationRepository extends BaseRepository<
     return prisma.pollingStation.update({
       where: { id },
       data: { openingTime, closingTime },
-    });
+    }) as Promise<PollingStation>;
   }
-
-  // ==========================================================================
-  // LOCATION LOOKUPS
-  // ==========================================================================
 
   async getCounties(): Promise<string[]> {
     const result = await prisma.pollingStation.findMany({
@@ -156,7 +142,7 @@ export class PollingStationRepository extends BaseRepository<
       distinct: ['county'],
       orderBy: { county: 'asc' },
     });
-    return result.map((r: { county: string }) => r.county);
+    return result.map((r) => r.county);
   }
 
   async getConstituenciesByCounty(county: string): Promise<string[]> {
@@ -166,7 +152,7 @@ export class PollingStationRepository extends BaseRepository<
       distinct: ['constituency'],
       orderBy: { constituency: 'asc' },
     });
-    return result.map((r: { constituency: string }) => r.constituency);
+    return result.map((r) => r.constituency);
   }
 
   async getWardsByConstituency(constituency: string): Promise<string[]> {
@@ -176,17 +162,13 @@ export class PollingStationRepository extends BaseRepository<
       distinct: ['ward'],
       orderBy: { ward: 'asc' },
     });
-    return result.map((r: { ward: string }) => r.ward);
+    return result.map((r) => r.ward);
   }
 
   async codeExists(code: string): Promise<boolean> {
     const count = await prisma.pollingStation.count({ where: { code } });
     return count > 0;
   }
-
-  // ==========================================================================
-  // STATISTICS
-  // ==========================================================================
 
   async getStats(): Promise<PollingStationStats> {
     const [stationStats, countyStats] = await Promise.all([
@@ -206,14 +188,13 @@ export class PollingStationRepository extends BaseRepository<
       where: { isActive: true },
     });
 
-    // Get votes per county
     const votesByStation = await prisma.vote.groupBy({
       by: ['pollingStationId'],
       _count: true,
     });
 
     const stationVoteMap = new Map<string, number>(
-      votesByStation.map((v: { pollingStationId: string; _count: number }) => [v.pollingStationId, v._count])
+      votesByStation.map((v) => [v.pollingStationId, v._count])
     );
 
     const stations = await prisma.pollingStation.findMany({
@@ -221,7 +202,7 @@ export class PollingStationRepository extends BaseRepository<
     });
 
     const stationCountyMap = new Map<string, string>(
-      stations.map((s: { id: string; county: string }) => [s.id, s.county])
+      stations.map((s) => [s.id, s.county])
     );
 
     const votesByCounty = new Map<string, number>();
@@ -232,10 +213,10 @@ export class PollingStationRepository extends BaseRepository<
       }
     }
 
-    const totalVotes = Array.from(votesByCounty.values()).reduce((a: number, b: number) => a + b, 0);
+    const totalVotes = Array.from(votesByCounty.values()).reduce((a, b) => a + b, 0);
     const totalRegistered = stationStats._sum.registeredVoters || 0;
 
-    const byCounty = countyStats.map((cs: { county: string; _count: number; _sum: { registeredVoters: number | null } }) => {
+    const byCounty = countyStats.map((cs) => {
       const votes = votesByCounty.get(cs.county) || 0;
       const voters = cs._sum.registeredVoters || 0;
       return {
@@ -278,7 +259,7 @@ export class PollingStationRepository extends BaseRepository<
       },
     });
 
-    return stations.map((s: { id: string; code: string; name: string; registeredVoters: number; _count: { votes: number } }) => ({
+    return stations.map((s) => ({
       stationId: s.id,
       code: s.code,
       name: s.name,
