@@ -1,6 +1,12 @@
 /**
+ * ============================================================================
  * VeriVote Kenya - Main Server Entry Point
- * =========================================
+ * ============================================================================
+ * 
+ * This is your existing index.ts with Prisma integration added.
+ * Changes from your original are marked with: // [ADDED]
+ * 
+ * ============================================================================
  */
 
 import dotenv from 'dotenv';
@@ -11,38 +17,36 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 
+// [ADDED] Import Prisma client for database connection
+import { prisma } from './database/client.js';
+
+// [ADDED] Import repositories for data access (you'll use these in routes)
+import { 
+  voterRepository, 
+  voteRepository, 
+  pollingStationRepository,
+  printQueueRepository 
+} from './repositories/index.js';
+
 // ============================================
 // CREATE EXPRESS APPLICATION
 // ============================================
 
 const app: Express = express();
-
 const PORT = process.env.PORT || 3000;
+
+// ============================================
 // MIDDLEWARE SETUP
 // ============================================
-// Middleware = functions that run on EVERY request before reaching your routes
-// They process/modify the request or response
 
-// Security headers (protects against XSS, clickjacking, etc.)
 app.use(helmet());
-
-// Enable CORS (Cross-Origin Resource Sharing)
-// This allows the frontend (running on a different port) to call our API
 app.use(cors({
   origin: process.env.FRONTEND_URL || 'http://localhost:5173',
-  credentials: true, // Allow cookies to be sent
+  credentials: true,
 }));
-
-// Parse JSON request bodies
-// When someone sends JSON data, this converts it to a JavaScript object
-// Example: POST /api/voters with body {"name": "John"} 
-// becomes accessible as req.body.name
 app.use(express.json());
-
-// Parse URL-encoded bodies (form submissions)
 app.use(express.urlencoded({ extended: true }));
 
-// Request logging (only in development)
 if (process.env.NODE_ENV !== 'production') {
   app.use(morgan('dev'));
 }
@@ -50,24 +54,34 @@ if (process.env.NODE_ENV !== 'production') {
 // ============================================
 // HEALTH CHECK ROUTE
 // ============================================
-// This simple endpoint lets us verify the server is running
-// Used by Docker, load balancers, and monitoring tools
+// [MODIFIED] Added database connection check
 
-app.get('/health', (_req: Request, res: Response) => {
-  res.status(200).json({
-    status: 'healthy',
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-  });
+app.get('/health', async (_req: Request, res: Response) => {
+  try {
+    // [ADDED] Test database connection with a simple query
+    await prisma.$queryRaw`SELECT 1`;
+    
+    res.status(200).json({
+      status: 'healthy',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      database: 'connected',  // [ADDED]
+    });
+  } catch (error) {
+    // [ADDED] Handle database connection errors
+    res.status(503).json({
+      status: 'unhealthy',
+      timestamp: new Date().toISOString(),
+      database: 'disconnected',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
 });
 
 // ============================================
 // API ROUTES
 // ============================================
-// These are the main endpoints our application will expose
-// We'll add more routes in separate files as the project grows
 
-// Root route - API information
 app.get('/', (_req: Request, res: Response) => {
   res.json({
     name: 'VeriVote Kenya API',
@@ -75,32 +89,109 @@ app.get('/', (_req: Request, res: Response) => {
     description: 'Hybrid Electronic Voting System API',
     endpoints: {
       health: 'GET /health - Check if server is running',
-      voters: 'Coming soon: /api/voters',
-      votes: 'Coming soon: /api/votes',
-      verify: 'Coming soon: /api/verify',
+      stats: 'GET /api/stats - Get database statistics',  // [ADDED]
+      voters: 'GET /api/voters - List voters (coming Week 2)',
+      votes: 'GET /api/votes - List votes (coming Week 3)',
+      verify: 'GET /api/verify/:serial - Verify a vote (coming Week 3)',
     },
   });
 });
 
-// Placeholder for voter routes (we'll implement these in Week 2)
-app.get('/api/voters', (_req: Request, res: Response) => {
-  res.json({
-    message: 'Voter endpoints coming soon!',
-    planned_endpoints: [
-      'POST /api/voters/register - Register a new voter',
-      'POST /api/voters/verify-pin - Verify voter PIN',
-      'GET /api/voters/:id/status - Get voter status',
-    ],
-  });
+// [ADDED] Statistics endpoint - demonstrates repository usage
+app.get('/api/stats', async (_req: Request, res: Response) => {
+  try {
+    // Get statistics from all repositories
+    const [voterStats, voteStats, stationStats, printStats] = await Promise.all([
+      voterRepository.getStats(),
+      voteRepository.getStats(),
+      pollingStationRepository.getStats(),
+      printQueueRepository.getStats(),
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        voters: voterStats,
+        votes: voteStats,
+        pollingStations: stationStats,
+        printQueue: printStats,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to fetch stats',
+    });
+  }
+});
+
+// [ADDED] Example: List polling stations
+app.get('/api/polling-stations', async (req: Request, res: Response) => {
+  try {
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 20;
+    const county = req.query.county as string | undefined;
+
+    const result = await pollingStationRepository.findMany({
+      page,
+      limit,
+      county,
+      isActive: true,
+    });
+
+    res.json({
+      success: true,
+      ...result,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to fetch stations',
+    });
+  }
+});
+
+// [ADDED] Example: Get list of counties
+app.get('/api/counties', async (_req: Request, res: Response) => {
+  try {
+    const counties = await pollingStationRepository.getCounties();
+    res.json({
+      success: true,
+      data: counties,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to fetch counties',
+    });
+  }
+});
+
+// Placeholder for voter routes (Week 2)
+app.get('/api/voters', async (req: Request, res: Response) => {
+  try {
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 20;
+
+    const result = await voterRepository.findMany({ page, limit });
+
+    res.json({
+      success: true,
+      ...result,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to fetch voters',
+    });
+  }
 });
 
 // ============================================
 // ERROR HANDLING MIDDLEWARE
 // ============================================
-// This catches any errors that occur in our routes
-// Must be defined AFTER all other routes
 
-// 404 Handler - Route not found
 app.use((req: Request, res: Response) => {
   res.status(404).json({
     error: 'Not Found',
@@ -108,9 +199,6 @@ app.use((req: Request, res: Response) => {
   });
 });
 
-// Global error handler
-// Note: _next is prefixed with underscore because it's required by Express
-// but we don't use it in this function
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   console.error('Error:', err.message);
   
@@ -126,15 +214,46 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
 // START SERVER
 // ============================================
 
-app.listen(PORT, () => {
-  console.log('='.repeat(50));
-  console.log('🗳️  VeriVote Kenya API Server');
-  console.log('='.repeat(50));
-  console.log(`✅ Server running on http://localhost:${PORT}`);
-  console.log(`📋 Health check: http://localhost:${PORT}/health`);
-  console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log('='.repeat(50));
+// [MODIFIED] Added async startup with database connection
+async function startServer() {
+  try {
+    // [ADDED] Test database connection before starting
+    await prisma.$connect();
+    console.log('✅ Database connected');
+
+    app.listen(PORT, () => {
+      console.log('='.repeat(50));
+      console.log('🗳️  VeriVote Kenya API Server');
+      console.log('='.repeat(50));
+      console.log(`✅ Server running on http://localhost:${PORT}`);
+      console.log(`📋 Health check: http://localhost:${PORT}/health`);
+      console.log(`📊 Statistics: http://localhost:${PORT}/api/stats`);
+      console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
+      console.log('='.repeat(50));
+    });
+  } catch (error) {
+    console.error('❌ Failed to start server:', error);
+    process.exit(1);
+  }
+}
+
+startServer();
+
+// ============================================
+// GRACEFUL SHUTDOWN
+// ============================================
+// [ADDED] Properly disconnect from database on shutdown
+
+process.on('SIGINT', async () => {
+  console.log('\n🛑 Shutting down...');
+  await prisma.$disconnect();
+  process.exit(0);
 });
 
-// Export app for testing purposes
+process.on('SIGTERM', async () => {
+  console.log('\n🛑 Shutting down...');
+  await prisma.$disconnect();
+  process.exit(0);
+});
+
 export default app;

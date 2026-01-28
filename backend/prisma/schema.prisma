@@ -1,0 +1,424 @@
+// ============================================================================
+// VeriVote Kenya - Prisma Database Schema
+// ============================================================================
+// 
+// This file defines the database structure using Prisma's schema language.
+// It replaces the init.sql file - Prisma will generate and manage the SQL.
+//
+// Key concepts:
+// - model = database table
+// - @id = primary key
+// - @unique = unique constraint
+// - @default = default value
+// - @map = rename column in database
+// - @@map = rename table in database
+// - @relation = foreign key relationship
+// ============================================================================
+
+// ----------------------------------------------------------------------------
+// GENERATOR BLOCK
+// ----------------------------------------------------------------------------
+// This tells Prisma to generate a TypeScript/JavaScript client
+// After running `npx prisma generate`, you can import types from '@prisma/client'
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ----------------------------------------------------------------------------
+// DATASOURCE BLOCK
+// ----------------------------------------------------------------------------
+// Defines your database connection
+// The url reads from your .env file's DATABASE_URL variable
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// ENUMS
+// ============================================================================
+// Enums define a fixed set of allowed values
+// They become TypeScript union types AND PostgreSQL enum types
+
+/// Status tracking for voters throughout the election process
+/// TypeScript: type VoterStatus = 'REGISTERED' | 'VOTED' | 'REVOTED' | ...
+enum VoterStatus {
+  REGISTERED        // Voter has registered and received SBT, hasn't voted yet
+  VOTED             // Voter has successfully cast their vote
+  REVOTED           // Voter cast a new vote, replacing their previous one
+  DISTRESS_FLAGGED  // Voter used distress PIN - flagged for official review
+  SUSPENDED         // Account suspended by administrators
+}
+
+/// Status of votes in the system
+enum VoteStatus {
+  PENDING           // Vote cast but not yet confirmed on blockchain
+  CONFIRMED         // Vote successfully recorded on blockchain
+  SUPERSEDED        // This vote was replaced by a revote (no longer counts)
+  INVALIDATED       // Vote was invalidated (e.g., fraud detection)
+}
+
+/// Status of print jobs in the print queue
+enum PrintStatus {
+  PENDING           // Waiting to be printed
+  PRINTING          // Currently being printed
+  PRINTED           // Successfully printed
+  FAILED            // Print attempt failed
+  CANCELLED         // Print job was cancelled
+}
+
+// ============================================================================
+// VOTER MODEL
+// ============================================================================
+// Stores registered voter information
+// Links national identity to blockchain SBT (Soul-Bound Token)
+
+model Voter {
+  // --------------------------------------------------------------------------
+  // PRIMARY KEY
+  // --------------------------------------------------------------------------
+  // Using UUID instead of auto-increment for security
+  // - Can't guess other voter IDs
+  // - Can generate IDs without database round-trip
+  id                String       @id @default(uuid()) @db.Uuid
+
+  // --------------------------------------------------------------------------
+  // IDENTITY FIELDS
+  // --------------------------------------------------------------------------
+  
+  // National ID - unique identifier for each Kenyan voter
+  // @db.VarChar(20) = max 20 characters in PostgreSQL
+  nationalId        String       @unique @map("national_id") @db.VarChar(20)
+  
+  // Ethereum wallet address where the voter's SBT is stored
+  // Format: 0x followed by 40 hex characters (total 42 chars)
+  // Nullable (?) because it's assigned after registration
+  sbtAddress        String?      @unique @map("sbt_address") @db.VarChar(66)
+  
+  // The token ID of the SBT on the blockchain
+  sbtTokenId        String?      @map("sbt_token_id") @db.VarChar(78)
+  
+  // When the SBT was minted on the blockchain
+  sbtMintedAt       DateTime?    @map("sbt_minted_at")
+
+  // --------------------------------------------------------------------------
+  // AUTHENTICATION FIELDS
+  // --------------------------------------------------------------------------
+  // We store hashed PINs, never the actual PIN!
+  // Using Argon2 hashing (industry standard, very secure)
+  
+  // Hash of the normal PIN (for regular voting)
+  pinHash           String?      @map("pin_hash") @db.VarChar(255)
+  
+  // Hash of the distress PIN (used if voter is coerced)
+  // When used, silently flags the vote for review
+  distressPinHash   String?      @map("distress_pin_hash") @db.VarChar(255)
+
+  // --------------------------------------------------------------------------
+  // STATUS TRACKING
+  // --------------------------------------------------------------------------
+  
+  // Current status of the voter
+  status            VoterStatus  @default(REGISTERED)
+  
+  // How many times they've voted (for revote tracking)
+  // VeriVote allows voters to change their vote - only the last one counts
+  voteCount         Int          @default(0) @map("vote_count")
+  
+  // When they last cast a vote
+  lastVotedAt       DateTime?    @map("last_voted_at")
+
+  // --------------------------------------------------------------------------
+  // RELATIONSHIPS
+  // --------------------------------------------------------------------------
+  
+  // Each voter is assigned to one polling station
+  // @relation() defines the foreign key relationship
+  pollingStationId  String?      @map("polling_station_id") @db.Uuid
+  pollingStation    PollingStation? @relation(fields: [pollingStationId], references: [id])
+
+  // --------------------------------------------------------------------------
+  // TIMESTAMPS
+  // --------------------------------------------------------------------------
+  // Prisma automatically manages these
+  
+  createdAt         DateTime     @default(now()) @map("created_at")
+  updatedAt         DateTime     @updatedAt @map("updated_at")
+
+  // --------------------------------------------------------------------------
+  // INDEXES
+  // --------------------------------------------------------------------------
+  // Indexes speed up queries on frequently searched columns
+  
+  @@index([nationalId])       // Fast lookup by national ID
+  @@index([sbtAddress])       // Fast lookup by blockchain address
+  @@index([pollingStationId]) // Fast lookup by polling station
+  @@index([status])           // Fast filtering by status
+  
+  // Rename the table in PostgreSQL to 'voters' (plural, lowercase)
+  @@map("voters")
+}
+
+// ============================================================================
+// VOTE MODEL
+// ============================================================================
+// Stores encrypted votes
+// IMPORTANT: We never store the actual vote choice - only encrypted hashes!
+
+model Vote {
+  // --------------------------------------------------------------------------
+  // PRIMARY KEY
+  // --------------------------------------------------------------------------
+  id                  String       @id @default(uuid()) @db.Uuid
+
+  // --------------------------------------------------------------------------
+  // ENCRYPTED VOTE DATA
+  // --------------------------------------------------------------------------
+  
+  // SHA-256 hash of the encrypted vote
+  // Used for verification without revealing the vote
+  encryptedVoteHash   String       @map("encrypted_vote_hash") @db.VarChar(255)
+  
+  // The actual encrypted vote data (using homomorphic encryption)
+  // This allows tallying without decrypting individual votes
+  // @db.Text = unlimited length string in PostgreSQL
+  encryptedVoteData   String?      @map("encrypted_vote_data") @db.Text
+
+  // --------------------------------------------------------------------------
+  // VERIFICATION
+  // --------------------------------------------------------------------------
+  
+  // Unique serial number given to voter as receipt
+  // They can use this to verify their vote was counted
+  serialNumber        String       @unique @map("serial_number") @db.VarChar(64)
+  
+  // Zero-Knowledge Proof that the vote is valid
+  // Proves the vote is properly formed without revealing the choice
+  zkpProof            String?      @map("zkp_proof") @db.Text
+
+  // --------------------------------------------------------------------------
+  // BLOCKCHAIN ANCHORING
+  // --------------------------------------------------------------------------
+  // We record votes on Polygon blockchain for immutability
+  
+  // The transaction hash on the blockchain
+  // Format: 0x followed by 64 hex characters (total 66 chars)
+  blockchainTxHash    String?      @map("blockchain_tx_hash") @db.VarChar(66)
+  
+  // Which block contains this transaction
+  blockNumber         BigInt?      @map("block_number")
+  
+  // When the blockchain confirmed this vote
+  confirmedAt         DateTime?    @map("confirmed_at")
+
+  // --------------------------------------------------------------------------
+  // STATUS
+  // --------------------------------------------------------------------------
+  status              VoteStatus   @default(PENDING)
+
+  // --------------------------------------------------------------------------
+  // RELATIONSHIPS
+  // --------------------------------------------------------------------------
+  
+  // Which polling station this vote was cast at
+  // Note: We link to station, NOT to voter (for anonymity!)
+  pollingStationId    String       @map("polling_station_id") @db.Uuid
+  pollingStation      PollingStation @relation(fields: [pollingStationId], references: [id])
+  
+  // Link to print queue (one vote can have one print job)
+  printQueue          PrintQueue?
+
+  // --------------------------------------------------------------------------
+  // REVOTE TRACKING
+  // --------------------------------------------------------------------------
+  // If this is a revote, link to the previous vote it replaces
+  
+  previousVoteId      String?      @unique @map("previous_vote_id") @db.Uuid
+  previousVote        Vote?        @relation("VoteRevote", fields: [previousVoteId], references: [id])
+  supersededBy        Vote?        @relation("VoteRevote")
+
+  // --------------------------------------------------------------------------
+  // TIMESTAMPS
+  // --------------------------------------------------------------------------
+  timestamp           DateTime     @default(now())  // When vote was cast
+  createdAt           DateTime     @default(now()) @map("created_at")
+  updatedAt           DateTime     @updatedAt @map("updated_at")
+
+  // --------------------------------------------------------------------------
+  // INDEXES
+  // --------------------------------------------------------------------------
+  @@index([serialNumber])       // Fast receipt verification
+  @@index([pollingStationId])   // Fast station-based queries
+  @@index([status])             // Fast status filtering
+  @@index([timestamp])          // Fast time-based queries
+  @@index([blockchainTxHash])   // Fast blockchain lookup
+  
+  @@map("votes")
+}
+
+// ============================================================================
+// POLLING STATION MODEL
+// ============================================================================
+// Kenya has ~46,000 polling stations
+// Administrative hierarchy: County > Constituency > Ward > Polling Station
+
+model PollingStation {
+  // --------------------------------------------------------------------------
+  // PRIMARY KEY
+  // --------------------------------------------------------------------------
+  id              String    @id @default(uuid()) @db.Uuid
+
+  // --------------------------------------------------------------------------
+  // IDENTIFICATION
+  // --------------------------------------------------------------------------
+  
+  // Unique code like "NAI-WL-001" (County-Constituency-Number)
+  code            String    @unique @db.VarChar(20)
+  
+  // Human-readable name like "Westlands Primary School"
+  name            String    @db.VarChar(255)
+
+  // --------------------------------------------------------------------------
+  // KENYA ADMINISTRATIVE DIVISIONS
+  // --------------------------------------------------------------------------
+  // Kenya has 47 counties, 290 constituencies, ~1,450 wards
+  
+  county          String    @db.VarChar(100)  // e.g., "Nairobi"
+  constituency    String    @db.VarChar(100)  // e.g., "Westlands"
+  ward            String    @db.VarChar(100)  // e.g., "Parklands/Highridge"
+
+  // --------------------------------------------------------------------------
+  // GEOLOCATION
+  // --------------------------------------------------------------------------
+  // For mapping and finding nearest polling station
+  
+  latitude        Decimal?  @db.Decimal(10, 8)  // e.g., -1.26345678
+  longitude       Decimal?  @db.Decimal(11, 8)  // e.g., 36.80456789
+  address         String?   @db.Text
+
+  // --------------------------------------------------------------------------
+  // CAPACITY & STATUS
+  // --------------------------------------------------------------------------
+  
+  // How many voters are registered at this station
+  registeredVoters Int      @default(0) @map("registered_voters")
+  
+  // Is this station currently active?
+  isActive        Boolean   @default(true) @map("is_active")
+  
+  // Operating hours on election day
+  openingTime     DateTime? @map("opening_time")
+  closingTime     DateTime? @map("closing_time")
+
+  // --------------------------------------------------------------------------
+  // EQUIPMENT TRACKING
+  // --------------------------------------------------------------------------
+  
+  // Number of voting devices at this station
+  deviceCount     Int       @default(0) @map("device_count")
+  
+  // Number of printers (for paper ballot backup)
+  printerCount    Int       @default(0) @map("printer_count")
+
+  // --------------------------------------------------------------------------
+  // TIMESTAMPS
+  // --------------------------------------------------------------------------
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  // --------------------------------------------------------------------------
+  // RELATIONSHIPS
+  // --------------------------------------------------------------------------
+  // One station has many voters and many votes
+  
+  voters          Voter[]
+  votes           Vote[]
+  printQueue      PrintQueue[]
+
+  // --------------------------------------------------------------------------
+  // INDEXES
+  // --------------------------------------------------------------------------
+  @@index([code])
+  @@index([county])
+  @@index([constituency])
+  @@index([ward])
+  @@index([isActive])
+  
+  @@map("polling_stations")
+}
+
+// ============================================================================
+// PRINT QUEUE MODEL
+// ============================================================================
+// For the centralized vote printing system
+// Prints paper ballots as backup/audit trail after election
+
+model PrintQueue {
+  // --------------------------------------------------------------------------
+  // PRIMARY KEY
+  // --------------------------------------------------------------------------
+  id                String       @id @default(uuid()) @db.Uuid
+
+  // --------------------------------------------------------------------------
+  // RELATIONSHIPS
+  // --------------------------------------------------------------------------
+  
+  // Which vote to print (one print job per vote)
+  voteId            String       @unique @map("vote_id") @db.Uuid
+  vote              Vote         @relation(fields: [voteId], references: [id])
+  
+  // Where to print it
+  pollingStationId  String       @map("polling_station_id") @db.Uuid
+  pollingStation    PollingStation @relation(fields: [pollingStationId], references: [id])
+
+  // --------------------------------------------------------------------------
+  // PRINT JOB STATUS
+  // --------------------------------------------------------------------------
+  
+  status            PrintStatus  @default(PENDING)
+  priority          Int          @default(0)  // Higher number = more urgent
+
+  // --------------------------------------------------------------------------
+  // PRINT TRACKING
+  // --------------------------------------------------------------------------
+  
+  // Which printer handled this job
+  printerId         String?      @map("printer_id") @db.VarChar(100)
+  
+  // When it was printed
+  printedAt         DateTime?    @map("printed_at")
+  
+  // How many times we tried to print
+  printAttempts     Int          @default(0) @map("print_attempts")
+  
+  // Error message if print failed
+  lastError         String?      @map("last_error") @db.Text
+
+  // --------------------------------------------------------------------------
+  // BALLOT DETAILS
+  // --------------------------------------------------------------------------
+  
+  // Physical ballot paper number
+  ballotNumber      String?      @unique @map("ballot_number") @db.VarChar(50)
+  
+  // QR code data for ballot verification
+  qrCodeData        String?      @map("qr_code_data") @db.Text
+
+  // --------------------------------------------------------------------------
+  // TIMESTAMPS
+  // --------------------------------------------------------------------------
+  createdAt         DateTime     @default(now()) @map("created_at")
+  updatedAt         DateTime     @updatedAt @map("updated_at")
+
+  // --------------------------------------------------------------------------
+  // INDEXES
+  // --------------------------------------------------------------------------
+  @@index([status])
+  @@index([pollingStationId])
+  @@index([priority])
+  @@index([printerId])
+  
+  @@map("print_queue")
+}
