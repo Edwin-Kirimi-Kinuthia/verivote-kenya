@@ -1,12 +1,9 @@
 /**
- * ============================================================================
  * VeriVote Kenya - Vote Repository
- * ============================================================================
  */
 
 import { prisma } from '../database/client.js';
 import { BaseRepository } from './base.repository.js';
-import type { Prisma } from '@prisma/client';
 import type {
   Vote,
   CreateVoteInput,
@@ -21,14 +18,10 @@ import type {
 
 export class VoteRepository extends BaseRepository<Vote, CreateVoteInput, UpdateVoteInput> {
   
-  // ==========================================================================
-  // BASIC CRUD
-  // ==========================================================================
-
   async findById(id: string): Promise<Vote | null> {
     return prisma.vote.findUnique({
       where: { id },
-    });
+    }) as Promise<Vote | null>;
   }
 
   async findByIdWithDetails(id: string): Promise<VoteWithPrintStatus | null> {
@@ -44,19 +37,20 @@ export class VoteRepository extends BaseRepository<Vote, CreateVoteInput, Update
   async findBySerialNumber(serialNumber: string): Promise<Vote | null> {
     return prisma.vote.findUnique({
       where: { serialNumber },
-    });
+    }) as Promise<Vote | null>;
   }
 
   async findByTxHash(blockchainTxHash: string): Promise<Vote | null> {
     return prisma.vote.findFirst({
       where: { blockchainTxHash },
-    });
+    }) as Promise<Vote | null>;
   }
 
   async findMany(params: VoteQueryParams = {}): Promise<PaginatedResponse<Vote>> {
     const { page, limit, skip } = this.getPagination(params);
     
-    const where: Prisma.VoteWhereInput = {};
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const where: any = {};
     
     if (params.status) {
       where.status = params.status;
@@ -68,8 +62,8 @@ export class VoteRepository extends BaseRepository<Vote, CreateVoteInput, Update
     
     if (params.fromDate || params.toDate) {
       where.timestamp = {};
-      if (params.fromDate) (where.timestamp as Prisma.DateTimeFilter).gte = params.fromDate;
-      if (params.toDate) (where.timestamp as Prisma.DateTimeFilter).lte = params.toDate;
+      if (params.fromDate) where.timestamp.gte = params.fromDate;
+      if (params.toDate) where.timestamp.lte = params.toDate;
     }
     
     if (params.confirmedOnly) {
@@ -86,7 +80,7 @@ export class VoteRepository extends BaseRepository<Vote, CreateVoteInput, Update
       prisma.vote.count({ where }),
     ]);
 
-    return this.buildPaginatedResponse(data, total, page, limit);
+    return this.buildPaginatedResponse(data as Vote[], total, page, limit);
   }
 
   async findByPollingStation(
@@ -95,7 +89,8 @@ export class VoteRepository extends BaseRepository<Vote, CreateVoteInput, Update
   ): Promise<PaginatedResponse<VoteWithStation>> {
     const { page, limit, skip } = this.getPagination(params);
     
-    const where: Prisma.VoteWhereInput = { pollingStationId };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const where: any = { pollingStationId };
     if (params.status) where.status = params.status;
 
     const [data, total] = await Promise.all([
@@ -122,29 +117,25 @@ export class VoteRepository extends BaseRepository<Vote, CreateVoteInput, Update
         pollingStationId: data.pollingStationId,
         previousVoteId: data.previousVoteId,
       },
-    });
+    }) as Promise<Vote>;
   }
 
   async update(id: string, data: UpdateVoteInput): Promise<Vote> {
     return prisma.vote.update({
       where: { id },
       data,
-    });
+    }) as Promise<Vote>;
   }
 
   async delete(id: string): Promise<Vote> {
     return prisma.vote.delete({
       where: { id },
-    });
+    }) as Promise<Vote>;
   }
 
   async count(): Promise<number> {
     return prisma.vote.count();
   }
-
-  // ==========================================================================
-  // BLOCKCHAIN OPERATIONS
-  // ==========================================================================
 
   async confirmOnBlockchain(
     id: string,
@@ -159,7 +150,7 @@ export class VoteRepository extends BaseRepository<Vote, CreateVoteInput, Update
         confirmedAt: new Date(),
         status: 'CONFIRMED',
       },
-    });
+    }) as Promise<Vote>;
   }
 
   async getPendingVotes(limit = 100): Promise<Vote[]> {
@@ -167,18 +158,14 @@ export class VoteRepository extends BaseRepository<Vote, CreateVoteInput, Update
       where: { status: 'PENDING' },
       take: limit,
       orderBy: { timestamp: 'asc' },
-    });
+    }) as Promise<Vote[]>;
   }
-
-  // ==========================================================================
-  // REVOTE OPERATIONS
-  // ==========================================================================
 
   async markSuperseded(id: string): Promise<Vote> {
     return prisma.vote.update({
       where: { id },
       data: { status: 'SUPERSEDED' },
-    });
+    }) as Promise<Vote>;
   }
 
   async castRevote(
@@ -198,13 +185,9 @@ export class VoteRepository extends BaseRepository<Vote, CreateVoteInput, Update
         },
       });
 
-      return { newVote, previousVote };
+      return { newVote: newVote as Vote, previousVote: previousVote as Vote };
     });
   }
-
-  // ==========================================================================
-  // VERIFICATION
-  // ==========================================================================
 
   async verifyBySerialNumber(serialNumber: string): Promise<{
     exists: boolean;
@@ -233,10 +216,6 @@ export class VoteRepository extends BaseRepository<Vote, CreateVoteInput, Update
     };
   }
 
-  // ==========================================================================
-  // STATISTICS
-  // ==========================================================================
-
   async getStats(): Promise<VoteStats> {
     const [total, statusCounts] = await Promise.all([
       prisma.vote.count(),
@@ -254,19 +233,18 @@ export class VoteRepository extends BaseRepository<Vote, CreateVoteInput, Update
     };
 
     for (const item of statusCounts) {
-      const statusItem = item as { status: string; _count: number };
-      switch (statusItem.status) {
+      switch (item.status) {
         case 'PENDING':
-          byStatus.pending = statusItem._count;
+          byStatus.pending = item._count;
           break;
         case 'CONFIRMED':
-          byStatus.confirmed = statusItem._count;
+          byStatus.confirmed = item._count;
           break;
         case 'SUPERSEDED':
-          byStatus.superseded = statusItem._count;
+          byStatus.superseded = item._count;
           break;
         case 'INVALIDATED':
-          byStatus.invalidated = statusItem._count;
+          byStatus.invalidated = item._count;
           break;
       }
     }
@@ -283,7 +261,8 @@ export class VoteRepository extends BaseRepository<Vote, CreateVoteInput, Update
     toDate: Date,
     pollingStationId?: string
   ): Promise<{ hour: Date; count: number }[]> {
-    const where: Prisma.VoteWhereInput = {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const where: any = {
       timestamp: { gte: fromDate, lte: toDate },
     };
 

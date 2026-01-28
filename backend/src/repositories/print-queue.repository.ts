@@ -1,12 +1,9 @@
 /**
- * ============================================================================
  * VeriVote Kenya - Print Queue Repository
- * ============================================================================
  */
 
 import { prisma } from '../database/client.js';
 import { BaseRepository } from './base.repository.js';
-import type { Prisma } from '@prisma/client';
 import type {
   PrintQueue,
   CreatePrintQueueInput,
@@ -23,14 +20,10 @@ export class PrintQueueRepository extends BaseRepository<
   UpdatePrintQueueInput
 > {
   
-  // ==========================================================================
-  // BASIC CRUD
-  // ==========================================================================
-
   async findById(id: string): Promise<PrintQueue | null> {
     return prisma.printQueue.findUnique({
       where: { id },
-    });
+    }) as Promise<PrintQueue | null>;
   }
 
   async findByIdWithDetails(id: string): Promise<PrintQueueWithDetails | null> {
@@ -46,19 +39,20 @@ export class PrintQueueRepository extends BaseRepository<
   async findByVoteId(voteId: string): Promise<PrintQueue | null> {
     return prisma.printQueue.findUnique({
       where: { voteId },
-    });
+    }) as Promise<PrintQueue | null>;
   }
 
   async findByBallotNumber(ballotNumber: string): Promise<PrintQueue | null> {
     return prisma.printQueue.findUnique({
       where: { ballotNumber },
-    });
+    }) as Promise<PrintQueue | null>;
   }
 
   async findMany(params: PrintQueueQueryParams = {}): Promise<PaginatedResponse<PrintQueue>> {
     const { page, limit, skip } = this.getPagination(params);
     
-    const where: Prisma.PrintQueueWhereInput = {};
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const where: any = {};
     if (params.status) where.status = params.status;
     if (params.pollingStationId) where.pollingStationId = params.pollingStationId;
     if (params.printerId) where.printerId = params.printerId;
@@ -76,7 +70,7 @@ export class PrintQueueRepository extends BaseRepository<
       prisma.printQueue.count({ where }),
     ]);
 
-    return this.buildPaginatedResponse(data, total, page, limit);
+    return this.buildPaginatedResponse(data as PrintQueue[], total, page, limit);
   }
 
   async findByPollingStation(
@@ -85,7 +79,8 @@ export class PrintQueueRepository extends BaseRepository<
   ): Promise<PaginatedResponse<PrintQueueWithDetails>> {
     const { page, limit, skip } = this.getPagination(params);
     
-    const where: Prisma.PrintQueueWhereInput = { pollingStationId };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const where: any = { pollingStationId };
     if (params.status) where.status = params.status;
 
     const [data, total] = await Promise.all([
@@ -109,29 +104,25 @@ export class PrintQueueRepository extends BaseRepository<
         pollingStationId: data.pollingStationId,
         priority: data.priority || 0,
       },
-    });
+    }) as Promise<PrintQueue>;
   }
 
   async update(id: string, data: UpdatePrintQueueInput): Promise<PrintQueue> {
     return prisma.printQueue.update({
       where: { id },
       data,
-    });
+    }) as Promise<PrintQueue>;
   }
 
   async delete(id: string): Promise<PrintQueue> {
     return prisma.printQueue.delete({
       where: { id },
-    });
+    }) as Promise<PrintQueue>;
   }
 
   async count(): Promise<number> {
     return prisma.printQueue.count();
   }
-
-  // ==========================================================================
-  // PRINT JOB OPERATIONS
-  // ==========================================================================
 
   async getNextJob(printerId: string): Promise<PrintQueueWithDetails | null> {
     const job = await prisma.printQueue.findFirst({
@@ -169,7 +160,7 @@ export class PrintQueueRepository extends BaseRepository<
         ballotNumber,
         qrCodeData,
       },
-    });
+    }) as Promise<PrintQueue>;
   }
 
   async markFailed(id: string, error: string): Promise<PrintQueue> {
@@ -187,14 +178,14 @@ export class PrintQueueRepository extends BaseRepository<
         lastError: error,
         printerId: newStatus === 'PENDING' ? null : undefined,
       },
-    });
+    }) as Promise<PrintQueue>;
   }
 
   async cancel(id: string): Promise<PrintQueue> {
     return prisma.printQueue.update({
       where: { id },
       data: { status: 'CANCELLED' },
-    });
+    }) as Promise<PrintQueue>;
   }
 
   async retry(id: string): Promise<PrintQueue> {
@@ -205,14 +196,14 @@ export class PrintQueueRepository extends BaseRepository<
         lastError: null,
         printerId: null,
       },
-    });
+    }) as Promise<PrintQueue>;
   }
 
   async setPriority(id: string, priority: number): Promise<PrintQueue> {
     return prisma.printQueue.update({
       where: { id },
       data: { priority },
-    });
+    }) as Promise<PrintQueue>;
   }
 
   async getPendingCount(): Promise<number> {
@@ -257,10 +248,6 @@ export class PrintQueueRepository extends BaseRepository<
     return result.count;
   }
 
-  // ==========================================================================
-  // STATISTICS
-  // ==========================================================================
-
   async getStats(): Promise<PrintQueueStats> {
     const [total, statusCounts] = await Promise.all([
       prisma.printQueue.count(),
@@ -279,22 +266,21 @@ export class PrintQueueRepository extends BaseRepository<
     };
 
     for (const item of statusCounts) {
-      const statusItem = item as { status: string; _count: number };
-      switch (statusItem.status) {
+      switch (item.status) {
         case 'PENDING':
-          byStatus.pending = statusItem._count;
+          byStatus.pending = item._count;
           break;
         case 'PRINTING':
-          byStatus.printing = statusItem._count;
+          byStatus.printing = item._count;
           break;
         case 'PRINTED':
-          byStatus.printed = statusItem._count;
+          byStatus.printed = item._count;
           break;
         case 'FAILED':
-          byStatus.failed = statusItem._count;
+          byStatus.failed = item._count;
           break;
         case 'CANCELLED':
-          byStatus.cancelled = statusItem._count;
+          byStatus.cancelled = item._count;
           break;
       }
     }

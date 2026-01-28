@@ -1,16 +1,10 @@
 /**
- * ============================================================================
  * VeriVote Kenya - Database Type Definitions
- * ============================================================================
- * 
- * These types are defined locally to ensure TypeScript compilation works
- * even before Prisma client is generated.
- * 
- * ============================================================================
+ * Standalone types - NO @prisma/client imports
  */
 
 // ============================================================================
-// ENUMS - Defined locally to match Prisma schema
+// ENUMS
 // ============================================================================
 
 export type VoterStatus = 
@@ -34,7 +28,7 @@ export type PrintStatus =
   | 'CANCELLED';
 
 // ============================================================================
-// ENTITY TYPES - Match Prisma schema
+// ENTITY TYPES
 // ============================================================================
 
 export interface Voter {
@@ -107,17 +101,12 @@ export interface PrintQueue {
 }
 
 // ============================================================================
-// INPUT TYPES - For creating/updating records
+// INPUT TYPES
 // ============================================================================
 
 export interface CreateVoterInput {
   nationalId: string;
   pollingStationId?: string;
-}
-
-export interface RegisterVoterInput extends CreateVoterInput {
-  pin: string;
-  distressPin: string;
 }
 
 export interface UpdateVoterInput {
@@ -302,7 +291,7 @@ export interface PrintQueueStats {
 }
 
 // ============================================================================
-// COMPOSITE TYPES - Entities with Relations
+// COMPOSITE TYPES
 // ============================================================================
 
 export interface VoterWithStation extends Voter {

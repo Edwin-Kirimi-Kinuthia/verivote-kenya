@@ -1,12 +1,9 @@
 /**
- * ============================================================================
  * VeriVote Kenya - Voter Repository
- * ============================================================================
  */
 
 import { prisma } from '../database/client.js';
 import { BaseRepository } from './base.repository.js';
-import type { Prisma } from '@prisma/client';
 import type {
   Voter,
   CreateVoterInput,
@@ -15,19 +12,14 @@ import type {
   VoterStats,
   VoterWithStation,
   PaginatedResponse,
-  VoterStatus,
 } from '../types/database.types.js';
 
 export class VoterRepository extends BaseRepository<Voter, CreateVoterInput, UpdateVoterInput> {
   
-  // ==========================================================================
-  // BASIC CRUD OPERATIONS
-  // ==========================================================================
-
   async findById(id: string): Promise<Voter | null> {
     return prisma.voter.findUnique({
       where: { id },
-    });
+    }) as Promise<Voter | null>;
   }
 
   async findByIdWithStation(id: string): Promise<VoterWithStation | null> {
@@ -40,19 +32,20 @@ export class VoterRepository extends BaseRepository<Voter, CreateVoterInput, Upd
   async findByNationalId(nationalId: string): Promise<Voter | null> {
     return prisma.voter.findUnique({
       where: { nationalId },
-    });
+    }) as Promise<Voter | null>;
   }
 
   async findBySbtAddress(sbtAddress: string): Promise<Voter | null> {
     return prisma.voter.findUnique({
       where: { sbtAddress },
-    });
+    }) as Promise<Voter | null>;
   }
 
   async findMany(params: VoterQueryParams = {}): Promise<PaginatedResponse<Voter>> {
     const { page, limit, skip } = this.getPagination(params);
     
-    const where: Prisma.VoterWhereInput = {};
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const where: any = {};
     
     if (params.status) {
       where.status = params.status;
@@ -84,7 +77,7 @@ export class VoterRepository extends BaseRepository<Voter, CreateVoterInput, Upd
       prisma.voter.count({ where }),
     ]);
 
-    return this.buildPaginatedResponse(data, total, page, limit);
+    return this.buildPaginatedResponse(data as Voter[], total, page, limit);
   }
 
   async findByPollingStation(
@@ -100,29 +93,25 @@ export class VoterRepository extends BaseRepository<Voter, CreateVoterInput, Upd
         nationalId: data.nationalId,
         pollingStationId: data.pollingStationId,
       },
-    });
+    }) as Promise<Voter>;
   }
 
   async update(id: string, data: UpdateVoterInput): Promise<Voter> {
     return prisma.voter.update({
       where: { id },
       data,
-    });
+    }) as Promise<Voter>;
   }
 
   async delete(id: string): Promise<Voter> {
     return prisma.voter.delete({
       where: { id },
-    });
+    }) as Promise<Voter>;
   }
 
   async count(): Promise<number> {
     return prisma.voter.count();
   }
-
-  // ==========================================================================
-  // SPECIALIZED OPERATIONS
-  // ==========================================================================
 
   async registerWithSbt(
     id: string,
@@ -136,7 +125,7 @@ export class VoterRepository extends BaseRepository<Voter, CreateVoterInput, Upd
         sbtTokenId,
         sbtMintedAt: new Date(),
       },
-    });
+    }) as Promise<Voter>;
   }
 
   async setPins(id: string, pinHash: string, distressPinHash: string): Promise<Voter> {
@@ -146,7 +135,7 @@ export class VoterRepository extends BaseRepository<Voter, CreateVoterInput, Upd
         pinHash,
         distressPinHash,
       },
-    });
+    }) as Promise<Voter>;
   }
 
   async recordVote(id: string, isRevote = false): Promise<Voter> {
@@ -157,7 +146,7 @@ export class VoterRepository extends BaseRepository<Voter, CreateVoterInput, Upd
         voteCount: { increment: 1 },
         lastVotedAt: new Date(),
       },
-    });
+    }) as Promise<Voter>;
   }
 
   async flagDistress(id: string): Promise<Voter> {
@@ -166,7 +155,7 @@ export class VoterRepository extends BaseRepository<Voter, CreateVoterInput, Upd
       data: {
         status: 'DISTRESS_FLAGGED',
       },
-    });
+    }) as Promise<Voter>;
   }
 
   async suspend(id: string): Promise<Voter> {
@@ -175,7 +164,7 @@ export class VoterRepository extends BaseRepository<Voter, CreateVoterInput, Upd
       data: {
         status: 'SUSPENDED',
       },
-    });
+    }) as Promise<Voter>;
   }
 
   async nationalIdExists(nationalId: string): Promise<boolean> {
@@ -192,10 +181,6 @@ export class VoterRepository extends BaseRepository<Voter, CreateVoterInput, Upd
     });
     return voter?.status === 'VOTED' || voter?.status === 'REVOTED';
   }
-
-  // ==========================================================================
-  // STATISTICS
-  // ==========================================================================
 
   async getStats(): Promise<VoterStats> {
     const [total, statusCounts, withSbt] = await Promise.all([
@@ -218,22 +203,21 @@ export class VoterRepository extends BaseRepository<Voter, CreateVoterInput, Upd
     };
 
     for (const item of statusCounts) {
-      const statusItem = item as { status: string; _count: number };
-      switch (statusItem.status) {
+      switch (item.status) {
         case 'REGISTERED':
-          byStatus.registered = statusItem._count;
+          byStatus.registered = item._count;
           break;
         case 'VOTED':
-          byStatus.voted = statusItem._count;
+          byStatus.voted = item._count;
           break;
         case 'REVOTED':
-          byStatus.revoted = statusItem._count;
+          byStatus.revoted = item._count;
           break;
         case 'DISTRESS_FLAGGED':
-          byStatus.distressFlagged = statusItem._count;
+          byStatus.distressFlagged = item._count;
           break;
         case 'SUSPENDED':
-          byStatus.suspended = statusItem._count;
+          byStatus.suspended = item._count;
           break;
       }
     }
