@@ -43,6 +43,7 @@ redis-data/
 smart-contracts/artifacts/
 smart-contracts/cache/
 smart-contracts/typechain-types/
+smart-contracts/deployments/
 
 # Misc
 *.tmp
