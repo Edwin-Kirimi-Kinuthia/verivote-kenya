@@ -43,7 +43,7 @@ export class BlockchainService {
     this.voteContract = new Contract(voteAddress, voteAbi, this.signer);
   }
 
-  private loadAbi(contractName: string): any[] {
+  private loadAbi(contractName: string): ethers.InterfaceAbi {
     const artifactPath = path.resolve(
       __dirname,
       '..',
@@ -71,7 +71,7 @@ export class BlockchainService {
     const receipt = await tx.wait();
 
     const event = receipt.logs.find(
-      (log: any) => log.fragment?.name === 'SBTMinted'
+      (log: ethers.LogDescription | ethers.Log) => ('fragment' in log ? log.fragment?.name === 'SBTMinted' : false)
     );
     const tokenId = event ? event.args[1].toString() : 'unknown';
 
