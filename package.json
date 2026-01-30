@@ -12,7 +12,11 @@
     "docker:down": "docker compose down",
     "docker:logs": "docker compose logs -f",
     "db:migrate": "pnpm --filter backend db:migrate",
-    "db:seed": "pnpm --filter backend db:seed"
+    "db:seed": "pnpm --filter backend db:seed",
+    "contracts:compile": "pnpm --filter verivote-smart-contracts compile",
+    "contracts:test": "pnpm --filter verivote-smart-contracts test",
+    "contracts:node": "pnpm --filter verivote-smart-contracts node",
+    "contracts:deploy": "pnpm --filter verivote-smart-contracts deploy:local"
   },
   "keywords": [
     "voting",
