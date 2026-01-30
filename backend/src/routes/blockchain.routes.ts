@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { blockchainService } from '../services/blockchain.service.js';
 
-const router = Router();
+const router: Router = Router();
 
 router.post('/mint-sbt', async (req: Request, res: Response) => {
   try {
