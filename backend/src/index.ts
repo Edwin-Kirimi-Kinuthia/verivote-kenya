@@ -21,12 +21,16 @@ import morgan from 'morgan';
 import { prisma } from './database/client.js';
 
 // [ADDED] Import repositories for data access (you'll use these in routes)
-import { 
-  voterRepository, 
-  voteRepository, 
+import {
+  voterRepository,
+  voteRepository,
   pollingStationRepository,
-  printQueueRepository 
+  printQueueRepository
 } from './repositories/index.js';
+
+// [ADDED] Blockchain
+import blockchainRoutes from './routes/blockchain.routes.js';
+import { blockchainService } from './services/blockchain.service.js';
 
 // ============================================
 // CREATE EXPRESS APPLICATION
@@ -61,11 +65,14 @@ app.get('/health', async (_req: Request, res: Response) => {
     // [ADDED] Test database connection with a simple query
     await prisma.$queryRaw`SELECT 1`;
     
+    const blockchainHealthy = await blockchainService.isHealthy();
+
     res.status(200).json({
       status: 'healthy',
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
-      database: 'connected',  // [ADDED]
+      database: 'connected',
+      blockchain: blockchainHealthy ? 'connected' : 'disconnected',
     });
   } catch (error) {
     // [ADDED] Handle database connection errors
@@ -189,6 +196,12 @@ app.get('/api/voters', async (req: Request, res: Response) => {
 });
 
 // ============================================
+// BLOCKCHAIN ROUTES
+// ============================================
+
+app.use('/api/blockchain', blockchainRoutes);
+
+// ============================================
 // ERROR HANDLING MIDDLEWARE
 // ============================================
 
@@ -220,6 +233,14 @@ async function startServer() {
     // [ADDED] Test database connection before starting
     await prisma.$connect();
     console.log('✅ Database connected');
+
+    // Connect to blockchain (non-fatal if unavailable)
+    try {
+      await blockchainService.connect();
+      console.log('✅ Blockchain connected');
+    } catch (error) {
+      console.warn('⚠️  Blockchain not available:', error instanceof Error ? error.message : 'Unknown error');
+    }
 
     app.listen(PORT, () => {
       console.log('='.repeat(50));
