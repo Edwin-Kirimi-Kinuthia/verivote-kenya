@@ -26,7 +26,6 @@ import { PrismaClient } from '@prisma/client';
 // This is TypeScript magic to allow us to add a property to globalThis
 declare global {
   // Using `var` is required here for global scope (not let or const)
-  // eslint-disable-next-line no-var
   var prisma: PrismaClient | undefined;
 }
 
