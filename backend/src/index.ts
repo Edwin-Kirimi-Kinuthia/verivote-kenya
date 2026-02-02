@@ -32,6 +32,9 @@ import {
 import blockchainRoutes from './routes/blockchain.routes.js';
 import { blockchainService } from './services/blockchain.service.js';
 
+// [ADDED] Voter registration
+import voterRoutes from './routes/voter.routes.js';
+
 // ============================================
 // CREATE EXPRESS APPLICATION
 // ============================================
@@ -175,25 +178,8 @@ app.get('/api/counties', async (_req: Request, res: Response) => {
   }
 });
 
-// Placeholder for voter routes (Week 2)
-app.get('/api/voters', async (req: Request, res: Response) => {
-  try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 20;
-
-    const result = await voterRepository.findMany({ page, limit });
-
-    res.json({
-      success: true,
-      ...result,
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error instanceof Error ? error.message : 'Failed to fetch voters',
-    });
-  }
-});
+// Voter routes (registration, PIN verification, listing)
+app.use('/api/voters', voterRoutes);
 
 // ============================================
 // BLOCKCHAIN ROUTES

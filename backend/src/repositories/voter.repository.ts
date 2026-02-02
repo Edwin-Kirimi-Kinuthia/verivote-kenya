@@ -35,6 +35,19 @@ export class VoterRepository extends BaseRepository<Voter, CreateVoterInput, Upd
     }) as Promise<Voter | null>;
   }
 
+  async findByInquiryId(inquiryId: string): Promise<Voter | null> {
+    return prisma.voter.findUnique({
+      where: { personaInquiryId: inquiryId },
+    }) as Promise<Voter | null>;
+  }
+
+  async updatePersonaStatus(id: string, inquiryId: string, status: string): Promise<Voter> {
+    return prisma.voter.update({
+      where: { id },
+      data: { personaInquiryId: inquiryId, personaStatus: status },
+    }) as Promise<Voter>;
+  }
+
   async findBySbtAddress(sbtAddress: string): Promise<Voter | null> {
     return prisma.voter.findUnique({
       where: { sbtAddress },
@@ -195,7 +208,9 @@ export class VoterRepository extends BaseRepository<Voter, CreateVoterInput, Upd
     ]);
 
     const byStatus = {
+      pendingVerification: 0,
       registered: 0,
+      verificationFailed: 0,
       voted: 0,
       revoted: 0,
       distressFlagged: 0,
@@ -204,8 +219,14 @@ export class VoterRepository extends BaseRepository<Voter, CreateVoterInput, Upd
 
     for (const item of statusCounts) {
       switch (item.status) {
+        case 'PENDING_VERIFICATION':
+          byStatus.pendingVerification = item._count;
+          break;
         case 'REGISTERED':
           byStatus.registered = item._count;
+          break;
+        case 'VERIFICATION_FAILED':
+          byStatus.verificationFailed = item._count;
           break;
         case 'VOTED':
           byStatus.voted = item._count;

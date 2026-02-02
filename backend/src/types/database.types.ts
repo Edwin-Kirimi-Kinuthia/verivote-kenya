@@ -7,8 +7,10 @@
 // ENUMS
 // ============================================================================
 
-export type VoterStatus = 
+export type VoterStatus =
+  | 'PENDING_VERIFICATION'
   | 'REGISTERED'
+  | 'VERIFICATION_FAILED'
   | 'VOTED'
   | 'REVOTED'
   | 'DISTRESS_FLAGGED'
@@ -39,6 +41,9 @@ export interface Voter {
   sbtMintedAt: Date | null;
   pinHash: string | null;
   distressPinHash: string | null;
+  personaInquiryId: string | null;
+  personaStatus: string | null;
+  personaVerifiedAt: Date | null;
   status: VoterStatus;
   voteCount: number;
   lastVotedAt: Date | null;
@@ -115,6 +120,9 @@ export interface UpdateVoterInput {
   sbtMintedAt?: Date;
   pinHash?: string;
   distressPinHash?: string;
+  personaInquiryId?: string;
+  personaStatus?: string;
+  personaVerifiedAt?: Date;
   status?: VoterStatus;
   voteCount?: number;
   lastVotedAt?: Date;
@@ -240,7 +248,9 @@ export interface PaginatedResponse<T> {
 export interface VoterStats {
   total: number;
   byStatus: {
+    pendingVerification: number;
     registered: number;
+    verificationFailed: number;
     voted: number;
     revoted: number;
     distressFlagged: number;
