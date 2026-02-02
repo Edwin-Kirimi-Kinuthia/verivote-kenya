@@ -45,11 +45,13 @@ datasource db {
 /// Status tracking for voters throughout the election process
 /// TypeScript: type VoterStatus = 'REGISTERED' | 'VOTED' | 'REVOTED' | ...
 enum VoterStatus {
-  REGISTERED        // Voter has registered and received SBT, hasn't voted yet
-  VOTED             // Voter has successfully cast their vote
-  REVOTED           // Voter cast a new vote, replacing their previous one
-  DISTRESS_FLAGGED  // Voter used distress PIN - flagged for official review
-  SUSPENDED         // Account suspended by administrators
+  PENDING_VERIFICATION  // Voter initiated registration, awaiting Persona ID verification
+  REGISTERED            // Voter has completed verification and received SBT
+  VERIFICATION_FAILED   // Persona identity verification failed
+  VOTED                 // Voter has successfully cast their vote
+  REVOTED               // Voter cast a new vote, replacing their previous one
+  DISTRESS_FLAGGED      // Voter used distress PIN - flagged for official review
+  SUSPENDED             // Account suspended by administrators
 }
 
 /// Status of votes in the system
@@ -120,8 +122,25 @@ model Voter {
   // STATUS TRACKING
   // --------------------------------------------------------------------------
   
+  // --------------------------------------------------------------------------
+  // PERSONA IDENTITY VERIFICATION
+  // --------------------------------------------------------------------------
+
+  // Persona inquiry ID for identity verification tracking
+  personaInquiryId  String?      @unique @map("persona_inquiry_id") @db.VarChar(100)
+
+  // Persona verification status: "created","completed","failed","expired"
+  personaStatus     String?      @map("persona_status") @db.VarChar(30)
+
+  // When Persona verification was completed
+  personaVerifiedAt DateTime?    @map("persona_verified_at")
+
+  // --------------------------------------------------------------------------
+  // STATUS TRACKING
+  // --------------------------------------------------------------------------
+
   // Current status of the voter
-  status            VoterStatus  @default(REGISTERED)
+  status            VoterStatus  @default(PENDING_VERIFICATION)
   
   // How many times they've voted (for revote tracking)
   // VeriVote allows voters to change their vote - only the last one counts
