@@ -23,7 +23,7 @@ A secure, transparent, and verifiable voting system that combines the trustworth
 
 | Category | Technologies |
 |----------|-------------|
-| **Backend** | Node.js, TypeScript, Express.js |
+| **Backend** | Node.js, TypeScript, Express.js, Prisma ORM |
 | **Database** | PostgreSQL 16, Redis 7 |
 | **Blockchain** | Polygon (Ethereum L2), Solidity |
 | **Frontend** | React, Next.js, Tailwind CSS |
@@ -37,12 +37,14 @@ A secure, transparent, and verifiable voting system that combines the trustworth
 ```
 verivote-kenya/
 ├── backend/              # Node.js + TypeScript API
+│   ├── prisma/           # Database schema & migrations
+│   │   ├── schema.prisma
+│   │   └── seed.ts
 │   ├── src/
 │   │   ├── index.ts      # Server entry point
-│   │   ├── controllers/  # API route handlers
-│   │   ├── models/       # Database models
-│   │   ├── services/     # Business logic
-│   │   └── database/     # Migrations and seeds
+│   │   ├── database/     # Prisma client
+│   │   ├── repositories/ # Data access layer
+│   │   └── types/        # TypeScript definitions
 │   └── package.json
 ├── frontend/             # Next.js web application
 ├── smart-contracts/      # Solidity contracts
@@ -54,73 +56,12 @@ verivote-kenya/
 
 ---
 
-## 🚀 Getting Started
-
-### Prerequisites
-
-- Node.js v20+
-- pnpm v8+
-- Docker Desktop
-- Git
-
-### Installation
-
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/your-username/verivote-kenya.git
-   cd verivote-kenya
-   ```
-
-2. **Start the database services**
-   ```bash
-   docker compose up -d
-   ```
-
-3. **Install backend dependencies**
-   ```bash
-   cd backend
-   pnpm install
-   ```
-
-4. **Set up environment variables**
-   ```bash
-   cp .env.example .env
-   # Edit .env with your values
-   ```
-
-5. **Start the development server**
-   ```bash
-   pnpm dev
-   ```
-
-6. **Open in browser**
-   ```
-   http://localhost:3000
-   ```
-
----
-
 ## 🐳 Docker Services
 
 | Service | Port | Purpose |
 |---------|------|---------|
 | PostgreSQL | 5432 | Main database |
 | Redis | 6379 | Caching & sessions |
-
-**Commands:**
-```bash
-# Start services
-docker compose up -d
-
-# View logs
-docker compose logs -f
-
-# Stop services
-docker compose down
-
-# Reset data (caution!)
-docker compose down -v
-```
 
 ---
 
@@ -132,14 +73,20 @@ GET /health
 ```
 Returns server status and uptime.
 
-### Voters (Coming Week 2)
+### Statistics
+```
+GET /api/stats
+```
+Returns database statistics for voters, votes, and polling stations.
+
+### Voters
 ```
 POST /api/voters/register    # Register new voter
 POST /api/voters/verify-pin  # Verify voter PIN
 GET  /api/voters/:id/status  # Get voter status
 ```
 
-### Votes (Coming Week 3)
+### Votes
 ```
 POST /api/votes/cast         # Cast a vote
 GET  /api/votes/verify/:id   # Verify a vote
@@ -171,7 +118,7 @@ pnpm test
 
 | Week | Focus |
 |------|-------|
-| 1 | Foundation & Infrastructure ← We are here! |
+| 1 | Foundation & Infrastructure |
 | 2 | Voter Registration & SBT |
 | 3 | Vote Casting & Encryption |
 | 4 | Verification & Print System |
@@ -179,16 +126,6 @@ pnpm test
 | 6 | AI Security Layer |
 | 7 | Polish & Security |
 | 8 | Testing & Demo |
-
----
-
-## 👥 Contributing
-
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/my-feature`
-3. Commit changes: `git commit -m "Add my feature"`
-4. Push to branch: `git push origin feature/my-feature`
-5. Submit a pull request
 
 ---
 
