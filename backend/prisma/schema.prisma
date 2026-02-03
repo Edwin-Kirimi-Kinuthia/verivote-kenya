@@ -155,6 +155,22 @@ model Voter {
   // Notes from the reviewer (reason for approval/rejection)
   manualReviewNotes         String?   @map("manual_review_notes") @db.Text
 
+  // --------------------------------------------------------------------------
+  // PIN RESET
+  // --------------------------------------------------------------------------
+
+  // Whether a PIN reset has been requested
+  pinResetRequested         Boolean   @default(false) @map("pin_reset_requested")
+
+  // When PIN reset was requested
+  pinResetRequestedAt       DateTime? @map("pin_reset_requested_at")
+
+  // Persona inquiry ID for biometric PIN reset verification
+  pinResetInquiryId         String?   @map("pin_reset_inquiry_id") @db.VarChar(100)
+
+  // When PINs were last reset
+  pinLastResetAt            DateTime? @map("pin_last_reset_at")
+
   // Scheduled appointment for manual review
   appointment               ManualReviewAppointment?
 
