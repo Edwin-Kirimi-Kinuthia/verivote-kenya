@@ -11,3 +11,4 @@ export { VoterRepository, voterRepository } from './voter.repository.js';
 export { VoteRepository, voteRepository } from './vote.repository.js';
 export { PollingStationRepository, pollingStationRepository } from './polling-station.repository.js';
 export { PrintQueueRepository, printQueueRepository } from './print-queue.repository.js';
+export { AppointmentRepository, appointmentRepository } from './appointment.repository.js';

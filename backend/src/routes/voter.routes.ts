@@ -108,6 +108,34 @@ router.get('/registration-status/:inquiryId', async (req: Request, res: Response
   }
 });
 
+// POST /api/voters/request-manual-review - Request manual IEBC verification
+router.post('/request-manual-review', async (req: Request, res: Response) => {
+  try {
+    const { nationalId, reason } = req.body;
+
+    if (!nationalId) {
+      res.status(400).json({ success: false, error: 'National ID is required' });
+      return;
+    }
+
+    const result = await voterService.requestManualReview(nationalId, reason || '');
+
+    res.status(200).json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    if (error instanceof ServiceError) {
+      res.status(error.statusCode).json({ success: false, error: error.message });
+      return;
+    }
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to request manual review',
+    });
+  }
+});
+
 // POST /api/voters/verify-pin
 router.post('/verify-pin', async (req: Request, res: Response) => {
   try {
