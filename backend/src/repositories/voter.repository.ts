@@ -209,6 +209,7 @@ export class VoterRepository extends BaseRepository<Voter, CreateVoterInput, Upd
 
     const byStatus = {
       pendingVerification: 0,
+      pendingManualReview: 0,
       registered: 0,
       verificationFailed: 0,
       voted: 0,
@@ -221,6 +222,9 @@ export class VoterRepository extends BaseRepository<Voter, CreateVoterInput, Upd
       switch (item.status) {
         case 'PENDING_VERIFICATION':
           byStatus.pendingVerification = item._count;
+          break;
+        case 'PENDING_MANUAL_REVIEW':
+          byStatus.pendingManualReview = item._count;
           break;
         case 'REGISTERED':
           byStatus.registered = item._count;
@@ -252,6 +256,58 @@ export class VoterRepository extends BaseRepository<Voter, CreateVoterInput, Upd
       withSbt,
       turnoutPercentage: Math.round(turnoutPercentage * 100) / 100,
     };
+  }
+
+  async findPendingManualReview(params: { page?: number; limit?: number } = {}): Promise<PaginatedResponse<Voter>> {
+    const { page, limit, skip } = this.getPagination(params);
+
+    const where = { status: 'PENDING_MANUAL_REVIEW' as const };
+
+    const [data, total] = await Promise.all([
+      prisma.voter.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { manualReviewRequestedAt: 'asc' },
+      }),
+      prisma.voter.count({ where }),
+    ]);
+
+    return this.buildPaginatedResponse(data as Voter[], total, page, limit);
+  }
+
+  async requestManualReview(id: string, failureReason: string): Promise<Voter> {
+    return prisma.voter.update({
+      where: { id },
+      data: {
+        status: 'PENDING_MANUAL_REVIEW',
+        verificationFailureReason: failureReason,
+        manualReviewRequestedAt: new Date(),
+      },
+    }) as Promise<Voter>;
+  }
+
+  async approveManualReview(id: string, reviewerId: string, notes?: string): Promise<Voter> {
+    return prisma.voter.update({
+      where: { id },
+      data: {
+        manualReviewedAt: new Date(),
+        manualReviewedBy: reviewerId,
+        manualReviewNotes: notes,
+      },
+    }) as Promise<Voter>;
+  }
+
+  async rejectManualReview(id: string, reviewerId: string, notes: string): Promise<Voter> {
+    return prisma.voter.update({
+      where: { id },
+      data: {
+        status: 'VERIFICATION_FAILED',
+        manualReviewedAt: new Date(),
+        manualReviewedBy: reviewerId,
+        manualReviewNotes: notes,
+      },
+    }) as Promise<Voter>;
   }
 }
 

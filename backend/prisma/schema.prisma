@@ -46,8 +46,9 @@ datasource db {
 /// TypeScript: type VoterStatus = 'REGISTERED' | 'VOTED' | 'REVOTED' | ...
 enum VoterStatus {
   PENDING_VERIFICATION  // Voter initiated registration, awaiting Persona ID verification
+  PENDING_MANUAL_REVIEW // Automated verification failed, awaiting IEBC physical verification
   REGISTERED            // Voter has completed verification and received SBT
-  VERIFICATION_FAILED   // Persona identity verification failed
+  VERIFICATION_FAILED   // Identity verification rejected (both automated and manual)
   VOTED                 // Voter has successfully cast their vote
   REVOTED               // Voter cast a new vote, replacing their previous one
   DISTRESS_FLAGGED      // Voter used distress PIN - flagged for official review
@@ -136,6 +137,28 @@ model Voter {
   personaVerifiedAt DateTime?    @map("persona_verified_at")
 
   // --------------------------------------------------------------------------
+  // MANUAL REVIEW (IEBC Physical Verification)
+  // --------------------------------------------------------------------------
+
+  // Why automated verification failed (shown to IEBC reviewer)
+  verificationFailureReason String?   @map("verification_failure_reason") @db.Text
+
+  // When manual review was requested
+  manualReviewRequestedAt   DateTime? @map("manual_review_requested_at")
+
+  // When IEBC official completed the review
+  manualReviewedAt          DateTime? @map("manual_reviewed_at")
+
+  // ID of the IEBC official who reviewed (for audit trail)
+  manualReviewedBy          String?   @map("manual_reviewed_by") @db.VarChar(100)
+
+  // Notes from the reviewer (reason for approval/rejection)
+  manualReviewNotes         String?   @map("manual_review_notes") @db.Text
+
+  // Scheduled appointment for manual review
+  appointment               ManualReviewAppointment?
+
+  // --------------------------------------------------------------------------
   // STATUS TRACKING
   // --------------------------------------------------------------------------
 
@@ -178,6 +201,56 @@ model Voter {
   
   // Rename the table in PostgreSQL to 'voters' (plural, lowercase)
   @@map("voters")
+}
+
+// ============================================================================
+// MANUAL REVIEW APPOINTMENT MODEL
+// ============================================================================
+// Scheduling system for IEBC physical verification appointments
+
+model ManualReviewAppointment {
+  id                String    @id @default(uuid()) @db.Uuid
+
+  // Time slot details
+  scheduledAt       DateTime  @map("scheduled_at")
+  durationMinutes   Int       @default(15) @map("duration_minutes")
+
+  // Location
+  pollingStationId  String    @map("polling_station_id") @db.Uuid
+  pollingStation    PollingStation @relation(fields: [pollingStationId], references: [id])
+
+  // Booking status
+  status            AppointmentStatus @default(AVAILABLE)
+
+  // Voter who booked (null if still available)
+  voterId           String?   @unique @map("voter_id") @db.Uuid
+  voter             Voter?    @relation(fields: [voterId], references: [id])
+
+  // IEBC official assigned to this slot
+  assignedOfficerId String?   @map("assigned_officer_id") @db.VarChar(100)
+  assignedOfficerName String? @map("assigned_officer_name") @db.VarChar(255)
+
+  // Booking metadata
+  bookedAt          DateTime? @map("booked_at")
+  notes             String?   @db.Text
+
+  // Timestamps
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  @@index([pollingStationId])
+  @@index([scheduledAt])
+  @@index([status])
+  @@index([voterId])
+  @@map("manual_review_appointments")
+}
+
+enum AppointmentStatus {
+  AVAILABLE         // Slot is open for booking
+  BOOKED            // Voter has booked this slot
+  COMPLETED         // Review was completed
+  CANCELLED         // Appointment was cancelled
+  NO_SHOW           // Voter didn't show up
 }
 
 // ============================================================================
@@ -351,10 +424,11 @@ model PollingStation {
   // RELATIONSHIPS
   // --------------------------------------------------------------------------
   // One station has many voters and many votes
-  
+
   voters          Voter[]
   votes           Vote[]
   printQueue      PrintQueue[]
+  manualReviewAppointments ManualReviewAppointment[]
 
   // --------------------------------------------------------------------------
   // INDEXES
@@ -364,7 +438,7 @@ model PollingStation {
   @@index([constituency])
   @@index([ward])
   @@index([isActive])
-  
+
   @@map("polling_stations")
 }
 

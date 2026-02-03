@@ -54,13 +54,16 @@ export class VoterService {
       throw new ServiceError('Voter is not pending verification', 409);
     }
 
-    // If verification failed, update status and return
+    // If verification failed, route to manual review instead of outright rejection
     if (personaStatus !== 'completed') {
-      await voterRepository.update(voter.id, {
-        status: 'VERIFICATION_FAILED',
-        personaStatus,
-      });
-      return { voterId: voter.id, status: 'VERIFICATION_FAILED' };
+      const failureReason = `Automated verification failed: Persona status "${personaStatus}"`;
+      await voterRepository.requestManualReview(voter.id, failureReason);
+      await voterRepository.update(voter.id, { personaStatus });
+      return {
+        voterId: voter.id,
+        status: 'PENDING_MANUAL_REVIEW',
+        message: 'Automated verification failed. Your application has been sent for manual review by IEBC officials.',
+      };
     }
 
     // Verification passed — mint SBT, generate PINs
@@ -111,6 +114,36 @@ export class VoterService {
       voterId: voter.id,
       status: voter.status,
       personaStatus: voter.personaStatus,
+      manualReviewRequestedAt: voter.manualReviewRequestedAt,
+      verificationFailureReason: voter.verificationFailureReason,
+    };
+  }
+
+  async requestManualReview(nationalId: string, reason: string) {
+    const voter = await voterRepository.findByNationalId(nationalId);
+    if (!voter) {
+      throw new ServiceError('Voter not found', 404);
+    }
+
+    if (voter.status === 'REGISTERED') {
+      throw new ServiceError('Voter is already registered', 409);
+    }
+
+    if (voter.status === 'PENDING_MANUAL_REVIEW') {
+      throw new ServiceError('Manual review already requested', 409);
+    }
+
+    if (voter.status !== 'PENDING_VERIFICATION' && voter.status !== 'VERIFICATION_FAILED') {
+      throw new ServiceError('Cannot request manual review for this voter status', 400);
+    }
+
+    const failureReason = reason || 'Voter requested manual review (Persona verification not supported for their document)';
+    await voterRepository.requestManualReview(voter.id, failureReason);
+
+    return {
+      voterId: voter.id,
+      status: 'PENDING_MANUAL_REVIEW',
+      message: 'Your request for manual review has been submitted. Please visit your polling station with your ID for physical verification.',
     };
   }
 
@@ -122,6 +155,10 @@ export class VoterService {
 
     if (voter.status === 'PENDING_VERIFICATION') {
       throw new ServiceError('Voter identity verification is still pending', 403);
+    }
+
+    if (voter.status === 'PENDING_MANUAL_REVIEW') {
+      throw new ServiceError('Voter is awaiting manual review by IEBC officials', 403);
     }
 
     if (voter.status === 'VERIFICATION_FAILED') {

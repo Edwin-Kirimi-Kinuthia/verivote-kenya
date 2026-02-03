@@ -35,6 +35,12 @@ import { blockchainService } from './services/blockchain.service.js';
 // [ADDED] Voter registration
 import voterRoutes from './routes/voter.routes.js';
 
+// [ADDED] Admin routes for IEBC manual review
+import adminRoutes from './routes/admin.routes.js';
+
+// [ADDED] Appointment scheduling for manual reviews
+import appointmentRoutes from './routes/appointment.routes.js';
+
 // ============================================
 // CREATE EXPRESS APPLICATION
 // ============================================
@@ -180,6 +186,12 @@ app.get('/api/counties', async (_req: Request, res: Response) => {
 
 // Voter routes (registration, PIN verification, listing)
 app.use('/api/voters', voterRoutes);
+
+// Admin routes for IEBC manual verification review
+app.use('/api/admin', adminRoutes);
+
+// Appointment scheduling for manual reviews
+app.use('/api/appointments', appointmentRoutes);
 
 // ============================================
 // BLOCKCHAIN ROUTES
