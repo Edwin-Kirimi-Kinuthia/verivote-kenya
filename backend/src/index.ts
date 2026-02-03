@@ -41,6 +41,9 @@ import adminRoutes from './routes/admin.routes.js';
 // [ADDED] Appointment scheduling for manual reviews
 import appointmentRoutes from './routes/appointment.routes.js';
 
+// [ADDED] PIN reset routes
+import pinResetRoutes from './routes/pin-reset.routes.js';
+
 // ============================================
 // CREATE EXPRESS APPLICATION
 // ============================================
@@ -192,6 +195,9 @@ app.use('/api/admin', adminRoutes);
 
 // Appointment scheduling for manual reviews
 app.use('/api/appointments', appointmentRoutes);
+
+// PIN reset for voters who forgot their PIN
+app.use('/api/pin-reset', pinResetRoutes);
 
 // ============================================
 // BLOCKCHAIN ROUTES

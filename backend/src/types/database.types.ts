@@ -57,6 +57,10 @@ export interface Voter {
   manualReviewedAt: Date | null;
   manualReviewedBy: string | null;
   manualReviewNotes: string | null;
+  pinResetRequested: boolean;
+  pinResetRequestedAt: Date | null;
+  pinResetInquiryId: string | null;
+  pinLastResetAt: Date | null;
   status: VoterStatus;
   voteCount: number;
   lastVotedAt: Date | null;
@@ -156,6 +160,10 @@ export interface UpdateVoterInput {
   manualReviewedAt?: Date;
   manualReviewedBy?: string;
   manualReviewNotes?: string;
+  pinResetRequested?: boolean;
+  pinResetRequestedAt?: Date;
+  pinResetInquiryId?: string;
+  pinLastResetAt?: Date;
   status?: VoterStatus;
   voteCount?: number;
   lastVotedAt?: Date;
