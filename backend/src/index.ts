@@ -20,6 +20,10 @@ import morgan from 'morgan';
 // [ADDED] Import Prisma client for database connection
 import { prisma } from './database/client.js';
 
+// [ADDED] Auth & rate limiting
+import { globalRateLimiter } from './middleware/index.js';
+import { disconnectRedis } from './config/redis.js';
+
 // [ADDED] Import repositories for data access (you'll use these in routes)
 import {
   voterRepository,
@@ -62,6 +66,7 @@ app.use(cors({
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(globalRateLimiter);
 
 if (process.env.NODE_ENV !== 'production') {
   app.use(morgan('dev'));
@@ -272,12 +277,14 @@ startServer();
 process.on('SIGINT', async () => {
   console.log('\n🛑 Shutting down...');
   await prisma.$disconnect();
+  await disconnectRedis();
   process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
   console.log('\n🛑 Shutting down...');
   await prisma.$disconnect();
+  await disconnectRedis();
   process.exit(0);
 });
 

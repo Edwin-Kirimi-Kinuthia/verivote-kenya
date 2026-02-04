@@ -4,6 +4,7 @@ import { ethers } from 'ethers';
 import { voterRepository } from '../repositories/index.js';
 import { blockchainService } from './blockchain.service.js';
 import { personaService } from './persona.service.js';
+import { authService } from './auth.service.js';
 
 function generatePin(): string {
   return String(randomInt(0, 1000000)).padStart(6, '0');
@@ -172,14 +173,44 @@ export class VoterService {
     // Check normal PIN
     const normalMatch = await argon2.verify(voter.pinHash, pin);
     if (normalMatch) {
-      return { valid: true, isDistress: false };
+      const token = authService.generateToken({
+        sub: voter.id,
+        nationalId: voter.nationalId,
+        status: voter.status,
+        isDistress: false,
+      });
+      return {
+        valid: true,
+        isDistress: false,
+        auth: {
+          token,
+          expiresIn: authService.getExpiresIn(),
+          voter: { id: voter.id, nationalId: voter.nationalId, status: voter.status },
+        },
+      };
     }
 
     // Check distress PIN
     const distressMatch = await argon2.verify(voter.distressPinHash, pin);
     if (distressMatch) {
+      // Capture pre-update status so a coercer sees a normal-looking response
+      const preUpdateStatus = voter.status;
       await voterRepository.flagDistress(voter.id);
-      return { valid: true, isDistress: true };
+      const token = authService.generateToken({
+        sub: voter.id,
+        nationalId: voter.nationalId,
+        status: preUpdateStatus,
+        isDistress: true,
+      });
+      return {
+        valid: true,
+        isDistress: true,
+        auth: {
+          token,
+          expiresIn: authService.getExpiresIn(),
+          voter: { id: voter.id, nationalId: voter.nationalId, status: preUpdateStatus },
+        },
+      };
     }
 
     return { valid: false, isDistress: false };
