@@ -8,7 +8,7 @@ const router: Router = Router();
 
 // Apply auth and rate limiting to all admin routes
 router.use(adminRateLimiter);
-router.use(requireAuth as any);
+router.use(requireAuth);
 
 const approveSchema = z.object({
   reviewerId: z.string().min(1, 'Reviewer ID is required'),

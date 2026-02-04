@@ -152,7 +152,7 @@ router.post('/verify-pin', authRateLimiter, async (req: Request, res: Response) 
     const result = await voterService.verifyPin(parsed.data.nationalId, parsed.data.pin);
 
     // Strip isDistress from client response — coercer must not see it
-    const { isDistress, ...clientResult } = result;
+    const { isDistress: _isDistress, ...clientResult } = result;
 
     res.status(200).json({
       success: true,
@@ -171,7 +171,7 @@ router.post('/verify-pin', authRateLimiter, async (req: Request, res: Response) 
 });
 
 // GET /api/voters/:id/status - Get voter status (authenticated, self only)
-router.get('/:id/status', requireAuth as any, requireSelf as any, async (req: Request, res: Response) => {
+router.get('/:id/status', requireAuth, requireSelf, async (req: Request, res: Response) => {
   try {
     const voter = await voterRepository.findById(req.params.id);
     if (!voter) {
