@@ -2,11 +2,13 @@ import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { adminService } from '../services/admin.service.js';
 import { ServiceError } from '../services/voter.service.js';
+import { requireAuth, adminRateLimiter } from '../middleware/index.js';
 
 const router: Router = Router();
 
-// In production, add authentication middleware to verify IEBC official credentials
-// For now, we use a simple reviewer ID in the request body
+// Apply auth and rate limiting to all admin routes
+router.use(adminRateLimiter);
+router.use(requireAuth as any);
 
 const approveSchema = z.object({
   reviewerId: z.string().min(1, 'Reviewer ID is required'),

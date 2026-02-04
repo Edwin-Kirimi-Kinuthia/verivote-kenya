@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { voterService, ServiceError } from '../services/voter.service.js';
 import { personaService } from '../services/persona.service.js';
 import { voterRepository } from '../repositories/index.js';
+import { authRateLimiter, registrationRateLimiter, requireAuth, requireSelf } from '../middleware/index.js';
 
 const router: Router = Router();
 
@@ -17,7 +18,7 @@ const verifyPinSchema = z.object({
 });
 
 // POST /api/voters/register
-router.post('/register', async (req: Request, res: Response) => {
+router.post('/register', registrationRateLimiter, async (req: Request, res: Response) => {
   try {
     const parsed = registerSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -137,7 +138,7 @@ router.post('/request-manual-review', async (req: Request, res: Response) => {
 });
 
 // POST /api/voters/verify-pin
-router.post('/verify-pin', async (req: Request, res: Response) => {
+router.post('/verify-pin', authRateLimiter, async (req: Request, res: Response) => {
   try {
     const parsed = verifyPinSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -150,9 +151,12 @@ router.post('/verify-pin', async (req: Request, res: Response) => {
 
     const result = await voterService.verifyPin(parsed.data.nationalId, parsed.data.pin);
 
+    // Strip isDistress from client response — coercer must not see it
+    const { isDistress, ...clientResult } = result;
+
     res.status(200).json({
       success: true,
-      data: result,
+      data: clientResult,
     });
   } catch (error) {
     if (error instanceof ServiceError) {
@@ -162,6 +166,39 @@ router.post('/verify-pin', async (req: Request, res: Response) => {
     res.status(500).json({
       success: false,
       error: error instanceof Error ? error.message : 'PIN verification failed',
+    });
+  }
+});
+
+// GET /api/voters/:id/status - Get voter status (authenticated, self only)
+router.get('/:id/status', requireAuth as any, requireSelf as any, async (req: Request, res: Response) => {
+  try {
+    const voter = await voterRepository.findById(req.params.id);
+    if (!voter) {
+      res.status(404).json({ success: false, error: 'Voter not found' });
+      return;
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        voterId: voter.id,
+        status: voter.status,
+        voteCount: voter.voteCount,
+        isRegistered: voter.status === 'REGISTERED' || voter.status === 'VOTED' || voter.status === 'REVOTED',
+        hasVoted: voter.voteCount > 0,
+        lastVotedAt: voter.lastVotedAt,
+        registeredAt: voter.createdAt,
+      },
+    });
+  } catch (error) {
+    if (error instanceof ServiceError) {
+      res.status(error.statusCode).json({ success: false, error: error.message });
+      return;
+    }
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to fetch voter status',
     });
   }
 });
