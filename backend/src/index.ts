@@ -20,6 +20,10 @@ import morgan from 'morgan';
 // [ADDED] Import Prisma client for database connection
 import { prisma } from './database/client.js';
 
+// [ADDED] Auth & rate limiting
+import { globalRateLimiter } from './middleware/index.js';
+import { disconnectRedis } from './config/redis.js';
+
 // [ADDED] Import repositories for data access (you'll use these in routes)
 import {
   voterRepository,
@@ -31,6 +35,18 @@ import {
 // [ADDED] Blockchain
 import blockchainRoutes from './routes/blockchain.routes.js';
 import { blockchainService } from './services/blockchain.service.js';
+
+// [ADDED] Voter registration
+import voterRoutes from './routes/voter.routes.js';
+
+// [ADDED] Admin routes for IEBC manual review
+import adminRoutes from './routes/admin.routes.js';
+
+// [ADDED] Appointment scheduling for manual reviews
+import appointmentRoutes from './routes/appointment.routes.js';
+
+// [ADDED] PIN reset routes
+import pinResetRoutes from './routes/pin-reset.routes.js';
 
 // ============================================
 // CREATE EXPRESS APPLICATION
@@ -50,6 +66,7 @@ app.use(cors({
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(globalRateLimiter);
 
 if (process.env.NODE_ENV !== 'production') {
   app.use(morgan('dev'));
@@ -175,25 +192,17 @@ app.get('/api/counties', async (_req: Request, res: Response) => {
   }
 });
 
-// Placeholder for voter routes (Week 2)
-app.get('/api/voters', async (req: Request, res: Response) => {
-  try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 20;
+// Voter routes (registration, PIN verification, listing)
+app.use('/api/voters', voterRoutes);
 
-    const result = await voterRepository.findMany({ page, limit });
+// Admin routes for IEBC manual verification review
+app.use('/api/admin', adminRoutes);
 
-    res.json({
-      success: true,
-      ...result,
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error instanceof Error ? error.message : 'Failed to fetch voters',
-    });
-  }
-});
+// Appointment scheduling for manual reviews
+app.use('/api/appointments', appointmentRoutes);
+
+// PIN reset for voters who forgot their PIN
+app.use('/api/pin-reset', pinResetRoutes);
 
 // ============================================
 // BLOCKCHAIN ROUTES
@@ -268,12 +277,14 @@ startServer();
 process.on('SIGINT', async () => {
   console.log('\n🛑 Shutting down...');
   await prisma.$disconnect();
+  await disconnectRedis();
   process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
   console.log('\n🛑 Shutting down...');
   await prisma.$disconnect();
+  await disconnectRedis();
   process.exit(0);
 });
 

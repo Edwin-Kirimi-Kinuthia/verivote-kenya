@@ -7,8 +7,11 @@
 // ENUMS
 // ============================================================================
 
-export type VoterStatus = 
+export type VoterStatus =
+  | 'PENDING_VERIFICATION'
+  | 'PENDING_MANUAL_REVIEW'
   | 'REGISTERED'
+  | 'VERIFICATION_FAILED'
   | 'VOTED'
   | 'REVOTED'
   | 'DISTRESS_FLAGGED'
@@ -20,12 +23,19 @@ export type VoteStatus =
   | 'SUPERSEDED'
   | 'INVALIDATED';
 
-export type PrintStatus = 
+export type PrintStatus =
   | 'PENDING'
   | 'PRINTING'
   | 'PRINTED'
   | 'FAILED'
   | 'CANCELLED';
+
+export type AppointmentStatus =
+  | 'AVAILABLE'
+  | 'BOOKED'
+  | 'COMPLETED'
+  | 'CANCELLED'
+  | 'NO_SHOW';
 
 // ============================================================================
 // ENTITY TYPES
@@ -39,6 +49,18 @@ export interface Voter {
   sbtMintedAt: Date | null;
   pinHash: string | null;
   distressPinHash: string | null;
+  personaInquiryId: string | null;
+  personaStatus: string | null;
+  personaVerifiedAt: Date | null;
+  verificationFailureReason: string | null;
+  manualReviewRequestedAt: Date | null;
+  manualReviewedAt: Date | null;
+  manualReviewedBy: string | null;
+  manualReviewNotes: string | null;
+  pinResetRequested: boolean;
+  pinResetRequestedAt: Date | null;
+  pinResetInquiryId: string | null;
+  pinLastResetAt: Date | null;
   status: VoterStatus;
   voteCount: number;
   lastVotedAt: Date | null;
@@ -100,6 +122,21 @@ export interface PrintQueue {
   updatedAt: Date;
 }
 
+export interface ManualReviewAppointment {
+  id: string;
+  scheduledAt: Date;
+  durationMinutes: number;
+  pollingStationId: string;
+  status: AppointmentStatus;
+  voterId: string | null;
+  assignedOfficerId: string | null;
+  assignedOfficerName: string | null;
+  bookedAt: Date | null;
+  notes: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 // ============================================================================
 // INPUT TYPES
 // ============================================================================
@@ -115,6 +152,18 @@ export interface UpdateVoterInput {
   sbtMintedAt?: Date;
   pinHash?: string;
   distressPinHash?: string;
+  personaInquiryId?: string;
+  personaStatus?: string;
+  personaVerifiedAt?: Date;
+  verificationFailureReason?: string;
+  manualReviewRequestedAt?: Date;
+  manualReviewedAt?: Date;
+  manualReviewedBy?: string;
+  manualReviewNotes?: string;
+  pinResetRequested?: boolean;
+  pinResetRequestedAt?: Date;
+  pinResetInquiryId?: string;
+  pinLastResetAt?: Date;
   status?: VoterStatus;
   voteCount?: number;
   lastVotedAt?: Date;
@@ -180,6 +229,23 @@ export interface UpdatePrintQueueInput {
   qrCodeData?: string;
 }
 
+export interface CreateAppointmentInput {
+  scheduledAt: Date;
+  durationMinutes?: number;
+  pollingStationId: string;
+  assignedOfficerId?: string;
+  assignedOfficerName?: string;
+}
+
+export interface UpdateAppointmentInput {
+  status?: AppointmentStatus;
+  voterId?: string;
+  bookedAt?: Date;
+  notes?: string;
+  assignedOfficerId?: string;
+  assignedOfficerName?: string;
+}
+
 // ============================================================================
 // QUERY TYPES
 // ============================================================================
@@ -240,7 +306,10 @@ export interface PaginatedResponse<T> {
 export interface VoterStats {
   total: number;
   byStatus: {
+    pendingVerification: number;
+    pendingManualReview: number;
     registered: number;
+    verificationFailed: number;
     voted: number;
     revoted: number;
     distressFlagged: number;
