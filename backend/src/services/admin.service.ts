@@ -6,7 +6,7 @@ import { blockchainService } from './blockchain.service.js';
 import { ServiceError } from './voter.service.js';
 
 function generatePin(): string {
-  return String(randomInt(0, 1000000)).padStart(6, '0');
+  return String(randomInt(0, 10000)).padStart(4, '0');
 }
 
 export class AdminService {
@@ -28,6 +28,9 @@ export class AdminService {
       verificationFailureReason: voter.verificationFailureReason,
       manualReviewRequestedAt: voter.manualReviewRequestedAt,
       createdAt: voter.createdAt,
+      sbtAddress: voter.sbtAddress,
+      sbtTokenId: voter.sbtTokenId,
+      sbtMintedAt: voter.sbtMintedAt,
     };
   }
 
