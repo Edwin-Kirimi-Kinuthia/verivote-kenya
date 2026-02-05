@@ -14,7 +14,7 @@ const registerSchema = z.object({
 
 const verifyPinSchema = z.object({
   nationalId: z.string().min(1, 'National ID is required'),
-  pin: z.string().regex(/^\d{6}$/, 'PIN must be exactly 6 digits'),
+  pin: z.string().regex(/^\d{4}$/, 'PIN must be exactly 4 digits'),
 });
 
 // POST /api/voters/register

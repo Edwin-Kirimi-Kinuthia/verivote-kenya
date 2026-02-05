@@ -5,6 +5,7 @@ node_modules/
 # Build outputs
 dist/
 build/
+.next/
 *.js.map
 
 # Environment files (contain secrets!)
@@ -23,6 +24,7 @@ build/
 .DS_Store
 Thumbs.db
 desktop.ini
+nul
 
 # Logs
 logs/

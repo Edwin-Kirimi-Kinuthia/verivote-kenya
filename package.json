@@ -16,6 +16,8 @@
     "contracts:compile": "pnpm --filter verivote-smart-contracts compile",
     "contracts:test": "pnpm --filter verivote-smart-contracts test",
     "contracts:node": "pnpm --filter verivote-smart-contracts node",
+    "dev:frontend": "pnpm --filter verivote-frontend dev",
+    "build:frontend": "pnpm --filter verivote-frontend build",
     "contracts:deploy": "pnpm --filter verivote-smart-contracts deploy:local"
   },
   "keywords": [
