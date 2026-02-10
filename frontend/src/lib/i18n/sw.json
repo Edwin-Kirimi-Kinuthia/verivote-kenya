@@ -1,0 +1,57 @@
+{
+  "pin": {
+    "title": "Piga Kura Yako",
+    "subtitle": "Weka kitambulisho chako kuanza kupiga kura",
+    "nationalId": "Nambari ya Kitambulisho",
+    "nationalIdPlaceholder": "12345678",
+    "pin": "Nambari ya Siri",
+    "pinPlaceholder": "Weka nambari 4 za siri",
+    "submit": "Endelea Kupiga Kura",
+    "submitting": "Inathibitisha...",
+    "error": "Kitambulisho au Nambari ya Siri si sahihi",
+    "notEligible": "Huna sifa za kupiga kura kwa wakati huu"
+  },
+  "ballot": {
+    "title": "Karatasi Yako ya Kura",
+    "subtitle": "Chagua mgombea mmoja kwa kila nafasi",
+    "review": "Kagua Chaguzi Zangu",
+    "selectAll": "Tafadhali chagua mgombea kwa kila nafasi",
+    "position": {
+      "president": "Rais",
+      "governor": "Gavana"
+    }
+  },
+  "review": {
+    "title": "Kagua Chaguzi Zako",
+    "subtitle": "Tafadhali thibitisha chaguzi zako kabla ya kutuma",
+    "change": "Badilisha",
+    "warning": "Kura yako itarekodiwa kwenye blockchain na haiwezi kubadilishwa. Unaweza kupiga kura mpya kuchukua nafasi ya hii.",
+    "submit": "Thibitisha na Tuma Kura",
+    "submitting": "Inatuma kura yako...",
+    "back": "Rudi kwa Karatasi ya Kura",
+    "error": "Imeshindwa kutuma kura yako. Tafadhali jaribu tena."
+  },
+  "receipt": {
+    "title": "Kura Imetumwa Kwa Mafanikio!",
+    "subtitle": "Kura yako imerekodiwa kwa usalama",
+    "serialNumber": "Nambari Yako ya Risiti",
+    "blockchain": "Muamala wa Blockchain",
+    "pending": "Inasubiri uthibitisho",
+    "print": "Chapisha Risiti",
+    "done": "Maliza",
+    "autoLogout": "Utatolewa nje baada ya sekunde {seconds}",
+    "keepSafe": "Hifadhi nambari hii ya risiti. Unaweza kuitumia kuthibitisha kura yako."
+  },
+  "common": {
+    "loading": "Inapakia...",
+    "error": "Hitilafu imetokea",
+    "retry": "Jaribu Tena",
+    "logout": "Ondoka",
+    "party": "Chama"
+  },
+  "language": {
+    "en": "English",
+    "sw": "Kiswahili",
+    "toggle": "Badilisha lugha"
+  }
+}

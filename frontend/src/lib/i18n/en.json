@@ -1,0 +1,57 @@
+{
+  "pin": {
+    "title": "Cast Your Vote",
+    "subtitle": "Enter your credentials to begin voting",
+    "nationalId": "National ID",
+    "nationalIdPlaceholder": "12345678",
+    "pin": "PIN",
+    "pinPlaceholder": "Enter 4-digit PIN",
+    "submit": "Proceed to Ballot",
+    "submitting": "Verifying...",
+    "error": "Invalid National ID or PIN",
+    "notEligible": "You are not eligible to vote at this time"
+  },
+  "ballot": {
+    "title": "Your Ballot",
+    "subtitle": "Select one candidate for each position",
+    "review": "Review My Selections",
+    "selectAll": "Please select a candidate for every position",
+    "position": {
+      "president": "President",
+      "governor": "Governor"
+    }
+  },
+  "review": {
+    "title": "Review Your Selections",
+    "subtitle": "Please verify your choices before submitting",
+    "change": "Change",
+    "warning": "Your vote will be recorded on the blockchain and cannot be altered. You may cast a new vote to supersede this one.",
+    "submit": "Confirm & Submit Vote",
+    "submitting": "Submitting your vote...",
+    "back": "Back to Ballot",
+    "error": "Failed to submit your vote. Please try again."
+  },
+  "receipt": {
+    "title": "Vote Submitted Successfully!",
+    "subtitle": "Your vote has been securely recorded",
+    "serialNumber": "Your Receipt Number",
+    "blockchain": "Blockchain Transaction",
+    "pending": "Pending confirmation",
+    "print": "Print Receipt",
+    "done": "Done",
+    "autoLogout": "You will be logged out in {seconds} seconds",
+    "keepSafe": "Keep this receipt number safe. You can use it to verify your vote."
+  },
+  "common": {
+    "loading": "Loading...",
+    "error": "An error occurred",
+    "retry": "Try Again",
+    "logout": "Log Out",
+    "party": "Party"
+  },
+  "language": {
+    "en": "English",
+    "sw": "Kiswahili",
+    "toggle": "Switch language"
+  }
+}
