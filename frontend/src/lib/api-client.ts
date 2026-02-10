@@ -28,7 +28,9 @@ class ApiClient {
     if (res.status === 401) {
       if (typeof window !== "undefined") {
         localStorage.removeItem("token");
-        window.location.href = "/admin/login";
+        localStorage.removeItem("voter");
+        const isVotePath = window.location.pathname.startsWith("/vote");
+        window.location.href = isVotePath ? "/vote" : "/admin/login";
       }
       throw new Error("Unauthorized");
     }

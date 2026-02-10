@@ -4,4 +4,5 @@ export {
   authRateLimiter,
   registrationRateLimiter,
   adminRateLimiter,
+  voteRateLimiter,
 } from './rate-limit.middleware.js';

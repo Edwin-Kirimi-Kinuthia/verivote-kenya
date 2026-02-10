@@ -3,8 +3,8 @@ import { AuthProvider } from "@/contexts/auth-context";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "VeriVote Admin",
-  description: "VeriVote Kenya Administration Dashboard",
+  title: "VeriVote Kenya",
+  description: "VeriVote Kenya - Secure Electronic Voting System",
 };
 
 export default function RootLayout({

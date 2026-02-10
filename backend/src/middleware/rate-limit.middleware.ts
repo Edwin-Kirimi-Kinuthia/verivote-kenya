@@ -13,6 +13,7 @@ export const authRateLimiter = rateLimit({
   limit: 5,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
+  validate: { xForwardedForHeader: false, ip: false, default: true },
   keyGenerator: (req) => {
     const nationalId = req.body?.nationalId || 'unknown';
     return `${req.ip}-${nationalId}`;
@@ -34,4 +35,12 @@ export const adminRateLimiter = rateLimit({
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   message: { success: false, error: 'Too many requests, please try again later' },
+});
+
+export const voteRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 5,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { success: false, error: 'Too many vote attempts, please try again later' },
 });
