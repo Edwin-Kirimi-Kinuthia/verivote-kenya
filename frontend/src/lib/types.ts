@@ -177,3 +177,37 @@ export interface PinResetResult {
   verificationNotes?: string;
   verificationType: string;
 }
+
+// ============================================================================
+// VOTING TYPES
+// ============================================================================
+
+export interface Candidate {
+  id: string;
+  name: string;
+  party: string;
+  partyAbbreviation: string;
+  photoPlaceholder: string;
+  position: string;
+}
+
+export interface BallotPosition {
+  id: string;
+  title: string;
+  titleKey: string;
+  candidates: Candidate[];
+}
+
+export type BallotSelection = Record<string, string>;
+
+export interface VoteSubmission {
+  selections: BallotSelection;
+  pollingStationId?: string;
+}
+
+export interface VoteReceipt {
+  serialNumber: string;
+  voteId: string;
+  blockchainTxHash: string | null;
+  timestamp: string;
+}

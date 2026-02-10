@@ -48,6 +48,9 @@ import appointmentRoutes from './routes/appointment.routes.js';
 // [ADDED] PIN reset routes
 import pinResetRoutes from './routes/pin-reset.routes.js';
 
+// [ADDED] Vote casting routes
+import voteRoutes from './routes/vote.routes.js';
+
 // ============================================
 // CREATE EXPRESS APPLICATION
 // ============================================
@@ -203,6 +206,9 @@ app.use('/api/appointments', appointmentRoutes);
 
 // PIN reset for voters who forgot their PIN
 app.use('/api/pin-reset', pinResetRoutes);
+
+// Vote casting
+app.use('/api/votes', voteRoutes);
 
 // ============================================
 // BLOCKCHAIN ROUTES
