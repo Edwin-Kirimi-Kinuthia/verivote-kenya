@@ -511,6 +511,7 @@ async function main() {
   try {
     // Step 1: Clear existing data (in correct order for foreign keys)
     console.log('🧹 Clearing existing data...');
+    await prisma.manualReviewAppointment.deleteMany();
     await prisma.printQueue.deleteMany();
     await prisma.vote.deleteMany();
     await prisma.voter.deleteMany();

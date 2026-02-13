@@ -1,6 +1,7 @@
-import { createHash, randomBytes } from 'crypto';
+import { randomBytes } from 'crypto';
 import { voterRepository, voteRepository } from '../repositories/index.js';
 import { blockchainService } from './blockchain.service.js';
+import { encryptionService } from './encryption.service.js';
 import { ServiceError } from './voter.service.js';
 import type { JwtPayload } from '../types/auth.types.js';
 
@@ -18,11 +19,6 @@ interface CastVoteResult {
 
 function generateSerialNumber(): string {
   return randomBytes(8).toString('hex').toUpperCase().slice(0, 16);
-}
-
-function hashSelections(selections: Record<string, string>): string {
-  const sorted = JSON.stringify(selections, Object.keys(selections).sort());
-  return createHash('sha256').update(sorted).digest('hex');
 }
 
 export class VoteService {
@@ -44,7 +40,9 @@ export class VoteService {
       throw new ServiceError('Polling station is required', 400);
     }
 
-    const voteHash = hashSelections(input.selections);
+    // Encrypt selections and hash the ciphertext
+    const encryptedData = encryptionService.encryptVote(input.selections);
+    const voteHash = encryptionService.hashEncryptedData(encryptedData);
     const serialNumber = generateSerialNumber();
     const isRevote = voterRecord.voteCount > 0;
 
@@ -71,7 +69,7 @@ export class VoteService {
 
       const { newVote } = await voteRepository.castRevote(lastVote.id, {
         encryptedVoteHash: voteHash,
-        encryptedVoteData: JSON.stringify(input.selections),
+        encryptedVoteData: encryptedData,
         serialNumber,
         pollingStationId,
       });
@@ -79,7 +77,7 @@ export class VoteService {
     } else {
       const vote = await voteRepository.create({
         encryptedVoteHash: voteHash,
-        encryptedVoteData: JSON.stringify(input.selections),
+        encryptedVoteData: encryptedData,
         serialNumber,
         pollingStationId,
       });

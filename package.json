@@ -33,5 +33,17 @@
   "engines": {
     "node": ">=20.0.0",
     "pnpm": ">=8.0.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@prisma/client",
+      "@prisma/engines",
+      "argon2",
+      "esbuild",
+      "keccak",
+      "prisma",
+      "secp256k1",
+      "sharp"
+    ]
   }
 }

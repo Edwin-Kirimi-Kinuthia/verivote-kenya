@@ -36,6 +36,9 @@ import {
 import blockchainRoutes from './routes/blockchain.routes.js';
 import { blockchainService } from './services/blockchain.service.js';
 
+// [ADDED] ElGamal encryption for vote data
+import { encryptionService } from './services/encryption.service.js';
+
 // [ADDED] Voter registration
 import voterRoutes from './routes/voter.routes.js';
 
@@ -248,6 +251,9 @@ async function startServer() {
     // [ADDED] Test database connection before starting
     await prisma.$connect();
     console.log('✅ Database connected');
+
+    // Initialize ElGamal encryption (fail-fast if key missing)
+    encryptionService.init();
 
     // Connect to blockchain (non-fatal if unavailable)
     try {
