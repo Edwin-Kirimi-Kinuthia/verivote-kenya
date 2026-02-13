@@ -13,11 +13,12 @@ export const authRateLimiter = rateLimit({
   limit: 5,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
-  validate: { xForwardedForHeader: false, ip: false, default: true },
   keyGenerator: (req) => {
     const nationalId = req.body?.nationalId || 'unknown';
-    return `${req.ip}-${nationalId}`;
+    const ip = req.ip ?? '0.0.0.0';
+    return `${ip}-${nationalId}`;
   },
+  validate: { xForwardedForHeader: false, ip: false, default: false },
   message: { success: false, error: 'Too many authentication attempts, please try again later' },
 });
 
