@@ -10,14 +10,14 @@ export default function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { token, isLoading } = useAuth();
+  const { token, voter, isLoading } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
-    if (!isLoading && !token) {
+    if (!isLoading && (!token || voter?.role !== "ADMIN")) {
       router.replace("/admin/login");
     }
-  }, [token, isLoading, router]);
+  }, [token, voter, isLoading, router]);
 
   if (isLoading) {
     return (
@@ -27,7 +27,7 @@ export default function DashboardLayout({
     );
   }
 
-  if (!token) return null;
+  if (!token || voter?.role !== "ADMIN") return null;
 
   return (
     <div className="flex min-h-screen">

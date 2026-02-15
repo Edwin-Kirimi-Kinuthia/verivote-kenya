@@ -50,6 +50,9 @@ smart-contracts/cache/
 smart-contracts/typechain-types/
 smart-contracts/deployments/
 
+# TypeScript build info
+*.tsbuildinfo
+
 # Misc
 *.tmp
 *.temp

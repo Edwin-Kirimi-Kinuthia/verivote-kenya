@@ -30,6 +30,11 @@ export default function LoginPage() {
         return;
       }
 
+      if (res.data.auth.voter.role !== "ADMIN") {
+        setError("Access denied: admin credentials required");
+        return;
+      }
+
       login(res.data.auth.token, res.data.auth.voter);
       router.push("/admin");
     } catch (err) {

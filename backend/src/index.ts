@@ -1,14 +1,3 @@
-/**
- * ============================================================================
- * VeriVote Kenya - Main Server Entry Point
- * ============================================================================
- * 
- * This is your existing index.ts with Prisma integration added.
- * Changes from your original are marked with: // [ADDED]
- * 
- * ============================================================================
- */
-
 import dotenv from 'dotenv';
 dotenv.config();
 
@@ -17,14 +6,10 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 
-// [ADDED] Import Prisma client for database connection
 import { prisma } from './database/client.js';
-
-// [ADDED] Auth & rate limiting
 import { globalRateLimiter } from './middleware/index.js';
 import { disconnectRedis } from './config/redis.js';
 
-// [ADDED] Import repositories for data access (you'll use these in routes)
 import {
   voterRepository,
   voteRepository,
@@ -32,27 +17,15 @@ import {
   printQueueRepository
 } from './repositories/index.js';
 
-// [ADDED] Blockchain
 import blockchainRoutes from './routes/blockchain.routes.js';
 import { blockchainService } from './services/blockchain.service.js';
-
-// [ADDED] ElGamal encryption for vote data
 import { encryptionService } from './services/encryption.service.js';
-
-// [ADDED] Voter registration
 import voterRoutes from './routes/voter.routes.js';
-
-// [ADDED] Admin routes for IEBC manual review
 import adminRoutes from './routes/admin.routes.js';
-
-// [ADDED] Appointment scheduling for manual reviews
 import appointmentRoutes from './routes/appointment.routes.js';
-
-// [ADDED] PIN reset routes
 import pinResetRoutes from './routes/pin-reset.routes.js';
-
-// [ADDED] Vote casting routes
 import voteRoutes from './routes/vote.routes.js';
+import receiptRoutes from './routes/receipt.routes.js';
 
 // ============================================
 // CREATE EXPRESS APPLICATION
@@ -81,13 +54,11 @@ if (process.env.NODE_ENV !== 'production') {
 // ============================================
 // HEALTH CHECK ROUTE
 // ============================================
-// [MODIFIED] Added database connection check
 
 app.get('/health', async (_req: Request, res: Response) => {
   try {
-    // [ADDED] Test database connection with a simple query
     await prisma.$queryRaw`SELECT 1`;
-    
+
     const blockchainHealthy = await blockchainService.isHealthy();
 
     res.status(200).json({
@@ -98,7 +69,6 @@ app.get('/health', async (_req: Request, res: Response) => {
       blockchain: blockchainHealthy ? 'connected' : 'disconnected',
     });
   } catch (error) {
-    // [ADDED] Handle database connection errors
     res.status(503).json({
       status: 'unhealthy',
       timestamp: new Date().toISOString(),
@@ -119,18 +89,16 @@ app.get('/', (_req: Request, res: Response) => {
     description: 'Hybrid Electronic Voting System API',
     endpoints: {
       health: 'GET /health - Check if server is running',
-      stats: 'GET /api/stats - Get database statistics',  // [ADDED]
-      voters: 'GET /api/voters - List voters (coming Week 2)',
-      votes: 'GET /api/votes - List votes (coming Week 3)',
-      verify: 'GET /api/verify/:serial - Verify a vote (coming Week 3)',
+      stats: 'GET /api/stats - Get database statistics',
+      voters: 'GET /api/voters - List voters',
+      votes: 'GET /api/votes - Cast and manage votes',
+      receipts: 'GET /api/receipts/:serial - Verify a vote receipt',
     },
   });
 });
 
-// [ADDED] Statistics endpoint - demonstrates repository usage
 app.get('/api/stats', async (_req: Request, res: Response) => {
   try {
-    // Get statistics from all repositories
     const [voterStats, voteStats, stationStats, printStats] = await Promise.all([
       voterRepository.getStats(),
       voteRepository.getStats(),
@@ -156,7 +124,6 @@ app.get('/api/stats', async (_req: Request, res: Response) => {
   }
 });
 
-// [ADDED] Example: List polling stations
 app.get('/api/polling-stations', async (req: Request, res: Response) => {
   try {
     const page = parseInt(req.query.page as string) || 1;
@@ -182,7 +149,6 @@ app.get('/api/polling-stations', async (req: Request, res: Response) => {
   }
 });
 
-// [ADDED] Example: Get list of counties
 app.get('/api/counties', async (_req: Request, res: Response) => {
   try {
     const counties = await pollingStationRepository.getCounties();
@@ -213,6 +179,9 @@ app.use('/api/pin-reset', pinResetRoutes);
 // Vote casting
 app.use('/api/votes', voteRoutes);
 
+// Receipt verification
+app.use('/api/receipts', receiptRoutes);
+
 // ============================================
 // BLOCKCHAIN ROUTES
 // ============================================
@@ -232,11 +201,11 @@ app.use((req: Request, res: Response) => {
 
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   console.error('Error:', err.message);
-  
+
   res.status(500).json({
     error: 'Internal Server Error',
-    message: process.env.NODE_ENV === 'production' 
-      ? 'Something went wrong' 
+    message: process.env.NODE_ENV === 'production'
+      ? 'Something went wrong'
       : err.message,
   });
 });
@@ -245,10 +214,8 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
 // START SERVER
 // ============================================
 
-// [MODIFIED] Added async startup with database connection
 async function startServer() {
   try {
-    // [ADDED] Test database connection before starting
     await prisma.$connect();
     console.log('✅ Database connected');
 
@@ -284,7 +251,6 @@ startServer();
 // ============================================
 // GRACEFUL SHUTDOWN
 // ============================================
-// [ADDED] Properly disconnect from database on shutdown
 
 process.on('SIGINT', async () => {
   console.log('\n🛑 Shutting down...');

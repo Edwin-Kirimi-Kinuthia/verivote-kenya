@@ -2,13 +2,13 @@ import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { adminService } from '../services/admin.service.js';
 import { ServiceError } from '../services/voter.service.js';
-import { requireAuth, adminRateLimiter } from '../middleware/index.js';
+import { requireAuth, requireAdmin, adminRateLimiter } from '../middleware/index.js';
 
 const router: Router = Router();
 
-// Apply auth and rate limiting to all admin routes
+// Apply auth, admin role check, and rate limiting to all admin routes
 router.use(adminRateLimiter);
-router.use(requireAuth);
+router.use(requireAuth, requireAdmin);
 
 const approveSchema = z.object({
   reviewerId: z.string().min(1, 'Reviewer ID is required'),

@@ -5,6 +5,7 @@ export interface JwtPayload {
   sub: string;
   nationalId: string;
   status: VoterStatus;
+  role: string;
   isDistress: boolean;
   iat?: number;
   exp?: number;
@@ -21,6 +22,7 @@ export interface AuthResponse {
     id: string;
     nationalId: string;
     status: VoterStatus;
+    role: string;
   };
 }
 

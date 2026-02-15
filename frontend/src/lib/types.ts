@@ -94,6 +94,7 @@ export interface AuthData {
     id: string;
     nationalId: string;
     status: VoterStatus;
+    role: string;
   };
 }
 
