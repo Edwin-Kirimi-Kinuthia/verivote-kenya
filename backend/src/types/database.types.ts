@@ -30,6 +30,8 @@ export type PrintStatus =
   | 'FAILED'
   | 'CANCELLED';
 
+export type UserRole = 'VOTER' | 'ADMIN';
+
 export type AppointmentStatus =
   | 'AVAILABLE'
   | 'BOOKED'
@@ -43,6 +45,7 @@ export type AppointmentStatus =
 
 export interface Voter {
   id: string;
+  role: UserRole;
   nationalId: string;
   sbtAddress: string | null;
   sbtTokenId: string | null;

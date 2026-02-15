@@ -177,6 +177,7 @@ export class VoterService {
         sub: voter.id,
         nationalId: voter.nationalId,
         status: voter.status,
+        role: voter.role,
         isDistress: false,
       });
       return {
@@ -185,7 +186,7 @@ export class VoterService {
         auth: {
           token,
           expiresIn: authService.getExpiresIn(),
-          voter: { id: voter.id, nationalId: voter.nationalId, status: voter.status },
+          voter: { id: voter.id, nationalId: voter.nationalId, status: voter.status, role: voter.role },
         },
       };
     }
@@ -200,6 +201,7 @@ export class VoterService {
         sub: voter.id,
         nationalId: voter.nationalId,
         status: preUpdateStatus,
+        role: voter.role,
         isDistress: true,
       });
       return {
@@ -208,7 +210,7 @@ export class VoterService {
         auth: {
           token,
           expiresIn: authService.getExpiresIn(),
-          voter: { id: voter.id, nationalId: voter.nationalId, status: preUpdateStatus },
+          voter: { id: voter.id, nationalId: voter.nationalId, status: preUpdateStatus, role: voter.role },
         },
       };
     }

@@ -45,3 +45,11 @@ export const voteRateLimiter = rateLimit({
   legacyHeaders: false,
   message: { success: false, error: 'Too many vote attempts, please try again later' },
 });
+
+export const receiptRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 20,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { success: false, error: 'Too many receipt lookup attempts, please try again later' },
+});

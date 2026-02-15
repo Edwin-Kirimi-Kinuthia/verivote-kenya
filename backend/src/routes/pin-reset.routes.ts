@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { pinResetService } from '../services/pin-reset.service.js';
 import { personaService } from '../services/persona.service.js';
 import { ServiceError } from '../services/voter.service.js';
+import { requireAuth, requireAdmin } from '../middleware/index.js';
 
 const router: Router = Router();
 
@@ -151,7 +152,7 @@ router.post('/biometric-webhook', async (req: Request, res: Response) => {
 // ============================================
 
 // GET /api/pin-reset/pending - List pending PIN reset requests
-router.get('/pending', async (req: Request, res: Response) => {
+router.get('/pending', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   try {
     const pollingStationId = req.query.pollingStationId as string | undefined;
     const page = parseInt(req.query.page as string) || 1;
@@ -176,7 +177,7 @@ router.get('/pending', async (req: Request, res: Response) => {
 });
 
 // POST /api/pin-reset/verify/:voterId - IEBC completes in-person verification
-router.post('/verify/:voterId', async (req: Request, res: Response) => {
+router.post('/verify/:voterId', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   try {
     const parsed = inPersonResetSchema.safeParse(req.body);
     if (!parsed.success) {

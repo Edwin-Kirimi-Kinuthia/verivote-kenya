@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { appointmentService } from '../services/appointment.service.js';
 import { ServiceError } from '../services/voter.service.js';
+import { requireAuth, requireAdmin } from '../middleware/index.js';
 
 const router: Router = Router();
 
@@ -24,7 +25,7 @@ const bookSlotSchema = z.object({
 // ============================================
 
 // POST /api/appointments/create-slots - IEBC creates time slots for a day
-router.post('/create-slots', async (req: Request, res: Response) => {
+router.post('/create-slots', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   try {
     const parsed = createSlotsSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -57,7 +58,7 @@ router.post('/create-slots', async (req: Request, res: Response) => {
 });
 
 // GET /api/appointments/scheduled - IEBC views scheduled appointments
-router.get('/scheduled', async (req: Request, res: Response) => {
+router.get('/scheduled', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   try {
     const pollingStationId = req.query.pollingStationId as string | undefined;
     const assignedOfficerId = req.query.assignedOfficerId as string | undefined;
@@ -86,7 +87,7 @@ router.get('/scheduled', async (req: Request, res: Response) => {
 });
 
 // POST /api/appointments/:id/complete - IEBC marks appointment as completed
-router.post('/:id/complete', async (req: Request, res: Response) => {
+router.post('/:id/complete', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   try {
     const { notes } = req.body;
     const result = await appointmentService.completeAppointment(req.params.id, notes);
@@ -108,7 +109,7 @@ router.post('/:id/complete', async (req: Request, res: Response) => {
 });
 
 // POST /api/appointments/:id/no-show - IEBC marks voter as no-show
-router.post('/:id/no-show', async (req: Request, res: Response) => {
+router.post('/:id/no-show', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   try {
     const result = await appointmentService.markNoShow(req.params.id);
 
@@ -129,7 +130,7 @@ router.post('/:id/no-show', async (req: Request, res: Response) => {
 });
 
 // DELETE /api/appointments/slots - Delete available slots for a time range
-router.delete('/slots', async (req: Request, res: Response) => {
+router.delete('/slots', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   try {
     const { pollingStationId, fromDate, toDate } = req.body;
 

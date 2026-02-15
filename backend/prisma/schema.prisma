@@ -42,6 +42,12 @@ datasource db {
 // Enums define a fixed set of allowed values
 // They become TypeScript union types AND PostgreSQL enum types
 
+/// User roles for access control
+enum UserRole {
+  VOTER   // Regular voter (default)
+  ADMIN   // IEBC administrator
+}
+
 /// Status tracking for voters throughout the election process
 /// TypeScript: type VoterStatus = 'REGISTERED' | 'VOTED' | 'REVOTED' | ...
 enum VoterStatus {
@@ -88,9 +94,14 @@ model Voter {
   id                String       @id @default(uuid()) @db.Uuid
 
   // --------------------------------------------------------------------------
+  // ROLE
+  // --------------------------------------------------------------------------
+  role              UserRole     @default(VOTER)
+
+  // --------------------------------------------------------------------------
   // IDENTITY FIELDS
   // --------------------------------------------------------------------------
-  
+
   // National ID - unique identifier for each Kenyan voter
   // @db.VarChar(20) = max 20 characters in PostgreSQL
   nationalId        String       @unique @map("national_id") @db.VarChar(20)
@@ -214,6 +225,7 @@ model Voter {
   @@index([sbtAddress])       // Fast lookup by blockchain address
   @@index([pollingStationId]) // Fast lookup by polling station
   @@index([status])           // Fast filtering by status
+  @@index([role])             // Fast filtering by role
   
   // Rename the table in PostgreSQL to 'voters' (plural, lowercase)
   @@map("voters")

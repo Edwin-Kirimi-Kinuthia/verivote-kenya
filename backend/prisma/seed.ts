@@ -15,8 +15,9 @@
  * ============================================================================
  */
 
-import { PrismaClient, VoterStatus, VoteStatus, PrintStatus } from '@prisma/client';
+import { PrismaClient, VoterStatus, VoteStatus, PrintStatus, UserRole } from '@prisma/client';
 import { randomBytes, createHash } from 'crypto';
+import argon2 from 'argon2';
 
 // Create Prisma client for database operations
 const prisma = new PrismaClient();
@@ -499,6 +500,39 @@ async function seedPrintQueue(voteIds: string[], stationIds: string[]): Promise<
   console.log(`✅ Created ${votesToPrint.length} print queue items\n`);
 }
 
+/**
+ * Creates an IEBC admin user with known credentials for dev testing
+ * National ID: 00000001, PIN: 1234, Distress PIN: 5678
+ */
+async function seedAdminUser(stationIds: string[]): Promise<void> {
+  console.log('🔑 Creating admin user...');
+
+  const adminPin = '1234';
+  const adminDistressPin = '5678';
+
+  const [pinHash, distressPinHash] = await Promise.all([
+    argon2.hash(adminPin, { type: argon2.argon2id }),
+    argon2.hash(adminDistressPin, { type: argon2.argon2id }),
+  ]);
+
+  await prisma.voter.create({
+    data: {
+      nationalId: '00000001',
+      role: UserRole.ADMIN,
+      sbtAddress: generateEthereumAddress(),
+      sbtTokenId: 'ADMIN-1',
+      sbtMintedAt: new Date(),
+      pinHash,
+      distressPinHash,
+      status: VoterStatus.REGISTERED,
+      pollingStationId: stationIds[0],
+    },
+  });
+
+  console.log('   ✓ Admin user created (National ID: 00000001, PIN: 1234)');
+  console.log('✅ Admin user seeded\n');
+}
+
 // ============================================================================
 // MAIN FUNCTION
 // ============================================================================
@@ -520,6 +554,7 @@ async function main() {
     
     // Step 2: Seed data in order (respecting foreign key relationships)
     const stationIds = await seedPollingStations();
+    await seedAdminUser(stationIds);
     const voterIds = await seedVoters(stationIds);
     const voteIds = await seedVotes(stationIds);
     await seedPrintQueue(voteIds, stationIds);

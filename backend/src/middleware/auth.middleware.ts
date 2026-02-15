@@ -37,6 +37,21 @@ export function optionalAuth(req: Request, _res: Response, next: NextFunction): 
   next();
 }
 
+export function requireAdmin(req: Request, res: Response, next: NextFunction): void {
+  const authReq = req as AuthenticatedRequest;
+  if (!authReq.voter) {
+    res.status(401).json({ success: false, error: 'Authentication required' });
+    return;
+  }
+
+  if (authReq.voter.role !== 'ADMIN') {
+    res.status(403).json({ success: false, error: 'Admin access required' });
+    return;
+  }
+
+  next();
+}
+
 export function requireSelf(req: Request, res: Response, next: NextFunction): void {
   const authReq = req as AuthenticatedRequest;
   if (!authReq.voter) {
