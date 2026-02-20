@@ -79,5 +79,53 @@
     "en": "English",
     "sw": "Kiswahili",
     "toggle": "Switch language"
+  },
+  "verify": {
+    "title": "Verify Your Vote",
+    "subtitle": "Enter your receipt serial number to confirm your vote was recorded correctly",
+    "label": "Receipt Serial Number",
+    "placeholder": "Enter 16-character serial (e.g. A1B2C3D4E5F60123)",
+    "submit": "Verify Vote",
+    "submitting": "Verifying...",
+    "verifyAnother": "Verify Another",
+    "returnHome": "Return to Home",
+    "print": "Print Verification",
+    "status": {
+      "title": "Vote Status",
+      "PENDING": "Pending",
+      "CONFIRMED": "Confirmed",
+      "SUPERSEDED": "Superseded",
+      "INVALIDATED": "Invalidated"
+    },
+    "result": {
+      "verified": "Vote Verified",
+      "verifiedDesc": "Your vote has been cryptographically verified and the record is intact.",
+      "integrity": "Integrity Warning",
+      "integrityDesc": "The vote data integrity check failed. Please contact the IEBC immediately.",
+      "superseded": "Vote Superseded",
+      "supersededDesc": "This vote was replaced by a newer vote. Only the most recent vote counts."
+    },
+    "labels": {
+      "serialNumber": "Serial Number",
+      "voteStatus": "Vote Status",
+      "timestamp": "Recorded At",
+      "cryptoIntegrity": "Cryptographic Integrity",
+      "blockchainConfirmed": "Blockchain Confirmed",
+      "txHash": "Transaction Hash",
+      "blockchainTimestamp": "Blockchain Timestamp"
+    },
+    "values": {
+      "hashValid": "Valid — data intact",
+      "hashInvalid": "Invalid — data may have been altered",
+      "confirmed": "Confirmed on blockchain",
+      "pending": "Pending blockchain confirmation",
+      "unavailable": "Blockchain status unavailable"
+    },
+    "secrecyNote": "This verification confirms your vote was recorded correctly, but does not reveal how you voted. Ballot secrecy is maintained at all times.",
+    "errors": {
+      "notFound": "No vote found with this serial number. Please check the number and try again.",
+      "generic": "Verification failed. Please try again later.",
+      "invalidFormat": "Serial number must be exactly 16 hexadecimal characters (0–9, A–F)."
+    }
   }
 }

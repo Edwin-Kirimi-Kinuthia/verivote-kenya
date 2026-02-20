@@ -4,6 +4,7 @@ import { blockchainService } from './blockchain.service.js';
 import { encryptionService } from './encryption.service.js';
 import { ServiceError } from './voter.service.js';
 import type { JwtPayload } from '../types/auth.types.js';
+import type { VerifyVoteResult } from '../types/database.types.js';
 
 interface CastVoteInput {
   selections: Record<string, string>;
@@ -102,6 +103,69 @@ export class VoteService {
       voteId,
       blockchainTxHash,
       timestamp: new Date(),
+    };
+  }
+
+  async verifyVote(serial: string): Promise<VerifyVoteResult> {
+    const vote = await voteRepository.findBySerialNumber(serial);
+
+    if (!vote) {
+      return {
+        verified: false,
+        serialNumber: serial,
+        status: 'PENDING',
+        timestamp: new Date(),
+        confirmedAt: null,
+        cryptographicVerification: { hashValid: false, checkedAt: new Date() },
+        blockchainConfirmation: {
+          confirmed: false,
+          txHash: null,
+          confirmedAt: null,
+          blockchainTimestamp: null,
+          isSuperseded: null,
+        },
+        message: 'not_found',
+      };
+    }
+
+    const checkedAt = new Date();
+    let hashValid = false;
+    if (vote.encryptedVoteData) {
+      const computedHash = encryptionService.hashEncryptedData(vote.encryptedVoteData);
+      hashValid = computedHash === vote.encryptedVoteHash;
+    }
+
+    let blockchainRecord = null;
+    try {
+      blockchainRecord = await blockchainService.getVoteRecord(serial);
+    } catch (err) {
+      console.warn('Blockchain query failed (non-fatal):', err instanceof Error ? err.message : err);
+    }
+
+    let message: string;
+    if (!hashValid) {
+      message = 'integrity_warning';
+    } else if (blockchainRecord) {
+      message = 'verified';
+    } else {
+      message = 'verified_no_blockchain';
+    }
+
+    return {
+      verified: hashValid,
+      serialNumber: serial,
+      status: vote.status,
+      timestamp: vote.timestamp,
+      confirmedAt: vote.confirmedAt,
+      cryptographicVerification: { hashValid, checkedAt },
+      blockchainConfirmation: {
+        confirmed: blockchainRecord !== null,
+        txHash: vote.blockchainTxHash,
+        confirmedAt: vote.confirmedAt,
+        blockchainTimestamp: blockchainRecord?.timestamp ?? null,
+        isSuperseded: blockchainRecord?.isSuperseded ?? null,
+      },
+      message,
     };
   }
 }

@@ -383,3 +383,20 @@ export interface PrintQueueWithDetails extends PrintQueue {
   vote: Vote;
   pollingStation: PollingStation;
 }
+
+export interface VerifyVoteResult {
+  verified: boolean;
+  serialNumber: string;
+  status: VoteStatus;
+  timestamp: Date;
+  confirmedAt: Date | null;
+  cryptographicVerification: { hashValid: boolean; checkedAt: Date; };
+  blockchainConfirmation: {
+    confirmed: boolean;
+    txHash: string | null;
+    confirmedAt: Date | null;
+    blockchainTimestamp: number | null;
+    isSuperseded: boolean | null;
+  };
+  message: string;
+}

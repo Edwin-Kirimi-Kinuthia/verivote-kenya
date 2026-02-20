@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useAuth } from "@/contexts/auth-context";
 import { useTranslation } from "@/contexts/language-context";
 import type { VoteReceipt } from "@/lib/types";
@@ -107,6 +108,12 @@ export default function ReceiptPage() {
           </div>
 
           <p className="text-xs text-gray-400">{t("receipt.keepSafe")}</p>
+          <Link
+            href="/verify"
+            className="mt-3 inline-block text-xs font-medium text-amber-600 hover:underline"
+          >
+            Verify your vote →
+          </Link>
         </div>
 
         <div className="mt-6 space-y-3">
