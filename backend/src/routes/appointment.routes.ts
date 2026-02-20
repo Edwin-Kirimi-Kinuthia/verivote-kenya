@@ -6,9 +6,11 @@ import { requireAuth, requireAdmin } from '../middleware/index.js';
 
 const router: Router = Router();
 
-const createSlotsSchema = z.object({
+const createScheduleSchema = z.object({
   pollingStationId: z.string().uuid(),
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD format'),
+  fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'fromDate must be YYYY-MM-DD format'),
+  toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'toDate must be YYYY-MM-DD format'),
+  daysOfWeek: z.array(z.number().int().min(1).max(7)).optional(),
   startHour: z.number().int().min(0).max(23),
   endHour: z.number().int().min(1).max(24),
   slotDurationMinutes: z.number().int().min(5).max(60).default(15),
@@ -18,16 +20,17 @@ const createSlotsSchema = z.object({
 
 const bookSlotSchema = z.object({
   nationalId: z.string().regex(/^\d{8}$/, 'National ID must be exactly 8 digits'),
+  purpose: z.enum(['REGISTRATION', 'PIN_RESET']).optional(),
 });
 
 // ============================================
 // IEBC ADMIN ENDPOINTS
 // ============================================
 
-// POST /api/appointments/create-slots - IEBC creates time slots for a day
+// POST /api/appointments/create-slots - IEBC creates time slots across a date range
 router.post('/create-slots', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   try {
-    const parsed = createSlotsSchema.safeParse(req.body);
+    const parsed = createScheduleSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
         success: false,
@@ -36,9 +39,10 @@ router.post('/create-slots', requireAuth, requireAdmin, async (req: Request, res
       return;
     }
 
-    const result = await appointmentService.createSlots({
+    const result = await appointmentService.createSchedule({
       ...parsed.data,
-      date: new Date(parsed.data.date),
+      fromDate: new Date(parsed.data.fromDate),
+      toDate: new Date(parsed.data.toDate),
     });
 
     res.status(201).json({
@@ -82,6 +86,62 @@ router.get('/scheduled', requireAuth, requireAdmin, async (req: Request, res: Re
     res.status(500).json({
       success: false,
       error: error instanceof Error ? error.message : 'Failed to fetch appointments',
+    });
+  }
+});
+
+// POST /api/appointments/:id/approve-voter - Complete appointment AND approve voter registration
+router.post('/:id/approve-voter', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const { reviewerId, notes } = req.body;
+    if (!reviewerId) {
+      res.status(400).json({ success: false, error: 'reviewerId is required' });
+      return;
+    }
+
+    const result = await appointmentService.approveVoterAtAppointment(req.params.id, reviewerId, notes);
+
+    res.json({
+      success: true,
+      message: 'Voter approved and registered successfully',
+      data: result,
+    });
+  } catch (error) {
+    if (error instanceof ServiceError) {
+      res.status(error.statusCode).json({ success: false, error: error.message });
+      return;
+    }
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to approve voter',
+    });
+  }
+});
+
+// POST /api/appointments/:id/reject-voter - Complete appointment AND reject voter registration
+router.post('/:id/reject-voter', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const { reviewerId, reason } = req.body;
+    if (!reviewerId || !reason) {
+      res.status(400).json({ success: false, error: 'reviewerId and reason are required' });
+      return;
+    }
+
+    const result = await appointmentService.rejectVoterAtAppointment(req.params.id, reviewerId, reason);
+
+    res.json({
+      success: true,
+      message: 'Voter registration rejected',
+      data: result,
+    });
+  } catch (error) {
+    if (error instanceof ServiceError) {
+      res.status(error.statusCode).json({ success: false, error: error.message });
+      return;
+    }
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to reject voter',
     });
   }
 });
@@ -142,10 +202,17 @@ router.delete('/slots', requireAuth, requireAdmin, async (req: Request, res: Res
       return;
     }
 
+    // Set from = start of day, to = end of day so all slots within the
+    // calendar range are included regardless of their time component.
+    const from = new Date(fromDate);
+    from.setUTCHours(0, 0, 0, 0);
+    const to = new Date(toDate);
+    to.setUTCHours(23, 59, 59, 999);
+
     const result = await appointmentService.deleteAvailableSlots(
       pollingStationId,
-      new Date(fromDate),
-      new Date(toDate)
+      from,
+      to
     );
 
     res.json({
@@ -292,7 +359,7 @@ router.post('/:id/book', async (req: Request, res: Response) => {
       return;
     }
 
-    const result = await appointmentService.bookSlot(req.params.id, parsed.data.nationalId);
+    const result = await appointmentService.bookSlot(req.params.id, parsed.data.nationalId, parsed.data.purpose);
 
     res.status(201).json({
       success: true,

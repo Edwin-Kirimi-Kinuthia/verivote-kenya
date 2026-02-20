@@ -5,11 +5,12 @@ import { useRouter } from "next/navigation";
 import { api } from "@/lib/api-client";
 import { useAuth } from "@/contexts/auth-context";
 import { useTranslation } from "@/contexts/language-context";
-import type { ApiResponse, AuthData } from "@/lib/types";
+import { AppointmentSlotPicker } from "@/components/appointment-slot-picker";
+import type { ApiResponse, AuthData, BookedAppointmentResult } from "@/lib/types";
 
 const ELIGIBLE_STATUSES = ["REGISTERED", "VOTED", "REVOTED", "DISTRESS_FLAGGED"];
 
-type View = "login" | "resetForm" | "resetOptions" | "resetStatus";
+type View = "login" | "resetForm" | "resetOptions" | "resetStatus" | "appointmentBooking" | "appointmentConfirmed";
 
 interface VerificationOptions {
   inPerson: {
@@ -55,6 +56,7 @@ export default function VotePinPage() {
   const [verificationOptions, setVerificationOptions] =
     useState<VerificationOptions | null>(null);
   const [statusMessage, setStatusMessage] = useState("");
+  const [bookedAppointment, setBookedAppointment] = useState<BookedAppointmentResult | null>(null);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -307,7 +309,7 @@ export default function VotePinPage() {
             </div>
 
             {/* In-person option */}
-            <div className="rounded-xl border-2 border-amber-200 bg-white p-6 shadow-sm">
+            <div className="flex flex-col rounded-xl border-2 border-amber-200 bg-white p-6 shadow-sm">
               <div className="mb-3 flex items-center gap-3">
                 <svg
                   className="h-8 w-8 text-amber-600"
@@ -326,14 +328,16 @@ export default function VotePinPage() {
                   {t("pinReset.inPersonTitle")}
                 </h2>
               </div>
-              <p className="mb-2 text-sm text-gray-500">
+              <p className="mb-4 flex-1 text-sm text-gray-500">
                 {t("pinReset.inPersonDesc")}
               </p>
-              <ul className="list-inside list-disc space-y-1 text-sm text-gray-600">
-                <li>{t("pinReset.inPersonStep1")}</li>
-                <li>{t("pinReset.inPersonStep2")}</li>
-                <li>{t("pinReset.inPersonStep3")}</li>
-              </ul>
+              <button
+                type="button"
+                onClick={() => setView("appointmentBooking")}
+                className="w-full rounded-lg bg-amber-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-amber-700"
+              >
+                {t("appointment.bookingTitle")}
+              </button>
             </div>
           </div>
 
@@ -356,6 +360,90 @@ export default function VotePinPage() {
               {t("pinReset.backToLogin")}
             </button>
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ---- Appointment booking view (in-person PIN reset) ----
+  if (view === "appointmentBooking" && verificationOptions) {
+    const stationId = verificationOptions.inPerson.pollingStationId ?? "";
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <div className="w-full max-w-lg">
+          <div className="mb-6 text-center">
+            <h1 className="text-2xl font-bold text-gray-900">
+              {t("appointment.bookingTitle")}
+            </h1>
+          </div>
+          <AppointmentSlotPicker
+            nationalId={resetNationalId}
+            pollingStationId={stationId}
+            purpose="PIN_RESET"
+            onBooked={(result) => {
+              setBookedAppointment(result);
+              setView("appointmentConfirmed");
+            }}
+            onCancel={() => setView("resetOptions")}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  // ---- Appointment confirmed view ----
+  if (view === "appointmentConfirmed" && bookedAppointment) {
+    const scheduledDate = new Date(bookedAppointment.scheduledAt);
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <div className="w-full max-w-md">
+          <div className="mb-8 text-center">
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-green-100">
+              <svg className="h-8 w-8 text-green-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <h1 className="mt-4 text-2xl font-bold text-gray-900">
+              {t("appointment.confirmedTitle")}
+            </h1>
+            <p className="mt-2 text-sm text-gray-500">
+              {t("appointment.confirmedSubtitle")}
+            </p>
+          </div>
+
+          <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm space-y-4">
+            <div className="flex justify-between text-sm">
+              <span className="font-medium text-gray-500">{t("appointment.date")}</span>
+              <span className="font-semibold text-gray-900">
+                {scheduledDate.toLocaleDateString("en-KE", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}{" "}
+                {scheduledDate.toLocaleTimeString("en-KE", { hour: "2-digit", minute: "2-digit", hour12: true })}
+              </span>
+            </div>
+            {bookedAppointment.pollingStationName && (
+              <div className="flex justify-between text-sm">
+                <span className="font-medium text-gray-500">{t("appointment.station")}</span>
+                <span className="font-semibold text-gray-900">{bookedAppointment.pollingStationName}</span>
+              </div>
+            )}
+            <div className="flex justify-between text-sm">
+              <span className="font-medium text-gray-500">{t("appointment.duration")}</span>
+              <span className="font-semibold text-gray-900">
+                {bookedAppointment.durationMinutes} {t("appointment.minutes")}
+              </span>
+            </div>
+          </div>
+
+          <p className="mt-4 rounded-lg bg-amber-50 p-4 text-sm text-amber-800">
+            {t("appointment.pinResetNote")}
+          </p>
+
+          <button
+            type="button"
+            onClick={switchToLogin}
+            className="mt-4 w-full rounded-lg bg-green-700 px-6 py-3 text-base font-semibold text-white hover:bg-green-800"
+          >
+            {t("pinReset.backToLogin")}
+          </button>
         </div>
       </div>
     );

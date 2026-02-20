@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { api } from "@/lib/api-client";
+import { useAuth } from "@/contexts/auth-context";
 import { Header } from "@/components/header";
 import { DataTable } from "@/components/data-table";
 import { Pagination } from "@/components/pagination";
@@ -15,6 +16,7 @@ import type {
   SlotDeletionResult,
   ApiResponse,
   ColumnDef,
+  ApproveResult,
 } from "@/lib/types";
 
 const APPOINTMENT_STATUS_STYLES: Record<string, { label: string; color: string; bg: string }> = {
@@ -29,13 +31,17 @@ export default function AppointmentsPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const page = Number(searchParams.get("page")) || 1;
+  const { voter } = useAuth();
 
   const [stations, setStations] = useState<PollingStation[]>([]);
   const [error, setError] = useState("");
 
   // Create slots state
   const [createStation, setCreateStation] = useState("");
-  const [createDate, setCreateDate] = useState("");
+  const [createFromDate, setCreateFromDate] = useState("");
+  const [createToDate, setCreateToDate] = useState("");
+  // Days of week: index 0=Mon, 1=Tue, ..., 5=Sat, 6=Sun (ISO: Mon=1 .. Sun=7)
+  const [daysOfWeek, setDaysOfWeek] = useState<boolean[]>([true, true, true, true, true, true, false]);
   const [startHour, setStartHour] = useState("8");
   const [endHour, setEndHour] = useState("17");
   const [duration, setDuration] = useState("15");
@@ -65,6 +71,16 @@ export default function AppointmentsPage() {
   const [filterStation, setFilterStation] = useState("");
   const [filterDate, setFilterDate] = useState("");
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+
+  // Approve / reject registration action state
+  const [activeAction, setActiveAction] = useState<{
+    appointmentId: string;
+    type: "approve" | "reject";
+  } | null>(null);
+  const [actionNotes, setActionNotes] = useState("");
+  const [actionError, setActionError] = useState("");
+  const [appointmentActionLoading, setAppointmentActionLoading] = useState(false);
+  const [approveResult, setApproveResult] = useState<ApproveResult | null>(null);
 
   useEffect(() => {
     api
@@ -115,12 +131,18 @@ export default function AppointmentsPage() {
     setCreateLoading(true);
     setCreateError("");
     setCreateResult(null);
+    // Convert boolean array (Mon-Sun) to ISO day numbers (1=Mon, 7=Sun)
+    const selectedDays = daysOfWeek
+      .map((checked, i) => (checked ? i + 1 : null))
+      .filter((d): d is number => d !== null);
     try {
       const res = await api.post<ApiResponse<SlotCreationResult>>(
         "/api/appointments/create-slots",
         {
           pollingStationId: createStation,
-          date: createDate,
+          fromDate: createFromDate,
+          toDate: createToDate,
+          daysOfWeek: selectedDays,
           startHour: Number(startHour),
           endHour: Number(endHour),
           slotDurationMinutes: Number(duration),
@@ -210,6 +232,68 @@ export default function AppointmentsPage() {
     }
   }
 
+  function openAction(appointmentId: string, type: "approve" | "reject") {
+    setActiveAction({ appointmentId, type });
+    setActionNotes("");
+    setActionError("");
+    setApproveResult(null);
+  }
+
+  function cancelAction() {
+    setActiveAction(null);
+    setActionNotes("");
+    setActionError("");
+  }
+
+  async function handleApproveVoter() {
+    if (!activeAction) return;
+    setAppointmentActionLoading(true);
+    setActionError("");
+    try {
+      const res = await api.post<ApiResponse<ApproveResult>>(
+        `/api/appointments/${activeAction.appointmentId}/approve-voter`,
+        { reviewerId: voter?.id, notes: actionNotes || undefined }
+      );
+      if (res.success && res.data) {
+        setApproveResult(res.data);
+        setActiveAction(null);
+        loadAppointments();
+      } else {
+        setActionError(res.error || "Approval failed");
+      }
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Approval failed");
+    } finally {
+      setAppointmentActionLoading(false);
+    }
+  }
+
+  async function handleRejectVoter() {
+    if (!activeAction) return;
+    if (!actionNotes.trim()) {
+      setActionError("Rejection reason is required");
+      return;
+    }
+    setAppointmentActionLoading(true);
+    setActionError("");
+    try {
+      const res = await api.post<ApiResponse<unknown>>(
+        `/api/appointments/${activeAction.appointmentId}/reject-voter`,
+        { reviewerId: voter?.id, reason: actionNotes }
+      );
+      if (res.success) {
+        setActiveAction(null);
+        loadAppointments();
+      } else {
+        setActionError(res.error || "Rejection failed");
+      }
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Rejection failed");
+    } finally {
+      setAppointmentActionLoading(false);
+    }
+  }
+
   const columns: ColumnDef<Appointment>[] = [
     {
       key: "voter",
@@ -228,6 +312,24 @@ export default function AppointmentsPage() {
       key: "scheduledAt",
       header: "Date/Time",
       render: (row) => new Date(row.scheduledAt).toLocaleString(),
+    },
+    {
+      key: "purpose",
+      header: "Purpose",
+      render: (row) => {
+        if (row.purpose === "PIN_RESET") {
+          return (
+            <span className="inline-flex rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-800">
+              PIN Reset
+            </span>
+          );
+        }
+        return (
+          <span className="inline-flex rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-medium text-green-800">
+            Identity Verification
+          </span>
+        );
+      },
     },
     {
       key: "status",
@@ -252,28 +354,53 @@ export default function AppointmentsPage() {
       header: "Actions",
       render: (row) =>
         row.status === "BOOKED" ? (
-          <div className="flex gap-2">
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                handleComplete(row.id);
-              }}
-              disabled={actionLoading === row.id}
-              className="rounded-md bg-blue-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-            >
-              Complete
-            </button>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                handleNoShow(row.id);
-              }}
-              disabled={actionLoading === row.id}
-              className="rounded-md bg-red-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
-            >
-              No-Show
-            </button>
-          </div>
+          row.purpose === "REGISTRATION" ? (
+            <div className="flex gap-2">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openAction(row.id, "approve");
+                }}
+                disabled={appointmentActionLoading}
+                className="rounded-md bg-green-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-green-700 disabled:opacity-50"
+              >
+                Approve
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openAction(row.id, "reject");
+                }}
+                disabled={appointmentActionLoading}
+                className="rounded-md bg-red-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
+              >
+                Reject
+              </button>
+            </div>
+          ) : (
+            <div className="flex gap-2">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleComplete(row.id);
+                }}
+                disabled={actionLoading === row.id}
+                className="rounded-md bg-blue-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                Complete
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleNoShow(row.id);
+                }}
+                disabled={actionLoading === row.id}
+                className="rounded-md bg-red-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
+              >
+                No-Show
+              </button>
+            </div>
+          )
         ) : (
           <span className="text-xs text-gray-400">—</span>
         ),
@@ -306,94 +433,134 @@ export default function AppointmentsPage() {
           )}
           {createResult && (
             <div className="mb-3 rounded-md bg-green-50 p-3 text-sm text-green-700">
-              Created {createResult.slotsCreated} slots for{" "}
-              {createResult.date}
+              Created {createResult.slotsCreated} slots ({createResult.fromDate} – {createResult.toDate})
             </div>
           )}
-          <form onSubmit={handleCreateSlots} className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+          <form onSubmit={handleCreateSlots} className="space-y-4">
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-700">
+                  Station
+                </label>
+                <select
+                  required
+                  value={createStation}
+                  onChange={(e) => setCreateStation(e.target.value)}
+                  className={selectClass}
+                >
+                  <option value="">Select...</option>
+                  {stations.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.code} — {s.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-700">
+                  From Date
+                </label>
+                <input
+                  type="date"
+                  required
+                  value={createFromDate}
+                  onChange={(e) => setCreateFromDate(e.target.value)}
+                  className={inputClass}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-700">
+                  To Date
+                </label>
+                <input
+                  type="date"
+                  required
+                  value={createToDate}
+                  onChange={(e) => setCreateToDate(e.target.value)}
+                  className={inputClass}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-700">
+                  Start Hour
+                </label>
+                <select
+                  value={startHour}
+                  onChange={(e) => setStartHour(e.target.value)}
+                  className={selectClass}
+                >
+                  {Array.from({ length: 24 }, (_, i) => (
+                    <option key={i} value={i}>
+                      {String(i).padStart(2, "0")}:00
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-700">
+                  End Hour
+                </label>
+                <select
+                  value={endHour}
+                  onChange={(e) => setEndHour(e.target.value)}
+                  className={selectClass}
+                >
+                  {Array.from({ length: 24 }, (_, i) => (
+                    <option key={i + 1} value={i + 1}>
+                      {String(i + 1).padStart(2, "0")}:00
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-700">
+                  Duration (min)
+                </label>
+                <select
+                  value={duration}
+                  onChange={(e) => setDuration(e.target.value)}
+                  className={selectClass}
+                >
+                  {[5, 10, 15, 20, 30, 45, 60].map((d) => (
+                    <option key={d} value={d}>
+                      {d} min
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Days of week */}
             <div>
-              <label className="mb-1 block text-xs font-medium text-gray-700">
-                Station
+              <label className="mb-2 block text-xs font-medium text-gray-700">
+                Days of Week
               </label>
-              <select
-                required
-                value={createStation}
-                onChange={(e) => setCreateStation(e.target.value)}
-                className={selectClass}
-              >
-                <option value="">Select...</option>
-                {stations.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.code} — {s.name}
-                  </option>
+              <div className="flex flex-wrap gap-2">
+                {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((day, i) => (
+                  <label key={day} className="flex cursor-pointer items-center gap-1.5">
+                    <input
+                      type="checkbox"
+                      checked={daysOfWeek[i]}
+                      onChange={(e) => {
+                        const next = [...daysOfWeek];
+                        next[i] = e.target.checked;
+                        setDaysOfWeek(next);
+                      }}
+                      className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <span className={`text-sm font-medium ${daysOfWeek[i] ? "text-gray-900" : "text-gray-400"}`}>
+                      {day}
+                    </span>
+                  </label>
                 ))}
-              </select>
+              </div>
             </div>
+
             <div>
-              <label className="mb-1 block text-xs font-medium text-gray-700">
-                Date
-              </label>
-              <input
-                type="date"
-                required
-                value={createDate}
-                onChange={(e) => setCreateDate(e.target.value)}
-                className={inputClass}
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-gray-700">
-                Start Hour
-              </label>
-              <select
-                value={startHour}
-                onChange={(e) => setStartHour(e.target.value)}
-                className={selectClass}
-              >
-                {Array.from({ length: 24 }, (_, i) => (
-                  <option key={i} value={i}>
-                    {String(i).padStart(2, "0")}:00
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-gray-700">
-                End Hour
-              </label>
-              <select
-                value={endHour}
-                onChange={(e) => setEndHour(e.target.value)}
-                className={selectClass}
-              >
-                {Array.from({ length: 24 }, (_, i) => (
-                  <option key={i + 1} value={i + 1}>
-                    {String(i + 1).padStart(2, "0")}:00
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-gray-700">
-                Duration (min)
-              </label>
-              <select
-                value={duration}
-                onChange={(e) => setDuration(e.target.value)}
-                className={selectClass}
-              >
-                {[5, 10, 15, 20, 30, 45, 60].map((d) => (
-                  <option key={d} value={d}>
-                    {d} min
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="flex items-end">
               <button
                 type="submit"
                 disabled={createLoading}
-                className="w-full rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
               >
                 {createLoading ? "Creating..." : "Create Slots"}
               </button>
@@ -470,6 +637,104 @@ export default function AppointmentsPage() {
             </div>
           </form>
         </div>
+
+        {/* Approve result — PINs to hand to voter */}
+        {approveResult && (
+          <div className="rounded-lg border-2 border-green-300 bg-green-50 p-6">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-green-800">
+                Voter Approved — Registration Complete
+              </h2>
+              <button
+                onClick={() => setApproveResult(null)}
+                className="text-xs text-green-700 hover:text-green-900 underline"
+              >
+                Dismiss
+              </button>
+            </div>
+            <p className="mb-4 text-sm text-green-700">
+              National ID: <span className="font-semibold">{approveResult.nationalId}</span>
+              {" · "}SBT Token: <span className="font-semibold">#{approveResult.sbtTokenId}</span>
+            </p>
+            <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-green-700">
+              Hand these PINs to the voter — they will not be shown again:
+            </p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="rounded-lg border-2 border-green-300 bg-white p-4">
+                <p className="mb-1 text-xs font-semibold text-green-700">Voting PIN</p>
+                <p className="font-mono text-3xl font-bold tracking-widest text-green-800">
+                  {approveResult.pin}
+                </p>
+              </div>
+              <div className="rounded-lg border-2 border-amber-300 bg-white p-4">
+                <p className="mb-1 text-xs font-semibold text-amber-700">Distress PIN</p>
+                <p className="font-mono text-3xl font-bold tracking-widest text-amber-800">
+                  {approveResult.distressPin}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Action panel — approve or reject a REGISTRATION appointment */}
+        {activeAction && (
+          <div className="rounded-lg border border-gray-200 bg-white p-6">
+            <h2 className="mb-4 text-sm font-semibold text-gray-900">
+              {activeAction.type === "approve"
+                ? "Approve Voter Registration"
+                : "Reject Voter Registration"}
+            </h2>
+            {actionError && (
+              <div className="mb-3 rounded-md bg-red-50 p-3 text-sm text-red-700">
+                {actionError}
+              </div>
+            )}
+            <div className="mb-4">
+              <label className="mb-1 block text-xs font-medium text-gray-700">
+                {activeAction.type === "approve"
+                  ? "Notes (optional)"
+                  : "Rejection reason (required)"}
+              </label>
+              <textarea
+                rows={3}
+                value={actionNotes}
+                onChange={(e) => setActionNotes(e.target.value)}
+                placeholder={
+                  activeAction.type === "approve"
+                    ? "e.g. Identity confirmed in person"
+                    : "e.g. Document did not match national ID"
+                }
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
+              />
+            </div>
+            <div className="flex gap-3">
+              {activeAction.type === "approve" ? (
+                <button
+                  onClick={handleApproveVoter}
+                  disabled={appointmentActionLoading}
+                  className="rounded-md bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
+                >
+                  {appointmentActionLoading ? "Approving..." : "Confirm Approval"}
+                </button>
+              ) : (
+                <button
+                  onClick={handleRejectVoter}
+                  disabled={appointmentActionLoading}
+                  className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                >
+                  {appointmentActionLoading ? "Rejecting..." : "Confirm Rejection"}
+                </button>
+              )}
+              <button
+                onClick={cancelAction}
+                disabled={appointmentActionLoading}
+                className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Scheduled Appointments Table */}
         <div className="rounded-lg border border-gray-200 bg-white">

@@ -17,13 +17,39 @@ export class VoterService {
       throw new ServiceError('National ID must be exactly 8 digits', 400);
     }
 
-    // Check if already registered
-    const exists = await voterRepository.nationalIdExists(nationalId);
-    if (exists) {
-      throw new ServiceError('National ID is already registered', 409);
+    // Check if a record already exists for this national ID
+    const existing = await voterRepository.findByNationalId(nationalId);
+    if (existing) {
+      if (existing.status === 'REGISTERED') {
+        throw new ServiceError('National ID is already registered', 409);
+      }
+      if (existing.status === 'VERIFICATION_FAILED') {
+        throw new ServiceError(
+          'Your registration was previously rejected. Please contact your local IEBC office.',
+          409
+        );
+      }
+
+      // PENDING_VERIFICATION or PENDING_MANUAL_REVIEW: allow the voter to retry.
+      // Reset to PENDING_VERIFICATION so a Persona webhook can fire correctly.
+      const updates: Record<string, unknown> = { status: 'PENDING_VERIFICATION' };
+      if (pollingStationId && pollingStationId !== existing.pollingStationId) {
+        updates.pollingStationId = pollingStationId;
+      }
+      await voterRepository.update(existing.id, updates);
+
+      // Issue a fresh Persona inquiry so they can re-attempt online verification
+      const { inquiryId, url } = await personaService.createInquiry(nationalId, existing.id);
+      await voterRepository.updatePersonaStatus(existing.id, inquiryId, 'created');
+
+      return {
+        voterId: existing.id,
+        inquiryId,
+        personaUrl: url,
+      };
     }
 
-    // Create voter record with PENDING_VERIFICATION status
+    // New voter — create record with PENDING_VERIFICATION status
     const voter = await voterRepository.create({ nationalId, pollingStationId });
 
     // Create Persona inquiry for identity verification
@@ -31,12 +57,6 @@ export class VoterService {
 
     // Store the Persona inquiry ID on the voter
     await voterRepository.updatePersonaStatus(voter.id, inquiryId, 'created');
-
-    // In mock mode, auto-complete verification so local dev gets PINs immediately
-    if (personaService.isMockMode()) {
-      const result = await this.completeVerification(inquiryId, 'completed');
-      return result;
-    }
 
     return {
       voterId: voter.id,
@@ -131,7 +151,12 @@ export class VoterService {
     }
 
     if (voter.status === 'PENDING_MANUAL_REVIEW') {
-      throw new ServiceError('Manual review already requested', 409);
+      // Idempotent — already in manual review queue, let them proceed to booking
+      return {
+        voterId: voter.id,
+        status: 'PENDING_MANUAL_REVIEW',
+        message: 'Your application is already pending manual review. Please book an appointment at your polling station.',
+      };
     }
 
     if (voter.status !== 'PENDING_VERIFICATION' && voter.status !== 'VERIFICATION_FAILED') {

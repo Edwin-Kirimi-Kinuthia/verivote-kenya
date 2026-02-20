@@ -115,6 +115,76 @@ export class AdminService {
       totalRegistered: stats.byStatus.registered,
       totalFailed: stats.byStatus.verificationFailed,
       totalVoters: stats.total,
+      distressFlagged: stats.byStatus.distressFlagged,
+    };
+  }
+
+  async getDistressVotes(page = 1, limit = 20) {
+    const skip = (page - 1) * limit;
+    const { prisma } = await import('../database/client.js');
+    const [data, total] = await Promise.all([
+      prisma.vote.findMany({
+        where: { isDistressFlagged: true },
+        skip,
+        take: limit,
+        orderBy: { timestamp: 'desc' },
+        select: {
+          id: true,
+          serialNumber: true,
+          isDistressFlagged: true,
+          status: true,
+          timestamp: true,
+          pollingStation: { select: { name: true, code: true } },
+        },
+      }),
+      prisma.vote.count({ where: { isDistressFlagged: true } }),
+    ]);
+    const totalPages = Math.ceil(total / limit);
+    return {
+      data,
+      pagination: { total, page, limit, totalPages, hasNext: page < totalPages, hasPrev: page > 1 },
+    };
+  }
+
+  async getOfficials(page = 1, limit = 20) {
+    return voterRepository.findAdmins(page, limit);
+  }
+
+  async addOfficial(nationalId: string) {
+    const voter = await voterRepository.findByNationalId(nationalId);
+    if (!voter) {
+      throw new ServiceError('Voter not found. They must be a registered voter first.', 404);
+    }
+    if (voter.role === 'ADMIN') {
+      throw new ServiceError('This voter is already an IEBC official', 409);
+    }
+    if (voter.status !== 'REGISTERED') {
+      throw new ServiceError('Only fully registered voters can be granted official access', 400);
+    }
+    const updated = await voterRepository.update(voter.id, { role: 'ADMIN' });
+    return {
+      voterId: updated.id,
+      nationalId: updated.nationalId,
+      role: updated.role,
+    };
+  }
+
+  async removeOfficial(voterId: string, requesterId: string) {
+    if (voterId === requesterId) {
+      throw new ServiceError('You cannot remove your own admin access', 400);
+    }
+    const voter = await voterRepository.findById(voterId);
+    if (!voter) {
+      throw new ServiceError('Official not found', 404);
+    }
+    if (voter.role !== 'ADMIN') {
+      throw new ServiceError('This voter is not an IEBC official', 400);
+    }
+    const updated = await voterRepository.update(voter.id, { role: 'VOTER' });
+    return {
+      voterId: updated.id,
+      nationalId: updated.nationalId,
+      role: updated.role,
     };
   }
 }

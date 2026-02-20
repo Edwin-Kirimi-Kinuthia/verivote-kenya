@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { adminService } from '../services/admin.service.js';
 import { ServiceError } from '../services/voter.service.js';
 import { requireAuth, requireAdmin, adminRateLimiter } from '../middleware/index.js';
+import type { AuthenticatedRequest } from '../types/auth.types.js';
 
 const router: Router = Router();
 
@@ -109,6 +110,75 @@ router.post('/approve/:voterId', async (req: Request, res: Response) => {
     res.status(500).json({
       success: false,
       error: error instanceof Error ? error.message : 'Failed to approve voter',
+    });
+  }
+});
+
+// GET /api/admin/distress-votes - List votes cast using a distress PIN
+router.get('/distress-votes', async (req: Request, res: Response) => {
+  try {
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 20;
+    const result = await adminService.getDistressVotes(page, limit);
+    res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to fetch distress votes',
+    });
+  }
+});
+
+// GET /api/admin/officials - List all IEBC officials (ADMIN-role voters)
+router.get('/officials', async (_req: Request, res: Response) => {
+  try {
+    const result = await adminService.getOfficials();
+    res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to fetch officials',
+    });
+  }
+});
+
+// POST /api/admin/officials - Promote a registered voter to IEBC official
+router.post('/officials', async (req: Request, res: Response) => {
+  try {
+    const { nationalId } = req.body;
+    if (!nationalId) {
+      res.status(400).json({ success: false, error: 'nationalId is required' });
+      return;
+    }
+    const result = await adminService.addOfficial(nationalId);
+    res.status(201).json({ success: true, data: result });
+  } catch (error) {
+    if (error instanceof ServiceError) {
+      res.status(error.statusCode).json({ success: false, error: error.message });
+      return;
+    }
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to add official',
+    });
+  }
+});
+
+// DELETE /api/admin/officials/:voterId - Remove IEBC official status
+router.delete('/officials/:voterId', async (req: Request, res: Response) => {
+  try {
+    // Pass requester ID so they cannot remove themselves
+    const requesterId = (req as AuthenticatedRequest).voter?.sub ?? '';
+    const result = await adminService.removeOfficial(req.params.voterId, requesterId);
+    res.json({ success: true, data: result });
+  } catch (error) {
+    if (error instanceof ServiceError) {
+      res.status(error.statusCode).json({ success: false, error: error.message });
+      return;
+    }
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to remove official',
     });
   }
 });

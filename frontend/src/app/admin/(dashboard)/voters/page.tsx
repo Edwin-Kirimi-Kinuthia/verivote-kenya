@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { api } from "@/lib/api-client";
 import { Header } from "@/components/header";
@@ -56,13 +56,17 @@ export default function VotersPage() {
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (nationalId?: string) => {
     setLoading(true);
     setError("");
     try {
+      const params = new URLSearchParams({ page: String(page), limit: "20" });
+      if (nationalId) params.set("nationalId", nationalId);
       const res = await api.get<{ success: boolean } & PaginatedResponse<Voter>>(
-        `/api/voters?page=${page}&limit=20`
+        `/api/voters?${params.toString()}`
       );
       if (res.data) setData(res.data);
       if (res.pagination) setPagination(res.pagination);
@@ -74,8 +78,16 @@ export default function VotersPage() {
   }, [page]);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    load(search || undefined);
+  }, [load]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function handleSearchChange(value: string) {
+    setSearch(value);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      load(value || undefined);
+    }, 300);
+  }
 
   function handlePageChange(newPage: number) {
     router.push(`/admin/voters?page=${newPage}`);
@@ -92,6 +104,30 @@ export default function VotersPage() {
         )}
 
         <div className="rounded-lg border border-gray-200 bg-white">
+          <div className="border-b border-gray-200 px-4 py-3">
+            <div className="relative max-w-xs">
+              <svg
+                className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400"
+                fill="none"
+                viewBox="0 0 24 24"
+                strokeWidth={2}
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z"
+                />
+              </svg>
+              <input
+                type="text"
+                placeholder="Search by National ID..."
+                value={search}
+                onChange={(e) => handleSearchChange(e.target.value)}
+                className="w-full rounded-md border border-gray-300 py-1.5 pl-9 pr-3 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              />
+            </div>
+          </div>
           {loading ? (
             <div className="p-4">
               <LoadingSkeleton rows={10} />
@@ -103,13 +139,15 @@ export default function VotersPage() {
                 data={data}
                 onRowClick={(row) => router.push(`/admin/voters/${row.id}`)}
               />
-              <Pagination
-                page={pagination.page}
-                totalPages={pagination.totalPages}
-                hasNext={pagination.hasNext}
-                hasPrev={pagination.hasPrev}
-                onPageChange={handlePageChange}
-              />
+              {!search && (
+                <Pagination
+                  page={pagination.page}
+                  totalPages={pagination.totalPages}
+                  hasNext={pagination.hasNext}
+                  hasPrev={pagination.hasPrev}
+                  onPageChange={handlePageChange}
+                />
+              )}
             </>
           )}
         </div>

@@ -16,13 +16,38 @@ export default function Home() {
           </p>
         </div>
 
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="grid grid-cols-2 gap-4">
           <Link
-            href="/vote"
+            href="/register"
             className="group flex flex-col items-center rounded-xl border-2 border-green-200 bg-white p-8 text-center shadow-sm transition-colors hover:border-green-700 hover:bg-green-50"
           >
             <svg
               className="h-10 w-10 text-green-700"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={1.5}
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M19 7.5v3m0 0v3m0-3h3m-3 0h-3m-2.25-4.125a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zM4 19.235v-.11a6.375 6.375 0 0112.75 0v.109A12.318 12.318 0 0110.374 21c-2.331 0-4.512-.645-6.374-1.766z"
+              />
+            </svg>
+            <span className="mt-3 text-lg font-semibold text-gray-900">
+              Register
+            </span>
+            <span className="mt-1 text-sm text-gray-500">
+              Register to vote
+            </span>
+          </Link>
+
+          <Link
+            href="/vote"
+            className="group flex flex-col items-center rounded-xl border-2 border-blue-200 bg-white p-8 text-center shadow-sm transition-colors hover:border-blue-700 hover:bg-blue-50"
+          >
+            <svg
+              className="h-10 w-10 text-blue-700"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -69,10 +94,10 @@ export default function Home() {
 
           <Link
             href="/admin"
-            className="group flex flex-col items-center rounded-xl border-2 border-blue-200 bg-white p-8 text-center shadow-sm transition-colors hover:border-blue-700 hover:bg-blue-50"
+            className="group flex flex-col items-center rounded-xl border-2 border-gray-200 bg-white p-8 text-center shadow-sm transition-colors hover:border-gray-500 hover:bg-gray-50"
           >
             <svg
-              className="h-10 w-10 text-blue-700"
+              className="h-10 w-10 text-gray-600"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"

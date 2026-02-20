@@ -56,6 +56,7 @@ export interface ReviewStats {
   totalRegistered: number;
   totalFailed: number;
   totalVoters: number;
+  distressFlagged: number;
 }
 
 export interface ReviewDetails {
@@ -111,12 +112,15 @@ export type AppointmentStatus =
   | "NO_SHOW"
   | "CANCELLED";
 
+export type AppointmentPurpose = "REGISTRATION" | "PIN_RESET";
+
 export interface Appointment {
   id: string;
   scheduledAt: string;
   durationMinutes: number;
   pollingStationId: string;
   status: AppointmentStatus;
+  purpose?: AppointmentPurpose;
   voterId: string | null;
   assignedOfficerId: string | null;
   assignedOfficerName: string | null;
@@ -130,10 +134,22 @@ export interface Appointment {
 export interface SlotCreationResult {
   slotsCreated: number;
   pollingStationId: string;
-  date: string;
+  fromDate: string;
+  toDate: string;
+  daysOfWeek?: number[];
   startHour: number;
   endHour: number;
   slotDurationMinutes: number;
+}
+
+export interface BookedAppointmentResult {
+  appointmentId: string;
+  scheduledAt: string;
+  pollingStationId: string;
+  pollingStationName?: string;
+  durationMinutes: number;
+  purpose: AppointmentPurpose;
+  message: string;
 }
 
 export interface SlotDeletionResult {
@@ -214,6 +230,15 @@ export interface VoteReceipt {
 }
 
 export type VoteStatus = 'PENDING' | 'CONFIRMED' | 'SUPERSEDED' | 'INVALIDATED';
+
+export interface DistressVote {
+  id: string;
+  serialNumber: string;
+  isDistressFlagged: boolean;
+  status: VoteStatus;
+  timestamp: string;
+  pollingStation: { name: string; code: string } | null;
+}
 
 export interface VerifyVoteResult {
   verified: boolean;

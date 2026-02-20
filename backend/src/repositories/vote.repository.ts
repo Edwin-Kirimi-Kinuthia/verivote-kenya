@@ -116,6 +116,7 @@ export class VoteRepository extends BaseRepository<Vote, CreateVoteInput, Update
         zkpProof: data.zkpProof,
         pollingStationId: data.pollingStationId,
         previousVoteId: data.previousVoteId,
+        isDistressFlagged: data.isDistressFlagged ?? false,
       },
     }) as Promise<Vote>;
   }

@@ -20,6 +20,7 @@ import {
 import blockchainRoutes from './routes/blockchain.routes.js';
 import { blockchainService } from './services/blockchain.service.js';
 import { encryptionService } from './services/encryption.service.js';
+import { startScheduler } from './services/scheduler.js';
 import voterRoutes from './routes/voter.routes.js';
 import adminRoutes from './routes/admin.routes.js';
 import appointmentRoutes from './routes/appointment.routes.js';
@@ -229,6 +230,9 @@ async function startServer() {
     } catch (error) {
       console.warn('⚠️  Blockchain not available:', error instanceof Error ? error.message : 'Unknown error');
     }
+
+    // Start background maintenance scheduler
+    startScheduler();
 
     app.listen(PORT, () => {
       console.log('='.repeat(50));

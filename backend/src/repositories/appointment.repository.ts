@@ -8,6 +8,7 @@ import type {
   CreateAppointmentInput,
   UpdateAppointmentInput,
   AppointmentStatus,
+  AppointmentPurpose,
   PaginatedResponse,
 } from '../types/database.types.js';
 
@@ -98,13 +99,14 @@ export class AppointmentRepository {
     }) as Promise<ManualReviewAppointment>;
   }
 
-  async bookSlot(id: string, voterId: string): Promise<ManualReviewAppointment> {
+  async bookSlot(id: string, voterId: string, purpose?: AppointmentPurpose): Promise<ManualReviewAppointment> {
     return prisma.manualReviewAppointment.update({
       where: { id },
       data: {
         voterId,
         status: 'BOOKED',
         bookedAt: new Date(),
+        ...(purpose ? { purpose } : {}),
       },
     }) as Promise<ManualReviewAppointment>;
   }
@@ -325,6 +327,7 @@ export class AppointmentRepository {
             durationMinutes: slot.durationMinutes,
             pollingStationId: slot.pollingStationId,
             status: slot.status as AppointmentStatus,
+            purpose: (slot.purpose ?? 'REGISTRATION') as AppointmentPurpose,
             voterId: slot.voterId,
             assignedOfficerId: slot.assignedOfficerId,
             assignedOfficerName: slot.assignedOfficerName,
@@ -356,6 +359,20 @@ export class AppointmentRepository {
       .slice(0, limit);
 
     return slotsWithDistance;
+  }
+
+  /**
+   * Delete all AVAILABLE slots whose scheduled time has already passed.
+   * Returns the number of slots removed.
+   */
+  async deleteExpiredAvailableSlots(): Promise<number> {
+    const result = await prisma.manualReviewAppointment.deleteMany({
+      where: {
+        status: 'AVAILABLE',
+        scheduledAt: { lt: new Date() },
+      },
+    });
+    return result.count;
   }
 }
 

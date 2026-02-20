@@ -80,6 +80,10 @@ export class VoterRepository extends BaseRepository<Voter, CreateVoterInput, Upd
       }
     }
 
+    if (params.nationalId) {
+      where.nationalId = { startsWith: params.nationalId };
+    }
+
     const [data, total] = await Promise.all([
       prisma.voter.findMany({
         where,
@@ -178,6 +182,31 @@ export class VoterRepository extends BaseRepository<Voter, CreateVoterInput, Upd
         status: 'SUSPENDED',
       },
     }) as Promise<Voter>;
+  }
+
+  async findAdmins(page = 1, limit = 20): Promise<PaginatedResponse<Voter>> {
+    const skip = (page - 1) * limit;
+    const [data, total] = await Promise.all([
+      prisma.voter.findMany({
+        where: { role: 'ADMIN' },
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'asc' },
+      }),
+      prisma.voter.count({ where: { role: 'ADMIN' } }),
+    ]);
+    const totalPages = Math.ceil(total / limit);
+    return {
+      data: data as Voter[],
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages,
+        hasNext: page < totalPages,
+        hasPrev: page > 1,
+      },
+    };
   }
 
   async nationalIdExists(nationalId: string): Promise<boolean> {

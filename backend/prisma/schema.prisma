@@ -258,6 +258,9 @@ model ManualReviewAppointment {
   assignedOfficerId String?   @map("assigned_officer_id") @db.VarChar(100)
   assignedOfficerName String? @map("assigned_officer_name") @db.VarChar(255)
 
+  // Purpose of the appointment
+  purpose           AppointmentPurpose @default(REGISTRATION)
+
   // Booking metadata
   bookedAt          DateTime? @map("booked_at")
   notes             String?   @db.Text
@@ -279,6 +282,11 @@ enum AppointmentStatus {
   COMPLETED         // Review was completed
   CANCELLED         // Appointment was cancelled
   NO_SHOW           // Voter didn't show up
+}
+
+enum AppointmentPurpose {
+  REGISTRATION  // Voter identity verification for initial registration
+  PIN_RESET     // In-person verification for PIN reset
 }
 
 // ============================================================================
@@ -332,6 +340,13 @@ model Vote {
   
   // When the blockchain confirmed this vote
   confirmedAt         DateTime?    @map("confirmed_at")
+
+  // --------------------------------------------------------------------------
+  // DISTRESS FLAG
+  // --------------------------------------------------------------------------
+  // Set to true when the vote was cast using the voter's distress PIN.
+  // Signals that the voter may have been coerced; requires IEBC investigation.
+  isDistressFlagged   Boolean      @default(false) @map("is_distress_flagged")
 
   // --------------------------------------------------------------------------
   // STATUS

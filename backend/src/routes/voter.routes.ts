@@ -51,6 +51,35 @@ router.post('/register', registrationRateLimiter, async (req: Request, res: Resp
   }
 });
 
+// POST /api/voters/mock-verify - Simulate a completed Persona verification (MOCK MODE ONLY)
+// Allows developers to drive the registration workflow end-to-end without real KYC.
+router.post('/mock-verify', async (req: Request, res: Response) => {
+  if (!personaService.isMockMode()) {
+    res.status(403).json({ success: false, error: 'This endpoint is only available in mock mode' });
+    return;
+  }
+
+  const { inquiryId } = req.body;
+  if (!inquiryId) {
+    res.status(400).json({ success: false, error: 'inquiryId is required' });
+    return;
+  }
+
+  try {
+    const result = await voterService.completeVerification(inquiryId, 'completed');
+    res.json({ success: true, data: result });
+  } catch (error) {
+    if (error instanceof ServiceError) {
+      res.status(error.statusCode).json({ success: false, error: error.message });
+      return;
+    }
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Mock verification failed',
+    });
+  }
+});
+
 // POST /api/voters/persona-webhook
 router.post('/persona-webhook', async (req: Request, res: Response) => {
   try {
@@ -208,8 +237,9 @@ router.get('/', async (req: Request, res: Response) => {
   try {
     const page = parseInt(req.query.page as string) || 1;
     const limit = parseInt(req.query.limit as string) || 20;
+    const nationalId = (req.query.nationalId as string) || undefined;
 
-    const result = await voterRepository.findMany({ page, limit });
+    const result = await voterRepository.findMany({ page, limit, nationalId });
 
     res.json({
       success: true,

@@ -73,6 +73,7 @@ export class VoteService {
         encryptedVoteData: encryptedData,
         serialNumber,
         pollingStationId,
+        isDistressFlagged: voter.isDistress,
       });
       voteId = newVote.id;
     } else {
@@ -81,6 +82,7 @@ export class VoteService {
         encryptedVoteData: encryptedData,
         serialNumber,
         pollingStationId,
+        isDistressFlagged: voter.isDistress,
       });
       voteId = vote.id;
     }

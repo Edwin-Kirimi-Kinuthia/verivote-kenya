@@ -39,6 +39,8 @@ export type AppointmentStatus =
   | 'CANCELLED'
   | 'NO_SHOW';
 
+export type AppointmentPurpose = 'REGISTRATION' | 'PIN_RESET';
+
 // ============================================================================
 // ENTITY TYPES
 // ============================================================================
@@ -82,6 +84,7 @@ export interface Vote {
   blockNumber: bigint | null;
   confirmedAt: Date | null;
   status: VoteStatus;
+  isDistressFlagged: boolean;
   pollingStationId: string;
   timestamp: Date;
   createdAt: Date;
@@ -131,6 +134,7 @@ export interface ManualReviewAppointment {
   durationMinutes: number;
   pollingStationId: string;
   status: AppointmentStatus;
+  purpose: AppointmentPurpose;
   voterId: string | null;
   assignedOfficerId: string | null;
   assignedOfficerName: string | null;
@@ -138,6 +142,16 @@ export interface ManualReviewAppointment {
   notes: string | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface BookedAppointmentResult {
+  appointmentId: string;
+  scheduledAt: Date;
+  pollingStationId: string;
+  pollingStationName?: string;
+  durationMinutes: number;
+  purpose: AppointmentPurpose;
+  message: string;
 }
 
 // ============================================================================
@@ -168,6 +182,7 @@ export interface UpdateVoterInput {
   pinResetInquiryId?: string;
   pinLastResetAt?: Date;
   status?: VoterStatus;
+  role?: UserRole;
   voteCount?: number;
   lastVotedAt?: Date;
   pollingStationId?: string;
@@ -180,6 +195,7 @@ export interface CreateVoteInput {
   zkpProof?: string;
   pollingStationId: string;
   previousVoteId?: string;
+  isDistressFlagged?: boolean;
 }
 
 export interface UpdateVoteInput {
@@ -238,6 +254,7 @@ export interface CreateAppointmentInput {
   pollingStationId: string;
   assignedOfficerId?: string;
   assignedOfficerName?: string;
+  purpose?: AppointmentPurpose;
 }
 
 export interface UpdateAppointmentInput {
@@ -263,6 +280,7 @@ export interface VoterQueryParams extends PaginationParams {
   pollingStationId?: string;
   hasSbt?: boolean;
   hasVoted?: boolean;
+  nationalId?: string;
 }
 
 export interface VoteQueryParams extends PaginationParams {
