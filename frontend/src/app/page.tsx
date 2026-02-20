@@ -16,7 +16,7 @@ export default function Home() {
           </p>
         </div>
 
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-4 sm:grid-cols-3">
           <Link
             href="/vote"
             className="group flex flex-col items-center rounded-xl border-2 border-green-200 bg-white p-8 text-center shadow-sm transition-colors hover:border-green-700 hover:bg-green-50"
@@ -39,6 +39,31 @@ export default function Home() {
             </span>
             <span className="mt-1 text-sm text-gray-500">
               Cast your ballot securely
+            </span>
+          </Link>
+
+          <Link
+            href="/verify"
+            className="group flex flex-col items-center rounded-xl border-2 border-amber-200 bg-white p-8 text-center shadow-sm transition-colors hover:border-amber-600 hover:bg-amber-50"
+          >
+            <svg
+              className="h-10 w-10 text-amber-600"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={1.5}
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z"
+              />
+            </svg>
+            <span className="mt-3 text-lg font-semibold text-gray-900">
+              Verify
+            </span>
+            <span className="mt-1 text-sm text-gray-500">
+              Confirm your vote was recorded
             </span>
           </Link>
 

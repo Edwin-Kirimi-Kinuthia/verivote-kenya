@@ -212,3 +212,22 @@ export interface VoteReceipt {
   blockchainTxHash: string | null;
   timestamp: string;
 }
+
+export type VoteStatus = 'PENDING' | 'CONFIRMED' | 'SUPERSEDED' | 'INVALIDATED';
+
+export interface VerifyVoteResult {
+  verified: boolean;
+  serialNumber: string;
+  status: VoteStatus;
+  timestamp: string;
+  confirmedAt: string | null;
+  cryptographicVerification: { hashValid: boolean; checkedAt: string; };
+  blockchainConfirmation: {
+    confirmed: boolean;
+    txHash: string | null;
+    confirmedAt: string | null;
+    blockchainTimestamp: number | null;
+    isSuperseded: boolean | null;
+  };
+  message: string;
+}

@@ -79,5 +79,53 @@
     "en": "English",
     "sw": "Kiswahili",
     "toggle": "Badilisha lugha"
+  },
+  "verify": {
+    "title": "Thibitisha Kura Yako",
+    "subtitle": "Weka nambari ya risiti yako kuthibitisha kura yako ilirekodiwa kwa usahihi",
+    "label": "Nambari ya Risiti",
+    "placeholder": "Weka nambari ya herufi 16 (mfano A1B2C3D4E5F60123)",
+    "submit": "Thibitisha Kura",
+    "submitting": "Inathibitisha...",
+    "verifyAnother": "Thibitisha Nyingine",
+    "returnHome": "Rudi Nyumbani",
+    "print": "Chapisha Uthibitisho",
+    "status": {
+      "title": "Hali ya Kura",
+      "PENDING": "Inasubiri",
+      "CONFIRMED": "Imethibitishwa",
+      "SUPERSEDED": "Imebadilishwa",
+      "INVALIDATED": "Imeuniesha"
+    },
+    "result": {
+      "verified": "Kura Imethibitishwa",
+      "verifiedDesc": "Kura yako imethibitishwa kwa njia ya kriptografia na rekodi iko sawa.",
+      "integrity": "Onyo la Uadilifu",
+      "integrityDesc": "Ukaguzi wa uadilifu wa data ya kura umeshindwa. Tafadhali wasiliana na IEBC mara moja.",
+      "superseded": "Kura Imebadilishwa",
+      "supersededDesc": "Kura hii imebadilishwa na kura mpya. Kura ya hivi karibuni tu inakubalika."
+    },
+    "labels": {
+      "serialNumber": "Nambari ya Mfululizo",
+      "voteStatus": "Hali ya Kura",
+      "timestamp": "Ilirekodiwa Saa",
+      "cryptoIntegrity": "Uadilifu wa Kriptografia",
+      "blockchainConfirmed": "Imethibitishwa na Blockchain",
+      "txHash": "Nambari ya Muamala",
+      "blockchainTimestamp": "Wakati wa Blockchain"
+    },
+    "values": {
+      "hashValid": "Sahihi — data iko sawa",
+      "hashInvalid": "Si sahihi — data inaweza kubadilishwa",
+      "confirmed": "Imethibitishwa kwenye blockchain",
+      "pending": "Inasubiri uthibitisho wa blockchain",
+      "unavailable": "Hali ya blockchain haipatikani"
+    },
+    "secrecyNote": "Uthibitisho huu unathibitisha kura yako ilirekodiwa kwa usahihi, lakini haifichui jinsi ulivyopiga kura. Siri ya kura inadumishwa wakati wote.",
+    "errors": {
+      "notFound": "Hakuna kura iliyopatikana na nambari hii ya mfululizo. Tafadhali angalia nambari na ujaribu tena.",
+      "generic": "Uthibitisho umeshindwa. Tafadhali jaribu tena baadaye.",
+      "invalidFormat": "Nambari ya mfululizo lazima iwe na herufi 16 za hexadecimal (0–9, A–F)."
+    }
   }
 }
