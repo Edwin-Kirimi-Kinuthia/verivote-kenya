@@ -5,10 +5,13 @@ import express, { type Express, type Request, type Response, type NextFunction }
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
+import swaggerUi from 'swagger-ui-express';
+import swaggerJsdoc from 'swagger-jsdoc';
 
 import { prisma } from './database/client.js';
 import { globalRateLimiter } from './middleware/index.js';
 import { disconnectRedis } from './config/redis.js';
+import { swaggerOptions } from './config/swagger.js';
 
 import {
   voterRepository,
@@ -27,6 +30,7 @@ import appointmentRoutes from './routes/appointment.routes.js';
 import pinResetRoutes from './routes/pin-reset.routes.js';
 import voteRoutes from './routes/vote.routes.js';
 import receiptRoutes from './routes/receipt.routes.js';
+import printQueueRoutes from './routes/print-queue.routes.js';
 
 // ============================================
 // CREATE EXPRESS APPLICATION
@@ -34,23 +38,80 @@ import receiptRoutes from './routes/receipt.routes.js';
 
 const app: Express = express();
 const PORT = process.env.PORT || 3000;
+const API_VERSION = 'v1';
+
+// ============================================
+// CORS — supports web browser + mobile clients
+// ============================================
+
+const allowedOrigins = [
+  process.env.FRONTEND_URL || 'http://localhost:5173',
+  // Mobile app origins (React Native / Expo)
+  'http://localhost:19006',
+  'http://localhost:8081',
+  ...(process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : []),
+];
+
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow requests with no origin (mobile apps, curl, Postman)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    callback(new Error(`CORS: origin '${origin}' not allowed`));
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key', 'X-Request-ID'],
+  exposedHeaders: ['X-Request-ID', 'RateLimit-Limit', 'RateLimit-Remaining', 'RateLimit-Reset'],
+}));
 
 // ============================================
 // MIDDLEWARE SETUP
 // ============================================
 
-app.use(helmet());
-app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
-  credentials: true,
+app.use(helmet({
+  // Allow Swagger UI to load its own assets in development
+  contentSecurityPolicy: process.env.NODE_ENV === 'production' ? undefined : false,
 }));
-app.use(express.json());
+app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(globalRateLimiter);
+
+// Attach a request ID to every response (useful for mobile client logging)
+app.use((_req: Request, res: Response, next: NextFunction) => {
+  const id = _req.headers['x-request-id'] as string || crypto.randomUUID();
+  res.setHeader('X-Request-ID', id);
+  next();
+});
 
 if (process.env.NODE_ENV !== 'production') {
   app.use(morgan('dev'));
 }
+
+// ============================================
+// SWAGGER API DOCS
+// ============================================
+
+const swaggerSpec = swaggerJsdoc(swaggerOptions);
+
+app.use(
+  '/api/docs',
+  swaggerUi.serve,
+  swaggerUi.setup(swaggerSpec, {
+    customSiteTitle: 'VeriVote Kenya API Docs',
+    customCss: '.swagger-ui .topbar { display: none }',
+    swaggerOptions: {
+      persistAuthorization: true,
+      displayRequestDuration: true,
+    },
+  }),
+);
+
+// Raw OpenAPI JSON spec (useful for mobile codegen tools)
+app.get('/api/docs.json', (_req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'application/json');
+  res.send(swaggerSpec);
+});
 
 // ============================================
 // HEALTH CHECK ROUTE
@@ -68,6 +129,7 @@ app.get('/health', async (_req: Request, res: Response) => {
       uptime: process.uptime(),
       database: 'connected',
       blockchain: blockchainHealthy ? 'connected' : 'disconnected',
+      apiVersion: API_VERSION,
     });
   } catch (error) {
     res.status(503).json({
@@ -86,14 +148,23 @@ app.get('/health', async (_req: Request, res: Response) => {
 app.get('/', (_req: Request, res: Response) => {
   res.json({
     name: 'VeriVote Kenya API',
-    version: '0.1.0',
+    version: '1.0.0',
+    apiVersion: API_VERSION,
     description: 'Hybrid Electronic Voting System API',
+    docs: `http://localhost:${PORT}/api/docs`,
     endpoints: {
-      health: 'GET /health - Check if server is running',
-      stats: 'GET /api/stats - Get database statistics',
-      voters: 'GET /api/voters - List voters',
-      votes: 'GET /api/votes - Cast and manage votes',
-      receipts: 'GET /api/receipts/:serial - Verify a vote receipt',
+      health: 'GET /health',
+      docs: 'GET /api/docs - Swagger UI',
+      docsJson: 'GET /api/docs.json - OpenAPI spec',
+      stats: 'GET /api/stats',
+      voters: '/api/voters',
+      votes: '/api/votes',
+      receipts: '/api/receipts/:serial',
+      printQueue: '/api/print-queue (admin)',
+      admin: '/api/admin (admin)',
+      appointments: '/api/appointments',
+      blockchain: '/api/blockchain',
+      pollingStations: '/api/polling-stations',
     },
   });
 });
@@ -183,6 +254,9 @@ app.use('/api/votes', voteRoutes);
 // Receipt verification
 app.use('/api/receipts', receiptRoutes);
 
+// Print queue management (admin only)
+app.use('/api/print-queue', printQueueRoutes);
+
 // ============================================
 // BLOCKCHAIN ROUTES
 // ============================================
@@ -195,6 +269,7 @@ app.use('/api/blockchain', blockchainRoutes);
 
 app.use((req: Request, res: Response) => {
   res.status(404).json({
+    success: false,
     error: 'Not Found',
     message: `The endpoint ${req.method} ${req.path} does not exist`,
   });
@@ -204,6 +279,7 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   console.error('Error:', err.message);
 
   res.status(500).json({
+    success: false,
     error: 'Internal Server Error',
     message: process.env.NODE_ENV === 'production'
       ? 'Something went wrong'
@@ -240,8 +316,9 @@ async function startServer() {
       console.log('='.repeat(50));
       console.log(`✅ Server running on http://localhost:${PORT}`);
       console.log(`📋 Health check: http://localhost:${PORT}/health`);
-      console.log(`📊 Statistics: http://localhost:${PORT}/api/stats`);
-      console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
+      console.log(`📚 API Docs:     http://localhost:${PORT}/api/docs`);
+      console.log(`📊 Statistics:   http://localhost:${PORT}/api/stats`);
+      console.log(`🌐 Environment:  ${process.env.NODE_ENV || 'development'}`);
       console.log('='.repeat(50));
     });
   } catch (error) {

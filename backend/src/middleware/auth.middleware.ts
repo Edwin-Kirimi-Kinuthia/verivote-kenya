@@ -66,3 +66,32 @@ export function requireSelf(req: Request, res: Response, next: NextFunction): vo
 
   next();
 }
+
+/**
+ * Middleware to validate mobile API keys sent via X-API-Key header.
+ *
+ * Valid keys are stored in the MOBILE_API_KEYS environment variable as a
+ * comma-separated list.  If the env var is absent all keys are rejected, so
+ * this middleware effectively blocks mobile access until keys are provisioned.
+ *
+ * Usage: apply to any route group that should accept mobile clients.
+ */
+export function requireApiKey(req: Request, res: Response, next: NextFunction): void {
+  const key = req.headers['x-api-key'] as string | undefined;
+  if (!key) {
+    res.status(401).json({ success: false, error: 'X-API-Key header is required for mobile access' });
+    return;
+  }
+
+  const validKeys = (process.env.MOBILE_API_KEYS ?? '')
+    .split(',')
+    .map((k) => k.trim())
+    .filter(Boolean);
+
+  if (!validKeys.includes(key)) {
+    res.status(403).json({ success: false, error: 'Invalid API key' });
+    return;
+  }
+
+  next();
+}
