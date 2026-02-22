@@ -163,7 +163,7 @@ router.get('/stats', async (_req: Request, res: Response) => {
   try {
     const stats = await printQueueService.getStats();
     res.json({ success: true, data: stats });
-  } catch (_error) {
+  } catch {
     res.status(500).json({ success: false, error: 'Failed to fetch stats' });
   }
 });
@@ -179,7 +179,7 @@ router.get('/reconcile', async (req: Request, res: Response) => {
   try {
     const report = await printQueueService.reconcile(minutes);
     res.json({ success: true, data: report });
-  } catch (_error) {
+  } catch {
     res.status(500).json({ success: false, error: 'Reconciliation failed' });
   }
 });
@@ -201,7 +201,7 @@ router.get('/', async (req: Request, res: Response) => {
   try {
     const result = await printQueueService.getQueue(parsed.data);
     res.json({ success: true, ...result });
-  } catch (_error) {
+  } catch {
     res.status(500).json({ success: false, error: 'Failed to fetch queue' });
   }
 });
