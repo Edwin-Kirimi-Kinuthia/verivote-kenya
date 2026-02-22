@@ -1,4 +1,4 @@
-export { requireAuth, optionalAuth, requireAdmin, requireSelf } from './auth.middleware.js';
+export { requireAuth, optionalAuth, requireAdmin, requireSelf, requireApiKey } from './auth.middleware.js';
 export {
   globalRateLimiter,
   authRateLimiter,
@@ -6,4 +6,6 @@ export {
   adminRateLimiter,
   voteRateLimiter,
   receiptRateLimiter,
+  printQueueRateLimiter,
+  mobileApiRateLimiter,
 } from './rate-limit.middleware.js';
