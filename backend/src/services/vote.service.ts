@@ -1,4 +1,5 @@
 import { randomBytes } from 'crypto';
+import argon2 from 'argon2';
 import { voterRepository, voteRepository } from '../repositories/index.js';
 import { blockchainService } from './blockchain.service.js';
 import { encryptionService } from './encryption.service.js';
@@ -9,6 +10,7 @@ import type { VerifyVoteResult } from '../types/database.types.js';
 interface CastVoteInput {
   selections: Record<string, string>;
   pollingStationId?: string;
+  pin?: string;
 }
 
 interface CastVoteResult {
@@ -39,6 +41,34 @@ export class VoteService {
     const pollingStationId = input.pollingStationId || voterRecord.pollingStationId;
     if (!pollingStationId) {
       throw new ServiceError('Polling station is required', 400);
+    }
+
+    // ── PIN verification ────────────────────────────────────────────────────
+    // If the voter has set a PIN, it is required at vote time.
+    let isDistressVote = voter.isDistress; // preserve JWT-level distress flag (e.g. from OTP login)
+    if (voterRecord.normalPinHash || voterRecord.distressPinHash) {
+      if (!input.pin) {
+        throw new ServiceError('PIN is required to cast your vote', 400);
+      }
+      // Check normal PIN first
+      let pinValid = false;
+      if (voterRecord.normalPinHash) {
+        try {
+          pinValid = await argon2.verify(voterRecord.normalPinHash, input.pin);
+        } catch { /* hash format mismatch → invalid */ }
+      }
+      if (!pinValid && voterRecord.distressPinHash) {
+        try {
+          const distressMatch = await argon2.verify(voterRecord.distressPinHash, input.pin);
+          if (distressMatch) {
+            isDistressVote = true;
+            pinValid = true;
+          }
+        } catch { /* hash format mismatch → invalid */ }
+      }
+      if (!pinValid) {
+        throw new ServiceError('Invalid PIN', 401);
+      }
     }
 
     // Encrypt selections and hash the ciphertext
@@ -73,7 +103,7 @@ export class VoteService {
         encryptedVoteData: encryptedData,
         serialNumber,
         pollingStationId,
-        isDistressFlagged: voter.isDistress,
+        isDistressFlagged: isDistressVote,
       });
       voteId = newVote.id;
     } else {
@@ -82,7 +112,7 @@ export class VoteService {
         encryptedVoteData: encryptedData,
         serialNumber,
         pollingStationId,
-        isDistressFlagged: voter.isDistress,
+        isDistressFlagged: isDistressVote,
       });
       voteId = vote.id;
     }

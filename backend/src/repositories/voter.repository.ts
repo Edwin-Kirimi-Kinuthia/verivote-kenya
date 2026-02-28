@@ -35,6 +35,18 @@ export class VoterRepository extends BaseRepository<Voter, CreateVoterInput, Upd
     }) as Promise<Voter | null>;
   }
 
+  async findByEmail(email: string): Promise<Voter | null> {
+    return prisma.voter.findFirst({
+      where: { email },
+    }) as Promise<Voter | null>;
+  }
+
+  async findByPhone(phoneNumber: string): Promise<Voter | null> {
+    return prisma.voter.findFirst({
+      where: { phoneNumber },
+    }) as Promise<Voter | null>;
+  }
+
   async findByInquiryId(inquiryId: string): Promise<Voter | null> {
     return prisma.voter.findUnique({
       where: { personaInquiryId: inquiryId },
@@ -109,6 +121,12 @@ export class VoterRepository extends BaseRepository<Voter, CreateVoterInput, Upd
       data: {
         nationalId: data.nationalId,
         pollingStationId: data.pollingStationId,
+        phoneNumber: data.phoneNumber,
+        email: data.email,
+        preferredContact: data.preferredContact,
+        fingerprintHash: data.fingerprintHash,
+        fingerprintCapturedAt: data.fingerprintHash ? new Date() : undefined,
+        passwordHash: data.passwordHash,
       },
     }) as Promise<Voter>;
   }
@@ -141,16 +159,6 @@ export class VoterRepository extends BaseRepository<Voter, CreateVoterInput, Upd
         sbtAddress,
         sbtTokenId,
         sbtMintedAt: new Date(),
-      },
-    }) as Promise<Voter>;
-  }
-
-  async setPins(id: string, pinHash: string, distressPinHash: string): Promise<Voter> {
-    return prisma.voter.update({
-      where: { id },
-      data: {
-        pinHash,
-        distressPinHash,
       },
     }) as Promise<Voter>;
   }

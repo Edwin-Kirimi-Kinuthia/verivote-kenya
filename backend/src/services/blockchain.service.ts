@@ -17,8 +17,12 @@ export class BlockchainService {
   private signer: Wallet | null = null;
   private sbtContract: Contract | null = null;
   private voteContract: Contract | null = null;
+  private mockMode = process.env.BLOCKCHAIN_MOCK === 'true';
+
+  isMockMode(): boolean { return this.mockMode; }
 
   async connect(): Promise<void> {
+    if (this.mockMode) return; // no-op in mock mode
     const rpcUrl = process.env.BLOCKCHAIN_RPC_URL || 'http://127.0.0.1:8545';
     const privateKey = process.env.DEPLOYER_PRIVATE_KEY;
 
@@ -65,6 +69,9 @@ export class BlockchainService {
   }
 
   async mintSBT(voterAddress: string, nationalIdHash: string): Promise<{ tokenId: string; txHash: string }> {
+    if (this.mockMode) {
+      return { tokenId: 'mock-token-' + Date.now(), txHash: '0x' + '0'.repeat(64) };
+    }
     this.ensureConnected();
     const idHash = ethers.toBigInt(ethers.keccak256(ethers.toUtf8Bytes(nationalIdHash)));
     const tx = await this.sbtContract!.mint(voterAddress, idHash);
@@ -79,6 +86,9 @@ export class BlockchainService {
   }
 
   async recordVote(voteHash: string, serialNumber: string): Promise<{ txHash: string }> {
+    if (this.mockMode) {
+      return { txHash: '0x' + '0'.repeat(64) };
+    }
     this.ensureConnected();
     const voteHashBytes = ethers.id(voteHash);
     const serialBytes = ethers.id(serialNumber);
@@ -111,6 +121,9 @@ export class BlockchainService {
     newSerial: string,
     newHash: string
   ): Promise<{ txHash: string }> {
+    if (this.mockMode) {
+      return { txHash: '0x' + '0'.repeat(64) };
+    }
     this.ensureConnected();
     const oldSerialBytes = ethers.id(oldSerial);
     const newSerialBytes = ethers.id(newSerial);
@@ -123,11 +136,13 @@ export class BlockchainService {
   }
 
   async hasVoterToken(address: string): Promise<boolean> {
+    if (this.mockMode) return true;
     this.ensureConnected();
     return await this.sbtContract!.hasToken(address);
   }
 
   async isHealthy(): Promise<boolean> {
+    if (this.mockMode) return true;
     try {
       if (!this.provider) return false;
       await this.provider.getBlockNumber();
@@ -138,6 +153,7 @@ export class BlockchainService {
   }
 
   private ensureConnected(): void {
+    if (this.mockMode) return;
     if (!this.sbtContract || !this.voteContract) {
       throw new Error('BlockchainService not connected. Call connect() first.');
     }

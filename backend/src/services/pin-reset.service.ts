@@ -1,12 +1,7 @@
-import { randomInt } from 'crypto';
-import argon2 from 'argon2';
 import { voterRepository } from '../repositories/index.js';
 import { personaService } from './persona.service.js';
 import { ServiceError } from './voter.service.js';
-
-function generatePin(): string {
-  return String(randomInt(0, 10000)).padStart(4, '0');
-}
+import { webAuthnService } from './webauthn.service.js';
 
 export class PinResetService {
   /**
@@ -111,7 +106,7 @@ export class PinResetService {
     }
 
     // Generate new PINs
-    return this.generateNewPins(voter.id);
+    return this.clearCredentialsForReEnrollment(voter.id);
   }
 
   /**
@@ -128,7 +123,7 @@ export class PinResetService {
     }
 
     // Generate new PINs
-    const result = await this.generateNewPins(voter.id);
+    const result = await this.clearCredentialsForReEnrollment(voter.id);
 
     // Add audit info
     return {
@@ -140,21 +135,11 @@ export class PinResetService {
   }
 
   /**
-   * Generate new PINs for a voter (internal method)
+   * Clear all WebAuthn credentials so the voter can re-enroll their fingerprint.
+   * Called after successful identity re-verification (in-person or biometric).
    */
-  private async generateNewPins(voterId: string) {
-    const pin = generatePin();
-    let distressPin = generatePin();
-    while (distressPin === pin) {
-      distressPin = generatePin();
-    }
-
-    const [pinHash, distressPinHash] = await Promise.all([
-      argon2.hash(pin, { type: argon2.argon2id }),
-      argon2.hash(distressPin, { type: argon2.argon2id }),
-    ]);
-
-    // Update voter with new PINs and clear reset request
+  private async clearCredentialsForReEnrollment(voterId: string) {
+    // Clear the re-enrollment request flag
     await voterRepository.update(voterId, {
       pinResetRequested: false,
       pinResetRequestedAt: undefined,
@@ -162,17 +147,17 @@ export class PinResetService {
       pinLastResetAt: new Date(),
     });
 
-    await voterRepository.setPins(voterId, pinHash, distressPinHash);
+    // Delete all enrolled WebAuthn credentials
+    await webAuthnService.deleteCredentials(voterId);
 
     const voter = await voterRepository.findById(voterId);
 
     return {
       voterId,
       nationalId: voter?.nationalId,
-      pin,
-      distressPin,
-      message: 'PINs reset successfully. Please store these securely.',
-      resetAt: new Date().toISOString(),
+      message: 'Credentials cleared. Please enroll your fingerprint again via the app.',
+      nextStep: 'enroll_fingerprint',
+      clearedAt: new Date().toISOString(),
     };
   }
 

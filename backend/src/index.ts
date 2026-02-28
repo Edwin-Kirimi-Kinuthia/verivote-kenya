@@ -24,10 +24,12 @@ import blockchainRoutes from './routes/blockchain.routes.js';
 import { blockchainService } from './services/blockchain.service.js';
 import { encryptionService } from './services/encryption.service.js';
 import { startScheduler } from './services/scheduler.js';
+import authRoutes from './routes/auth.routes.js';
 import voterRoutes from './routes/voter.routes.js';
 import adminRoutes from './routes/admin.routes.js';
 import appointmentRoutes from './routes/appointment.routes.js';
 import pinResetRoutes from './routes/pin-reset.routes.js';
+import webAuthnRoutes from './routes/webauthn.routes.js';
 import voteRoutes from './routes/vote.routes.js';
 import receiptRoutes from './routes/receipt.routes.js';
 import printQueueRoutes from './routes/print-queue.routes.js';
@@ -73,6 +75,20 @@ app.use(helmet({
   // Allow Swagger UI to load its own assets in development
   contentSecurityPolicy: process.env.NODE_ENV === 'production' ? undefined : false,
 }));
+// Capture raw body for webhook signature verification (must be before json parser)
+app.use((req: Request, _res: Response, next: NextFunction) => {
+  if (req.path === '/api/voters/persona-webhook') {
+    let raw = '';
+    req.on('data', (chunk: Buffer) => { raw += chunk.toString(); });
+    req.on('end', () => {
+      (req as Request & { rawBody?: string }).rawBody = raw;
+      try { req.body = JSON.parse(raw); } catch { req.body = {}; }
+      next();
+    });
+  } else {
+    next();
+  }
+});
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(globalRateLimiter);
@@ -236,7 +252,10 @@ app.get('/api/counties', async (_req: Request, res: Response) => {
   }
 });
 
-// Voter routes (registration, PIN verification, listing)
+// Password login and set-password
+app.use('/api/auth', authRoutes);
+
+// Voter routes (registration, listing)
 app.use('/api/voters', voterRoutes);
 
 // Admin routes for IEBC manual verification review
@@ -245,8 +264,11 @@ app.use('/api/admin', adminRoutes);
 // Appointment scheduling for manual reviews
 app.use('/api/appointments', appointmentRoutes);
 
-// PIN reset for voters who forgot their PIN
+// Credential re-enrollment for voters who lost access to their device
 app.use('/api/pin-reset', pinResetRoutes);
+
+// WebAuthn fingerprint registration and authentication
+app.use('/api/webauthn', webAuthnRoutes);
 
 // Vote casting
 app.use('/api/votes', voteRoutes);

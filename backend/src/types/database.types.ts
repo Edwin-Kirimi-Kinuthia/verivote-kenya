@@ -32,6 +32,8 @@ export type PrintStatus =
 
 export type UserRole = 'VOTER' | 'ADMIN';
 
+export type PreferredContact = 'SMS' | 'EMAIL';
+
 export type AppointmentStatus =
   | 'AVAILABLE'
   | 'BOOKED'
@@ -45,15 +47,35 @@ export type AppointmentPurpose = 'REGISTRATION' | 'PIN_RESET';
 // ENTITY TYPES
 // ============================================================================
 
+export interface OtpCode {
+  id: string;
+  voterId: string;
+  purpose: string;
+  codeHash: string;
+  expiresAt: Date;
+  attempts: number;
+  usedAt: Date | null;
+  createdAt: Date;
+}
+
 export interface Voter {
   id: string;
   role: UserRole;
   nationalId: string;
+  phoneNumber: string | null;
+  email: string | null;
+  preferredContact: PreferredContact | null;
+  fingerprintHash: string | null;
+  fingerprintCapturedAt: Date | null;
+  phoneVerifiedAt: Date | null;
+  emailVerifiedAt: Date | null;
+  passwordHash: string | null;
+  normalPinHash: string | null;
+  distressPinHash: string | null;
+  pinSetAt: Date | null;
   sbtAddress: string | null;
   sbtTokenId: string | null;
   sbtMintedAt: Date | null;
-  pinHash: string | null;
-  distressPinHash: string | null;
   personaInquiryId: string | null;
   personaStatus: string | null;
   personaVerifiedAt: Date | null;
@@ -90,6 +112,19 @@ export interface Vote {
   createdAt: Date;
   updatedAt: Date;
   previousVoteId: string | null;
+}
+
+export interface WebAuthnCredential {
+  id: string;
+  voterId: string;
+  credentialId: string;
+  publicKey: Buffer;
+  counter: bigint;
+  deviceType: string;
+  backedUp: boolean;
+  transports: string | null;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface PollingStation {
@@ -161,14 +196,28 @@ export interface BookedAppointmentResult {
 export interface CreateVoterInput {
   nationalId: string;
   pollingStationId?: string;
+  phoneNumber?: string;
+  email?: string;
+  preferredContact?: PreferredContact;
+  fingerprintHash?: string;
+  passwordHash?: string;
 }
 
 export interface UpdateVoterInput {
+  phoneNumber?: string;
+  email?: string;
+  preferredContact?: PreferredContact;
+  fingerprintHash?: string;
+  fingerprintCapturedAt?: Date;
+  phoneVerifiedAt?: Date;
+  emailVerifiedAt?: Date;
+  passwordHash?: string;
   sbtAddress?: string;
   sbtTokenId?: string;
   sbtMintedAt?: Date;
-  pinHash?: string;
+  normalPinHash?: string;
   distressPinHash?: string;
+  pinSetAt?: Date;
   personaInquiryId?: string;
   personaStatus?: string;
   personaVerifiedAt?: Date;
