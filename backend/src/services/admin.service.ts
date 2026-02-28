@@ -1,13 +1,7 @@
-import { randomInt } from 'crypto';
-import argon2 from 'argon2';
 import { ethers } from 'ethers';
 import { voterRepository } from '../repositories/index.js';
 import { blockchainService } from './blockchain.service.js';
 import { ServiceError } from './voter.service.js';
-
-function generatePin(): string {
-  return String(randomInt(0, 10000)).padStart(4, '0');
-}
 
 export class AdminService {
   async getPendingReviews(page = 1, limit = 20) {
@@ -50,36 +44,22 @@ export class AdminService {
 
     await voterRepository.registerWithSbt(voter.id, wallet.address, tokenId);
 
-    // Generate PINs
-    const pin = generatePin();
-    let distressPin = generatePin();
-    while (distressPin === pin) {
-      distressPin = generatePin();
-    }
-
-    const [pinHash, distressPinHash] = await Promise.all([
-      argon2.hash(pin, { type: argon2.argon2id }),
-      argon2.hash(distressPin, { type: argon2.argon2id }),
-    ]);
-
-    await voterRepository.setPins(voter.id, pinHash, distressPinHash);
-
     // Mark review complete and set status to REGISTERED
     await voterRepository.approveManualReview(voter.id, reviewerId, notes);
     await voterRepository.update(voter.id, {
       status: 'REGISTERED',
-      personaVerifiedAt: new Date(), // Use this field for manual verification time too
+      personaVerifiedAt: new Date(),
     });
 
+    // Voter must now enroll a WebAuthn credential via POST /api/webauthn/register/options
     return {
       voterId: voter.id,
       nationalId: voter.nationalId,
       walletAddress: wallet.address,
       sbtTokenId: tokenId,
       txHash,
-      pin,
-      distressPin,
       reviewedBy: reviewerId,
+      nextStep: 'enroll_fingerprint',
     };
   }
 

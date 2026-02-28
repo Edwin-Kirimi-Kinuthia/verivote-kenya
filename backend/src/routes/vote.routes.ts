@@ -13,6 +13,7 @@ const castVoteSchema = z.object({
     { message: 'At least one selection is required' }
   ),
   pollingStationId: z.string().uuid('Invalid polling station ID').optional(),
+  pin: z.string().regex(/^\d{4}$/, 'PIN must be exactly 4 digits').optional(),
 });
 
 // POST /api/votes/cast

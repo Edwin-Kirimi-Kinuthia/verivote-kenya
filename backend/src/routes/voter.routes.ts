@@ -3,18 +3,36 @@ import { z } from 'zod';
 import { voterService, ServiceError } from '../services/voter.service.js';
 import { personaService } from '../services/persona.service.js';
 import { voterRepository } from '../repositories/index.js';
-import { authRateLimiter, registrationRateLimiter, requireAuth, requireSelf } from '../middleware/index.js';
+import { authService } from '../services/auth.service.js';
+import { registrationRateLimiter, requireAuth, requireSelf } from '../middleware/index.js';
+import { passwordSchema } from './auth.routes.js';
+import type { AuthenticatedRequest } from '../types/auth.types.js';
 
 const router: Router = Router();
 
 const registerSchema = z.object({
   nationalId: z.string().regex(/^\d{8}$/, 'National ID must be exactly 8 digits'),
   pollingStationId: z.string().uuid('Invalid polling station ID'),
-});
-
-const verifyPinSchema = z.object({
-  nationalId: z.string().min(1, 'National ID is required'),
-  pin: z.string().regex(/^\d{4}$/, 'PIN must be exactly 4 digits'),
+  phoneNumber: z.string().regex(/^\+\d{7,15}$/, 'Phone must be in E.164 format, e.g. +254712345678').optional(),
+  email: z.string().email('Invalid email address').optional(),
+  preferredContact: z.enum(['SMS', 'EMAIL']).optional(),
+  fingerprintHash: z.string().regex(/^[a-f0-9]{64}$/, 'Must be a 64-char hex SHA-256').optional(),
+  password: passwordSchema.optional(),
+}).superRefine((data, ctx) => {
+  if (data.preferredContact === 'SMS' && !data.phoneNumber) {
+    ctx.addIssue({
+      path: ['phoneNumber'],
+      code: z.ZodIssueCode.custom,
+      message: 'phoneNumber required when preferredContact is SMS',
+    });
+  }
+  if (data.preferredContact === 'EMAIL' && !data.email) {
+    ctx.addIssue({
+      path: ['email'],
+      code: z.ZodIssueCode.custom,
+      message: 'email required when preferredContact is EMAIL',
+    });
+  }
 });
 
 // POST /api/voters/register
@@ -29,11 +47,18 @@ router.post('/register', registrationRateLimiter, async (req: Request, res: Resp
       return;
     }
 
-    const result = await voterService.registerVoter(parsed.data.nationalId, parsed.data.pollingStationId);
+    const { nationalId, pollingStationId, phoneNumber, email, preferredContact, fingerprintHash, password } = parsed.data;
+    const result = await voterService.registerVoter(nationalId, pollingStationId, {
+      phoneNumber,
+      email,
+      preferredContact,
+      fingerprintHash,
+      password,
+    });
 
-    // In mock mode, completeVerification runs inline and returns PINs (201)
+    // In mock mode, Persona completes inline and returns notificationSent (201)
     // In live mode, returns inquiry info for the frontend to redirect (202)
-    const statusCode = 'pin' in result ? 201 : 202;
+    const statusCode = personaService.isMockMode() ? 201 : 202;
 
     res.status(statusCode).json({
       success: true,
@@ -84,7 +109,7 @@ router.post('/mock-verify', async (req: Request, res: Response) => {
 router.post('/persona-webhook', async (req: Request, res: Response) => {
   try {
     const signature = req.headers['persona-signature'] as string || '';
-    const rawBody = JSON.stringify(req.body);
+    const rawBody = (req as Request & { rawBody?: string }).rawBody ?? JSON.stringify(req.body);
 
     if (!personaService.verifyWebhookSignature(rawBody, signature)) {
       res.status(401).json({ success: false, error: 'Invalid webhook signature' });
@@ -122,9 +147,26 @@ router.get('/registration-status/:inquiryId', async (req: Request, res: Response
   try {
     const result = await voterService.getRegistrationStatus(req.params.inquiryId);
 
+    // When the voter has just been approved, issue a setup JWT so the frontend
+    // can immediately call /api/webauthn/register/options and /api/voters/set-pin
+    // without requiring a separate password login step.
+    let setupToken: string | undefined;
+    if (result.status === 'REGISTERED' && result.voterId) {
+      const voter = await voterRepository.findById(result.voterId);
+      if (voter) {
+        setupToken = authService.generateToken({
+          sub: voter.id,
+          nationalId: voter.nationalId,
+          status: voter.status,
+          role: voter.role,
+          isDistress: false,
+        });
+      }
+    }
+
     res.status(200).json({
       success: true,
-      data: result,
+      data: { ...result, setupToken },
     });
   } catch (error) {
     if (error instanceof ServiceError) {
@@ -166,27 +208,22 @@ router.post('/request-manual-review', async (req: Request, res: Response) => {
   }
 });
 
-// POST /api/voters/verify-pin
-router.post('/verify-pin', authRateLimiter, async (req: Request, res: Response) => {
+// POST /api/voters/set-pin - Set voter's normal PIN (distress PIN is auto-generated and delivered)
+router.post('/set-pin', requireAuth, async (req: Request, res: Response) => {
+  const pinSchema = z.object({
+    pin: z.string().regex(/^\d{4}$/, 'PIN must be exactly 4 digits'),
+  });
+
+  const parsed = pinSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ success: false, error: parsed.error.errors.map(e => e.message).join(', ') });
+    return;
+  }
+
   try {
-    const parsed = verifyPinSchema.safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({
-        success: false,
-        error: parsed.error.errors.map(e => e.message).join(', '),
-      });
-      return;
-    }
-
-    const result = await voterService.verifyPin(parsed.data.nationalId, parsed.data.pin);
-
-    // Strip isDistress from client response — coercer must not see it
-    const { isDistress: _isDistress, ...clientResult } = result;
-
-    res.status(200).json({
-      success: true,
-      data: clientResult,
-    });
+    const voterId = (req as AuthenticatedRequest).voter.sub;
+    const result = await voterService.setVoterPin(voterId, parsed.data.pin);
+    res.status(200).json({ success: true, data: result });
   } catch (error) {
     if (error instanceof ServiceError) {
       res.status(error.statusCode).json({ success: false, error: error.message });
@@ -194,7 +231,7 @@ router.post('/verify-pin', authRateLimiter, async (req: Request, res: Response) 
     }
     res.status(500).json({
       success: false,
-      error: error instanceof Error ? error.message : 'PIN verification failed',
+      error: error instanceof Error ? error.message : 'Failed to set PIN',
     });
   }
 });

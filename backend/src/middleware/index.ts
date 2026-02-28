@@ -2,7 +2,9 @@ export { requireAuth, optionalAuth, requireAdmin, requireSelf, requireApiKey } f
 export {
   globalRateLimiter,
   authRateLimiter,
+  otpRateLimiter,
   registrationRateLimiter,
+  webAuthnEnrollRateLimiter,
   adminRateLimiter,
   voteRateLimiter,
   receiptRateLimiter,

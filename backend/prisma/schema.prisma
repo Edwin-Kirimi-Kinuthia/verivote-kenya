@@ -78,6 +78,12 @@ enum PrintStatus {
   CANCELLED         // Print job was cancelled
 }
 
+/// Preferred channel for PIN delivery to voters
+enum PreferredContact {
+  SMS
+  EMAIL
+}
+
 // ============================================================================
 // VOTER MODEL
 // ============================================================================
@@ -118,17 +124,24 @@ model Voter {
   sbtMintedAt       DateTime?    @map("sbt_minted_at")
 
   // --------------------------------------------------------------------------
-  // AUTHENTICATION FIELDS
+  // AUTHENTICATION
   // --------------------------------------------------------------------------
-  // We store hashed PINs, never the actual PIN!
-  // Using Argon2 hashing (industry standard, very secure)
-  
-  // Hash of the normal PIN (for regular voting)
-  pinHash           String?      @map("pin_hash") @db.VarChar(255)
-  
-  // Hash of the distress PIN (used if voter is coerced)
-  // When used, silently flags the vote for review
-  distressPinHash   String?      @map("distress_pin_hash") @db.VarChar(255)
+
+  // Argon2id hash of the voter's self-chosen password (optional).
+  // Voters who only use fingerprint (WebAuthn) will have null here.
+  passwordHash          String?           @map("password_hash") @db.VarChar(255)
+
+  // Argon2id hashes of the voter's normal PIN and server-generated distress PIN.
+  // normalPin is user-chosen (memorability); distressPin is server-generated
+  // (coercion resistance — an attacker watching setup cannot identify which PIN triggers the alert).
+  normalPinHash         String?           @map("normal_pin_hash") @db.VarChar(255)
+  distressPinHash       String?           @map("distress_pin_hash") @db.VarChar(255)
+  pinSetAt              DateTime?         @map("pin_set_at")
+
+  // --------------------------------------------------------------------------
+  // WEBAUTHN CREDENTIALS (fingerprint / Face ID / device biometric)
+  // --------------------------------------------------------------------------
+  webAuthnCredentials WebAuthnCredential[]
 
   // --------------------------------------------------------------------------
   // STATUS TRACKING
@@ -137,6 +150,17 @@ model Voter {
   // --------------------------------------------------------------------------
   // PERSONA IDENTITY VERIFICATION
   // --------------------------------------------------------------------------
+
+  // Contact information for OTP delivery and notifications
+  phoneNumber           String?           @map("phone_number") @db.VarChar(20)
+  email                 String?           @map("email") @db.VarChar(255)
+  preferredContact      PreferredContact? @map("preferred_contact")
+  fingerprintHash       String?           @map("fingerprint_hash") @db.VarChar(64)
+  fingerprintCapturedAt DateTime?         @map("fingerprint_captured_at")
+
+  // Contact ownership verification (set after voter proves they control the contact)
+  phoneVerifiedAt       DateTime?         @map("phone_verified_at")
+  emailVerifiedAt       DateTime?         @map("email_verified_at")
 
   // Persona inquiry ID for identity verification tracking
   personaInquiryId  String?      @unique @map("persona_inquiry_id") @db.VarChar(100)
@@ -181,6 +205,9 @@ model Voter {
 
   // When PINs were last reset
   pinLastResetAt            DateTime? @map("pin_last_reset_at")
+
+  // OTP codes for login and contact verification
+  otpCodes                  OtpCode[]
 
   // Scheduled appointment for manual review
   appointment               ManualReviewAppointment?
@@ -557,4 +584,77 @@ model PrintQueue {
   @@index([printerId])
   
   @@map("print_queue")
+}
+
+// ============================================================================
+// WEBAUTHN CREDENTIAL MODEL
+// ============================================================================
+// Stores public-key credentials enrolled via device biometrics (fingerprint,
+// Face ID, etc.) using the WebAuthn / FIDO2 standard.
+// The private key never leaves the voter's device — only the public key is
+// stored here, alongside a monotonic counter used to detect replay attacks.
+
+model WebAuthnCredential {
+  id           String   @id @default(uuid()) @db.Uuid
+
+  // Foreign key to the voter who owns this credential
+  voterId      String   @map("voter_id") @db.Uuid
+  voter        Voter    @relation(fields: [voterId], references: [id])
+
+  // Base64URL credential ID produced by the authenticator (unique per device)
+  credentialId String   @unique @map("credential_id") @db.Text
+
+  // COSE-encoded public key (binary, ~77-300 bytes depending on algorithm)
+  publicKey    Bytes    @map("public_key")
+
+  // Monotonically-increasing usage counter for replay-attack detection
+  counter      BigInt   @default(0)
+
+  // "singleDevice" or "multiDevice" (passkey)
+  deviceType   String   @map("device_type") @db.VarChar(32)
+
+  // Whether a multi-device credential has been backed up to the cloud
+  backedUp     Boolean  @default(false) @map("backed_up")
+
+  // JSON-encoded array of transport hints (e.g. ["internal", "hybrid"])
+  transports   String?  @db.Text
+
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@index([voterId])
+  @@map("webauthn_credentials")
+}
+
+// ============================================================================
+// OTP CODE MODEL
+// ============================================================================
+// Short-lived one-time passwords for login and contact verification.
+// Only the SHA-256 hash of the code is stored — never the plaintext.
+// Each code is single-use: usedAt is set on first successful (or exhausted) use.
+
+model OtpCode {
+  id        String    @id @default(uuid()) @db.Uuid
+
+  voterId   String    @map("voter_id") @db.Uuid
+  voter     Voter     @relation(fields: [voterId], references: [id], onDelete: Cascade)
+
+  // "LOGIN" | "CONTACT_VERIFY" | "CREDENTIAL_RESET"
+  purpose   String    @db.VarChar(32)
+
+  // SHA-256 hex of the plaintext 6-digit code — never store plaintext
+  codeHash  String    @map("code_hash") @db.VarChar(64)
+
+  expiresAt DateTime  @map("expires_at")
+
+  // Number of failed verify attempts; invalidated when attempts > 3
+  attempts  Int       @default(0)
+
+  // Set when the code is consumed (success or max-attempts reached)
+  usedAt    DateTime? @map("used_at")
+
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@index([voterId, purpose])
+  @@map("otp_codes")
 }

@@ -1,17 +1,23 @@
-import { randomInt } from 'crypto';
 import argon2 from 'argon2';
+import { randomInt } from 'crypto';
 import { ethers } from 'ethers';
 import { voterRepository } from '../repositories/index.js';
 import { blockchainService } from './blockchain.service.js';
+import { notificationService } from './notification.service.js';
 import { personaService } from './persona.service.js';
-import { authService } from './auth.service.js';
-
-function generatePin(): string {
-  return String(randomInt(0, 10000)).padStart(4, '0');
-}
 
 export class VoterService {
-  async registerVoter(nationalId: string, pollingStationId: string) {
+  async registerVoter(
+    nationalId: string,
+    pollingStationId: string,
+    contactInfo?: {
+      phoneNumber?: string;
+      email?: string;
+      preferredContact?: 'SMS' | 'EMAIL';
+      fingerprintHash?: string;
+      password?: string;
+    }
+  ) {
     // Validate national ID format (8 digits, Kenyan format)
     if (!/^\d{8}$/.test(nationalId)) {
       throw new ServiceError('National ID must be exactly 8 digits', 400);
@@ -36,6 +42,18 @@ export class VoterService {
       if (pollingStationId && pollingStationId !== existing.pollingStationId) {
         updates.pollingStationId = pollingStationId;
       }
+      if (contactInfo) {
+        if (contactInfo.phoneNumber) updates.phoneNumber = contactInfo.phoneNumber;
+        if (contactInfo.email) updates.email = contactInfo.email;
+        if (contactInfo.preferredContact) updates.preferredContact = contactInfo.preferredContact;
+        if (contactInfo.fingerprintHash) {
+          updates.fingerprintHash = contactInfo.fingerprintHash;
+          updates.fingerprintCapturedAt = new Date();
+        }
+        if (contactInfo.password) {
+          updates.passwordHash = await argon2.hash(contactInfo.password, { type: argon2.argon2id });
+        }
+      }
       await voterRepository.update(existing.id, updates);
 
       // Issue a fresh Persona inquiry so they can re-attempt online verification
@@ -49,8 +67,18 @@ export class VoterService {
       };
     }
 
-    // New voter — create record with PENDING_VERIFICATION status
-    const voter = await voterRepository.create({ nationalId, pollingStationId });
+    // New voter — hash password if provided, then create record
+    const { password, ...restContact } = contactInfo ?? {};
+    const passwordHash = password
+      ? await argon2.hash(password, { type: argon2.argon2id })
+      : undefined;
+
+    const voter = await voterRepository.create({
+      nationalId,
+      pollingStationId,
+      ...restContact,
+      passwordHash,
+    });
 
     // Create Persona inquiry for identity verification
     const { inquiryId, url } = await personaService.createInquiry(nationalId, voter.id);
@@ -76,7 +104,8 @@ export class VoterService {
     }
 
     // If verification failed, route to manual review instead of outright rejection
-    if (personaStatus !== 'completed') {
+    const PERSONA_SUCCESS = ['completed', 'approved'];
+    if (!PERSONA_SUCCESS.includes(personaStatus)) {
       const failureReason = `Automated verification failed: Persona status "${personaStatus}"`;
       await voterRepository.requestManualReview(voter.id, failureReason);
       await voterRepository.update(voter.id, { personaStatus });
@@ -93,20 +122,6 @@ export class VoterService {
 
     await voterRepository.registerWithSbt(voter.id, wallet.address, tokenId);
 
-    // Generate PINs
-    const pin = generatePin();
-    let distressPin = generatePin();
-    while (distressPin === pin) {
-      distressPin = generatePin();
-    }
-
-    const [pinHash, distressPinHash] = await Promise.all([
-      argon2.hash(pin, { type: argon2.argon2id }),
-      argon2.hash(distressPin, { type: argon2.argon2id }),
-    ]);
-
-    await voterRepository.setPins(voter.id, pinHash, distressPinHash);
-
     // Mark as registered with verification timestamp
     await voterRepository.update(voter.id, {
       status: 'REGISTERED',
@@ -114,14 +129,14 @@ export class VoterService {
       personaVerifiedAt: new Date(),
     });
 
+    // Voter must now enroll a WebAuthn credential via POST /api/webauthn/register/options
     return {
       voterId: voter.id,
       nationalId: voter.nationalId,
       walletAddress: wallet.address,
       sbtTokenId: tokenId,
       txHash,
-      pin,
-      distressPin,
+      nextStep: 'enroll_fingerprint',
     };
   }
 
@@ -131,12 +146,115 @@ export class VoterService {
       throw new ServiceError('No registration found for this inquiry', 404);
     }
 
+    // If still waiting, actively poll Persona API to detect completion without relying on webhook
+    if (voter.status === 'PENDING_VERIFICATION') {
+      try {
+        const { personaService } = await import('./persona.service.js');
+        const inquiry = await personaService.getInquiry(inquiryId);
+        const PERSONA_SUCCESS = ['completed', 'approved'];
+        const PERSONA_FAILED = ['failed', 'declined', 'expired'];
+        if (PERSONA_SUCCESS.includes(inquiry.status)) {
+          // Trigger the full completion flow (mint SBT, generate PINs, notify voter)
+          const result = await this.completeVerification(inquiryId, inquiry.status);
+          return { status: 'REGISTERED', ...result };
+        }
+        if (PERSONA_FAILED.includes(inquiry.status)) {
+          await voterRepository.update(voter.id, {
+            status: 'PENDING_MANUAL_REVIEW',
+            verificationFailureReason: `Persona status: ${inquiry.status}`,
+          });
+          return { voterId: voter.id, status: 'PENDING_MANUAL_REVIEW', personaStatus: inquiry.status };
+        }
+      } catch {
+        // Persona API unavailable or mock mode — fall through to DB status
+      }
+    }
+
     return {
       voterId: voter.id,
       status: voter.status,
       personaStatus: voter.personaStatus,
       manualReviewRequestedAt: voter.manualReviewRequestedAt,
       verificationFailureReason: voter.verificationFailureReason,
+    };
+  }
+
+  /**
+   * Set the voter's normal PIN (user-chosen) and generate a server-side distress PIN.
+   * The distress PIN is delivered via SMS/email so the voter knows it, but an
+   * attacker watching the setup screen cannot identify which PIN triggers the alert.
+   */
+  async setVoterPin(voterId: string, pin: string) {
+    // Validate format: exactly 4 digits
+    if (!/^\d{4}$/.test(pin)) {
+      throw new ServiceError('PIN must be exactly 4 digits', 400);
+    }
+    // Reject all-same-digit PINs (1111, 2222, …)
+    if (/^(\d)\1{3}$/.test(pin)) {
+      throw new ServiceError('PIN cannot be all the same digit (e.g. 1111)', 400);
+    }
+    // Reject sequential PINs (1234, 4321, …)
+    const digits = pin.split('').map(Number);
+    const isAsc = digits.every((d, i) => i === 0 || d === digits[i - 1]! + 1);
+    const isDesc = digits.every((d, i) => i === 0 || d === digits[i - 1]! - 1);
+    if (isAsc || isDesc) {
+      throw new ServiceError('PIN cannot be a sequential number (e.g. 1234)', 400);
+    }
+
+    const voter = await voterRepository.findById(voterId);
+    if (!voter) throw new ServiceError('Voter not found', 404);
+
+    if (voter.status !== 'REGISTERED') {
+      throw new ServiceError('Only registered voters can set a PIN', 400);
+    }
+
+    // Hash the normal PIN
+    const normalPinHash = await argon2.hash(pin, { type: argon2.argon2id });
+
+    // Generate a distress PIN that:
+    //  • differs from the normal PIN in at least 2 digit positions
+    //  • is not all-same or sequential
+    let distressPin: string;
+    let attempts = 0;
+    do {
+      distressPin = Array.from({ length: 4 }, () => randomInt(0, 10)).join('');
+      const diffPositions = distressPin.split('').filter((d, i) => d !== pin[i]).length;
+      const dDigits = distressPin.split('').map(Number);
+      const dAllSame = /^(\d)\1{3}$/.test(distressPin);
+      const dAsc = dDigits.every((d, i) => i === 0 || d === dDigits[i - 1]! + 1);
+      const dDesc = dDigits.every((d, i) => i === 0 || d === dDigits[i - 1]! - 1);
+      if (diffPositions >= 2 && !dAllSame && !dAsc && !dDesc) break;
+      attempts++;
+    } while (attempts < 100);
+
+    const distressPinHash = await argon2.hash(distressPin, { type: argon2.argon2id });
+
+    // Persist both hashes
+    await voterRepository.update(voterId, {
+      normalPinHash,
+      distressPinHash,
+      pinSetAt: new Date(),
+    });
+
+    // Deliver the distress PIN to the voter (they already know their normal PIN)
+    if (voter.preferredContact && (voter.phoneNumber || voter.email)) {
+      await notificationService.sendDistressPin({
+        channel: voter.preferredContact as 'SMS' | 'EMAIL',
+        recipient: voter.preferredContact === 'SMS' ? voter.phoneNumber! : voter.email!,
+        nationalId: voter.nationalId,
+        distressPin,
+        context: 'REGISTRATION',
+      });
+    } else {
+      // Fallback: log so devs can still test without contact info configured
+      console.log(`[PIN DEV] distressPin=${distressPin} for voter ${voterId}`);
+    }
+
+    return {
+      voterId,
+      pinSet: true,
+      distressPinDelivered: !!(voter.preferredContact),
+      message: 'Your voting PIN has been set. Your distress PIN has been sent to your registered contact.',
     };
   }
 
@@ -173,76 +291,8 @@ export class VoterService {
     };
   }
 
-  async verifyPin(nationalId: string, pin: string) {
-    const voter = await voterRepository.findByNationalId(nationalId);
-    if (!voter) {
-      throw new ServiceError('Voter not found', 404);
-    }
-
-    if (voter.status === 'PENDING_VERIFICATION') {
-      throw new ServiceError('Voter identity verification is still pending', 403);
-    }
-
-    if (voter.status === 'PENDING_MANUAL_REVIEW') {
-      throw new ServiceError('Voter is awaiting manual review by IEBC officials', 403);
-    }
-
-    if (voter.status === 'VERIFICATION_FAILED') {
-      throw new ServiceError('Voter identity verification failed', 403);
-    }
-
-    if (!voter.pinHash || !voter.distressPinHash) {
-      throw new ServiceError('Voter PINs not set', 400);
-    }
-
-    // Check normal PIN
-    const normalMatch = await argon2.verify(voter.pinHash, pin);
-    if (normalMatch) {
-      const token = authService.generateToken({
-        sub: voter.id,
-        nationalId: voter.nationalId,
-        status: voter.status,
-        role: voter.role,
-        isDistress: false,
-      });
-      return {
-        valid: true,
-        isDistress: false,
-        auth: {
-          token,
-          expiresIn: authService.getExpiresIn(),
-          voter: { id: voter.id, nationalId: voter.nationalId, status: voter.status, role: voter.role },
-        },
-      };
-    }
-
-    // Check distress PIN
-    const distressMatch = await argon2.verify(voter.distressPinHash, pin);
-    if (distressMatch) {
-      // Capture pre-update status so a coercer sees a normal-looking response
-      const preUpdateStatus = voter.status;
-      await voterRepository.flagDistress(voter.id);
-      const token = authService.generateToken({
-        sub: voter.id,
-        nationalId: voter.nationalId,
-        status: preUpdateStatus,
-        role: voter.role,
-        isDistress: true,
-      });
-      return {
-        valid: true,
-        isDistress: true,
-        auth: {
-          token,
-          expiresIn: authService.getExpiresIn(),
-          voter: { id: voter.id, nationalId: voter.nationalId, status: preUpdateStatus, role: voter.role },
-        },
-      };
-    }
-
-    return { valid: false, isDistress: false };
-  }
 }
+
 
 export class ServiceError extends Error {
   constructor(message: string, public statusCode: number) {

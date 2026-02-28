@@ -57,3 +57,7 @@ smart-contracts/deployments/
 *.tmp
 *.temp
 .cache/
+
+# Internal docs (mentor notes, project briefs — not for public repo)
+docs/project-brief.md
+docs/*.code-workspace

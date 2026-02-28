@@ -19,7 +19,7 @@ export class PersonaService {
     this.webhookSecret = process.env.PERSONA_WEBHOOK_SECRET || '';
   }
 
-  async createInquiry(nationalId: string, referenceId: string): Promise<{ inquiryId: string; url: string }> {
+  async createInquiry(_nationalId: string, referenceId: string): Promise<{ inquiryId: string; url: string }> {
     if (this.mockMode) {
       return {
         inquiryId: `inq_mock_${referenceId}`,
@@ -40,9 +40,6 @@ export class PersonaService {
           attributes: {
             inquiryTemplateId: this.templateId,
             referenceId,
-            fields: {
-              nationalId,
-            },
           },
         },
       }),
@@ -93,20 +90,33 @@ export class PersonaService {
     };
   }
 
-  verifyWebhookSignature(payload: string, signature: string): boolean {
+  verifyWebhookSignature(rawBody: string, signature: string): boolean {
     if (this.mockMode) return true;
+    if (!this.webhookSecret || !signature) return false;
 
-    if (!this.webhookSecret) return false;
+    // Persona signature format: "t=TIMESTAMP,v1=HEX_DIGEST"
+    const parts = Object.fromEntries(
+      signature.split(',').map((s) => s.split('=') as [string, string]),
+    );
+    const timestamp = parts['t'];
+    const v1 = parts['v1'];
+    if (!timestamp || !v1) return false;
 
+    // Signed payload is "TIMESTAMP.RAW_BODY"
+    const signedPayload = `${timestamp}.${rawBody}`;
     const expected = crypto
       .createHmac('sha256', this.webhookSecret)
-      .update(payload)
+      .update(signedPayload)
       .digest('hex');
 
-    return crypto.timingSafeEqual(
-      Buffer.from(signature, 'hex'),
-      Buffer.from(expected, 'hex'),
-    );
+    try {
+      return crypto.timingSafeEqual(
+        Buffer.from(v1, 'hex'),
+        Buffer.from(expected, 'hex'),
+      );
+    } catch {
+      return false;
+    }
   }
 
   isMockMode(): boolean {
