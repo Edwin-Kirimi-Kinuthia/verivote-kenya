@@ -2,6 +2,7 @@ import { voterRepository } from '../repositories/index.js';
 import { personaService } from './persona.service.js';
 import { ServiceError } from './voter.service.js';
 import { webAuthnService } from './webauthn.service.js';
+import { adminService } from './admin.service.js';
 
 export class PinResetService {
   /**
@@ -135,10 +136,19 @@ export class PinResetService {
   }
 
   /**
-   * Clear all WebAuthn credentials so the voter can re-enroll their fingerprint.
+   * Clear all WebAuthn credentials and PINs so the voter can re-enroll.
+   * Sends a new PIN setup link to the voter's registered contact.
    * Called after successful identity re-verification (in-person or biometric).
    */
   private async clearCredentialsForReEnrollment(voterId: string) {
+    const { prisma } = await import('../database/client.js');
+
+    // Wipe PIN hashes so the old PINs are invalidated immediately
+    await prisma.voter.update({
+      where: { id: voterId },
+      data: { normalPinHash: null, distressPinHash: null },
+    });
+
     // Clear the re-enrollment request flag
     await voterRepository.update(voterId, {
       pinResetRequested: false,
@@ -150,14 +160,24 @@ export class PinResetService {
     // Delete all enrolled WebAuthn credentials
     await webAuthnService.deleteCredentials(voterId);
 
+    // Send a new PIN setup link to the voter's registered contact
+    let linkResult: { contact: string; channel: 'SMS' | 'EMAIL' } | null = null;
+    try {
+      linkResult = await adminService.sendSetupLink(voterId);
+    } catch (_err) {
+      // Don't fail the whole reset if link sending fails — admin can resend via send-setup-link
+    }
+
     const voter = await voterRepository.findById(voterId);
 
     return {
       voterId,
       nationalId: voter?.nationalId,
-      message: 'Credentials cleared. Please enroll your fingerprint again via the app.',
-      nextStep: 'enroll_fingerprint',
+      message: linkResult
+        ? `Credentials cleared. A PIN setup link has been sent to ${linkResult.contact}.`
+        : 'Credentials cleared. Please use "Send PIN Setup Link" to notify the voter.',
       clearedAt: new Date().toISOString(),
+      ...(linkResult ? { linkSent: linkResult } : {}),
     };
   }
 

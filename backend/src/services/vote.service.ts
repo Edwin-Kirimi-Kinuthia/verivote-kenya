@@ -44,31 +44,36 @@ export class VoteService {
     }
 
     // ── PIN verification ────────────────────────────────────────────────────
-    // If the voter has set a PIN, it is required at vote time.
-    let isDistressVote = voter.isDistress; // preserve JWT-level distress flag (e.g. from OTP login)
-    if (voterRecord.normalPinHash || voterRecord.distressPinHash) {
-      if (!input.pin) {
-        throw new ServiceError('PIN is required to cast your vote', 400);
-      }
-      // Check normal PIN first
-      let pinValid = false;
-      if (voterRecord.normalPinHash) {
-        try {
-          pinValid = await argon2.verify(voterRecord.normalPinHash, input.pin);
-        } catch { /* hash format mismatch → invalid */ }
-      }
-      if (!pinValid && voterRecord.distressPinHash) {
-        try {
-          const distressMatch = await argon2.verify(voterRecord.distressPinHash, input.pin);
-          if (distressMatch) {
-            isDistressVote = true;
-            pinValid = true;
-          }
-        } catch { /* hash format mismatch → invalid */ }
-      }
-      if (!pinValid) {
-        throw new ServiceError('Invalid PIN', 401);
-      }
+    // PIN setup is mandatory before voting. Block if it was never set.
+    let isDistressVote = voter.isDistress;
+    if (!voterRecord.normalPinHash) {
+      throw new ServiceError(
+        'Your voting PIN has not been set. Please contact your IEBC officer to complete registration.',
+        403
+      );
+    }
+
+    if (!input.pin) {
+      throw new ServiceError('PIN is required to cast your vote', 400);
+    }
+
+    let pinValid = false;
+    try {
+      pinValid = await argon2.verify(voterRecord.normalPinHash, input.pin);
+    } catch { /* hash format mismatch → invalid */ }
+
+    if (!pinValid && voterRecord.distressPinHash) {
+      try {
+        const distressMatch = await argon2.verify(voterRecord.distressPinHash, input.pin);
+        if (distressMatch) {
+          isDistressVote = true;
+          pinValid = true;
+        }
+      } catch { /* hash format mismatch → invalid */ }
+    }
+
+    if (!pinValid) {
+      throw new ServiceError('Invalid PIN', 401);
     }
 
     // Encrypt selections and hash the ciphertext

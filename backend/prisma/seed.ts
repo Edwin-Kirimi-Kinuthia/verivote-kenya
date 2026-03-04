@@ -353,7 +353,7 @@ async function seedVoters(stationIds: string[]): Promise<string[]> {
         sbtAddress: generateEthereumAddress(),
         sbtTokenId: `${i + 1}`,
         sbtMintedAt: new Date(Date.now() - getRandomInt(7, 30) * 24 * 60 * 60 * 1000),
-        pinHash: generateArgon2Hash(),
+        normalPinHash: generateArgon2Hash(),
         distressPinHash: generateArgon2Hash(),
         status,
         voteCount,
@@ -509,10 +509,12 @@ async function seedAdminUser(stationIds: string[]): Promise<void> {
 
   const adminPin = '1234';
   const adminDistressPin = '5678';
+  const adminPassword = 'Admin@1234';
 
-  const [pinHash, distressPinHash] = await Promise.all([
+  const [normalPinHash, distressPinHash, passwordHash] = await Promise.all([
     argon2.hash(adminPin, { type: argon2.argon2id }),
     argon2.hash(adminDistressPin, { type: argon2.argon2id }),
+    argon2.hash(adminPassword, { type: argon2.argon2id }),
   ]);
 
   await prisma.voter.create({
@@ -522,14 +524,15 @@ async function seedAdminUser(stationIds: string[]): Promise<void> {
       sbtAddress: generateEthereumAddress(),
       sbtTokenId: 'ADMIN-1',
       sbtMintedAt: new Date(),
-      pinHash,
+      normalPinHash,
       distressPinHash,
+      passwordHash,
       status: VoterStatus.REGISTERED,
       pollingStationId: stationIds[0],
     },
   });
 
-  console.log('   ✓ Admin user created (National ID: 00000001, PIN: 1234)');
+  console.log('   ✓ Admin user created (National ID: 00000001, Password: Admin@1234, PIN: 1234)');
   console.log('✅ Admin user seeded\n');
 }
 

@@ -114,8 +114,12 @@ export class AppointmentService {
 
     // Check if voter already has a booking
     const existingBooking = await appointmentRepository.findByVoterId(voter.id);
-    if (existingBooking && existingBooking.status === 'BOOKED') {
-      throw new ServiceError('You already have a booked appointment', 409);
+    if (existingBooking) {
+      if (existingBooking.status === 'BOOKED') {
+        throw new ServiceError('You already have a booked appointment', 409);
+      }
+      // Release voter from old completed/no-show appointment so they can book a new one
+      await appointmentRepository.update(existingBooking.id, { voterId: null });
     }
 
     const slot = await appointmentRepository.findById(slotId);

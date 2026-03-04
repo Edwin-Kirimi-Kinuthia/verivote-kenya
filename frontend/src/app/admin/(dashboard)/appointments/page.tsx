@@ -17,6 +17,7 @@ import type {
   ApiResponse,
   ColumnDef,
   ApproveResult,
+  SetupLinkResult,
 } from "@/lib/types";
 
 const APPOINTMENT_STATUS_STYLES: Record<string, { label: string; color: string; bg: string }> = {
@@ -80,7 +81,18 @@ export default function AppointmentsPage() {
   const [actionNotes, setActionNotes] = useState("");
   const [actionError, setActionError] = useState("");
   const [appointmentActionLoading, setAppointmentActionLoading] = useState(false);
-  const [approveResult, setApproveResult] = useState<ApproveResult | null>(null);
+
+  // Post-approval fingerprint + setup-link flow
+  const [postApproval, setPostApproval] = useState<{
+    voterId: string;
+    nationalId: string;
+    step: "fingerprint" | "done";
+    contact?: string;
+  } | null>(null);
+  const [fpLoading, setFpLoading] = useState(false);
+  const [fpError, setFpError] = useState("");
+  const [fpEnrolled, setFpEnrolled] = useState(false);
+  const [linkLoading, setLinkLoading] = useState(false);
 
   useEffect(() => {
     api
@@ -236,7 +248,7 @@ export default function AppointmentsPage() {
     setActiveAction({ appointmentId, type });
     setActionNotes("");
     setActionError("");
-    setApproveResult(null);
+    setPostApproval(null);
   }
 
   function cancelAction() {
@@ -255,8 +267,14 @@ export default function AppointmentsPage() {
         { reviewerId: voter?.id, notes: actionNotes || undefined }
       );
       if (res.success && res.data) {
-        setApproveResult(res.data);
         setActiveAction(null);
+        setFpEnrolled(false);
+        setFpError("");
+        setPostApproval({
+          voterId: res.data.voterId,
+          nationalId: res.data.nationalId,
+          step: "fingerprint",
+        });
         loadAppointments();
       } else {
         setActionError(res.error || "Approval failed");
@@ -292,6 +310,69 @@ export default function AppointmentsPage() {
     } finally {
       setAppointmentActionLoading(false);
     }
+  }
+
+  // ── Fingerprint enrollment + setup link ────────────────────────────────────
+
+  async function handleEnrollFingerprint() {
+    if (!postApproval) return;
+    setFpError("");
+    setFpLoading(true);
+    try {
+      const optRes = await api.post<ApiResponse<Record<string, unknown>>>(
+        "/api/webauthn/register/options",
+        { voterId: postApproval.voterId }
+      );
+      if (!optRes.success || !optRes.data)
+        throw new Error("Failed to get fingerprint options");
+      const { startRegistration } = await import("@simplewebauthn/browser");
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const attResp = await startRegistration({ optionsJSON: optRes.data as any });
+      const verRes = await api.post<ApiResponse<{ verified: boolean }>>(
+        "/api/webauthn/register/verify",
+        { voterId: postApproval.voterId, response: attResp }
+      );
+      if (!verRes.success || !verRes.data?.verified)
+        throw new Error("Fingerprint verification failed");
+      setFpEnrolled(true);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Fingerprint enrollment failed";
+      setFpError(
+        msg.toLowerCase().includes("cancel") || msg.toLowerCase().includes("abort") || msg.toLowerCase().includes("user")
+          ? "Fingerprint scan was cancelled. Please ask the voter to try again."
+          : msg
+      );
+    } finally {
+      setFpLoading(false);
+    }
+  }
+
+  async function handleSendLink() {
+    if (!postApproval) return;
+    setFpError("");
+    setLinkLoading(true);
+    try {
+      const res = await api.post<ApiResponse<SetupLinkResult>>(
+        "/api/admin/send-setup-link",
+        { voterId: postApproval.voterId }
+      );
+      if (!res.success || !res.data) {
+        setFpError(res.error || "Failed to send setup link");
+        return;
+      }
+      setPostApproval((prev) =>
+        prev ? { ...prev, step: "done", contact: res.data!.contact } : null
+      );
+    } catch (err) {
+      setFpError(err instanceof Error ? err.message : "Failed to send setup link");
+    } finally {
+      setLinkLoading(false);
+    }
+  }
+
+  async function handleSkipFingerprint() {
+    setFpEnrolled(false);
+    await handleSendLink();
   }
 
   const columns: ColumnDef<Appointment>[] = [
@@ -638,41 +719,115 @@ export default function AppointmentsPage() {
           </form>
         </div>
 
-        {/* Approve result — PINs to hand to voter */}
-        {approveResult && (
-          <div className="rounded-lg border-2 border-green-300 bg-green-50 p-6">
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-green-800">
-                Voter Approved — Registration Complete
-              </h2>
+        {/* Post-approval: fingerprint enrollment */}
+        {postApproval && postApproval.step === "fingerprint" && (
+          <div className="rounded-lg border border-blue-200 bg-blue-50 p-5 space-y-4">
+            <div className="flex items-center gap-2">
+              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-green-600 text-white font-bold text-[10px]">✓</span>
+              <span className="text-sm font-medium text-green-700">Voter approved — SBT minted</span>
+              <span className="flex-1 border-t border-blue-200" />
+              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-600 text-white font-bold text-[10px]">2</span>
+              <span className="text-sm font-medium text-blue-700">Capture fingerprint</span>
+              <span className="flex-1 border-t border-blue-200" />
+              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-gray-300 text-gray-600 font-bold text-[10px]">3</span>
+              <span className="text-sm text-gray-400">Send PIN link</span>
+            </div>
+            <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+              <strong>IEBC Officer:</strong> Ask voter <strong>{postApproval.nationalId}</strong> to place
+              their finger on the biometric reader or use Windows Hello / Face ID on this device.
+            </div>
+            <div className="rounded-lg border border-gray-200 bg-white p-4 text-center space-y-3">
+              <div className={`mx-auto flex h-16 w-16 items-center justify-center rounded-full ${fpEnrolled ? "bg-green-100" : "bg-blue-50"}`}>
+                {fpEnrolled ? (
+                  <svg className="h-8 w-8 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                ) : (
+                  <svg className="h-8 w-8 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M7.864 4.243A7.5 7.5 0 0119.5 10.5c0 2.92-.556 5.709-1.568 8.268M5.742 6.364A7.465 7.465 0 004.5 10.5a7.464 7.464 0 01-1.15 3.993m1.989 3.559A11.209 11.209 0 008.25 10.5a3.75 3.75 0 117.5 0c0 .527-.021 1.049-.064 1.565M12 10.5a14.94 14.94 0 01-3.6 9.75m6.633-4.596a18.666 18.666 0 01-2.485 5.33" />
+                  </svg>
+                )}
+              </div>
+              {fpEnrolled ? (
+                <p className="text-sm font-semibold text-green-700">Fingerprint enrolled</p>
+              ) : (
+                <p className="text-sm text-gray-700">Ready to capture fingerprint</p>
+              )}
+              {fpError && (
+                <div className="rounded-md bg-red-50 p-2 text-xs text-red-700">{fpError}</div>
+              )}
+              {!fpEnrolled && (
+                <button
+                  type="button"
+                  onClick={handleEnrollFingerprint}
+                  disabled={fpLoading}
+                  className="w-full rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {fpLoading ? (
+                    <span className="flex items-center justify-center gap-2">
+                      <svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg>
+                      Waiting for scan…
+                    </span>
+                  ) : "Scan Fingerprint"}
+                </button>
+              )}
+              {fpEnrolled && (
+                <button
+                  type="button"
+                  onClick={handleSendLink}
+                  disabled={linkLoading}
+                  className="w-full rounded-md bg-green-700 px-4 py-2 text-sm font-semibold text-white hover:bg-green-800 disabled:opacity-50"
+                >
+                  {linkLoading ? "Sending link…" : "Send PIN Setup Link →"}
+                </button>
+              )}
+            </div>
+            <p className="text-xs text-blue-600">
+              FIDO2/WebAuthn — only a cryptographic key is stored, no biometric data leaves this device.
+            </p>
+            {!fpEnrolled && (
               <button
-                onClick={() => setApproveResult(null)}
-                className="text-xs text-green-700 hover:text-green-900 underline"
+                type="button"
+                onClick={handleSkipFingerprint}
+                disabled={linkLoading || fpLoading}
+                className="w-full text-center text-sm text-gray-400 hover:text-gray-600 disabled:opacity-50"
               >
-                Dismiss
+                {linkLoading ? "Sending link…" : "Skip fingerprint — device not available"}
               </button>
-            </div>
-            <p className="mb-4 text-sm text-green-700">
-              National ID: <span className="font-semibold">{approveResult.nationalId}</span>
-              {" · "}SBT Token: <span className="font-semibold">#{approveResult.sbtTokenId}</span>
+            )}
+          </div>
+        )}
+
+        {/* Post-approval: done */}
+        {postApproval && postApproval.step === "done" && (
+          <div className="rounded-lg border border-green-200 bg-green-50 p-5">
+            <h3 className="mb-3 text-sm font-semibold text-green-900">Voter Approved &amp; Notified</h3>
+            <ul className="space-y-2 text-sm text-green-800">
+              <li className="flex items-start gap-2">
+                <span className="text-green-600">✓</span>
+                <span>Identity verified — SBT minted on-chain</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-green-600">{fpEnrolled ? "✓" : "–"}</span>
+                <span>{fpEnrolled ? "Biometric credential enrolled" : "Fingerprint skipped — voter can enroll later"}</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-green-600">✓</span>
+                <span>PIN setup link sent to <span className="font-medium">{postApproval.contact}</span></span>
+              </li>
+            </ul>
+            <p className="mt-3 text-xs text-green-600">
+              The voter will set their own PIN privately. Neither PIN is visible to officers.
             </p>
-            <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-green-700">
-              Hand these PINs to the voter — they will not be shown again:
-            </p>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="rounded-lg border-2 border-green-300 bg-white p-4">
-                <p className="mb-1 text-xs font-semibold text-green-700">Voting PIN</p>
-                <p className="font-mono text-3xl font-bold tracking-widest text-green-800">
-                  {approveResult.pin}
-                </p>
-              </div>
-              <div className="rounded-lg border-2 border-amber-300 bg-white p-4">
-                <p className="mb-1 text-xs font-semibold text-amber-700">Distress PIN</p>
-                <p className="font-mono text-3xl font-bold tracking-widest text-amber-800">
-                  {approveResult.distressPin}
-                </p>
-              </div>
-            </div>
+            <button
+              onClick={() => setPostApproval(null)}
+              className="mt-3 rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+            >
+              Dismiss
+            </button>
           </div>
         )}
 

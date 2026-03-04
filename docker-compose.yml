@@ -1,8 +1,6 @@
 # Docker Compose configuration for VeriVote Kenya
 # This file defines the database services needed for development
 
-version: '3.8'
-
 services:
   # PostgreSQL Database
   # Stores: voters, polling stations, votes (encrypted), audit logs

@@ -82,6 +82,19 @@ export interface RegisterResult {
   distressPin: string;
 }
 
+export interface AdminRegisterResult {
+  voterId: string;
+  nationalId: string;
+  walletAddress: string;
+  sbtTokenId: string;
+  txHash: string;
+}
+
+export interface SetupLinkResult {
+  contact: string;
+  channel: 'SMS' | 'EMAIL';
+}
+
 export interface RegisterLiveResult {
   voterId: string;
   inquiryId: string;
@@ -162,8 +175,6 @@ export interface ApproveResult {
   walletAddress: string;
   sbtTokenId: string;
   txHash: string;
-  pin: string;
-  distressPin: string;
   reviewedBy: string;
 }
 
@@ -185,14 +196,13 @@ export interface PendingReset {
 
 export interface PinResetResult {
   voterId: string;
-  nationalId: string;
-  pin: string;
-  distressPin: string;
+  nationalId: string | undefined;
   message: string;
-  resetAt: string;
+  clearedAt: string;
   verifiedBy: string;
   verificationNotes?: string;
   verificationType: string;
+  linkSent?: { contact: string; channel: 'SMS' | 'EMAIL' };
 }
 
 // ============================================================================

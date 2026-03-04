@@ -162,6 +162,81 @@ export class NotificationService {
     }
   }
 
+  /**
+   * Send a PIN setup link to the voter after admin in-person registration.
+   * The link contains a short-lived JWT so the voter can set their PIN on
+   * their own device without the admin ever seeing the token.
+   */
+  async sendPinSetupLink(payload: {
+    channel: 'SMS' | 'EMAIL';
+    recipient: string;
+    nationalId: string;
+    setupUrl: string;
+  }): Promise<void> {
+    if (this.mockMode) {
+      console.log(
+        `[PIN SETUP LINK MOCK] nationalId=${payload.nationalId} channel=${payload.channel} url=${payload.setupUrl}`,
+      );
+      return;
+    }
+
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(
+        `[PIN SETUP LINK DEV] nationalId=${payload.nationalId} channel=${payload.channel}` +
+        ` recipient=${payload.recipient} url=${payload.setupUrl}`,
+      );
+    }
+
+    const smsMsg =
+      `VeriVote Kenya: Complete your voter registration by setting your PIN here: ${payload.setupUrl}` +
+      ` — Link expires in 24 hours. Do not share it with anyone.`;
+
+    const emailBody = [
+      `Dear Voter (National ID: ${payload.nationalId}),`,
+      ``,
+      `Your in-person voter registration at an IEBC office is complete.`,
+      `Please click the link below on your personal device to set your private voting PIN:`,
+      ``,
+      `    ${payload.setupUrl}`,
+      ``,
+      `This link expires in 24 hours and can only be used once.`,
+      `Do not share this link with anyone — including IEBC officials.`,
+      ``,
+      `After you set your PIN, a separate distress PIN will be sent to this contact.`,
+      `Use the distress PIN ONLY if you are ever forced to vote against your will —`,
+      `it silently flags your vote for IEBC review without alerting anyone present.`,
+      ``,
+      `VeriVote Kenya — IEBC`,
+    ].join('\n');
+
+    if (payload.channel === 'SMS') {
+      try {
+        await this.atSms!.send({ to: [payload.recipient], message: smsMsg });
+      } catch (err) {
+        if (process.env.NODE_ENV !== 'production') {
+          console.warn(`[PIN SETUP LINK SMS FALLBACK] AT failed. URL for ${payload.nationalId}: ${payload.setupUrl}`);
+          return;
+        }
+        throw err;
+      }
+    } else {
+      try {
+        await this.smtp!.sendMail({
+          from: process.env.EMAIL_FROM || '"VeriVote Kenya" <noreply@verivote.go.ke>',
+          to: payload.recipient,
+          subject: 'VeriVote Kenya — Set Your Voting PIN',
+          text: emailBody,
+        });
+      } catch (err) {
+        if (process.env.NODE_ENV !== 'production') {
+          console.warn(`[PIN SETUP LINK EMAIL FALLBACK] SMTP failed. URL for ${payload.nationalId}: ${payload.setupUrl}`);
+          return;
+        }
+        throw err;
+      }
+    }
+  }
+
   isMockMode(): boolean {
     return this.mockMode;
   }

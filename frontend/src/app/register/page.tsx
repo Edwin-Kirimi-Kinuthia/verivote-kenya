@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { api } from "@/lib/api-client";
 import { useTranslation } from "@/contexts/language-context";
 import { AppointmentSlotPicker } from "@/components/appointment-slot-picker";
+import { COUNTRY_CODES } from "@/lib/country-codes";
 import type {
   PollingStation,
   BookedAppointmentResult,
@@ -33,6 +34,7 @@ export default function RegisterPage() {
   const router = useRouter();
   const { t } = useTranslation();
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const personaAttemptsRef = useRef(0);
 
   const [view, setView] = useState<View>("form");
   const [stations, setStations] = useState<PollingStation[]>([]);
@@ -95,6 +97,23 @@ export default function RegisterPage() {
   useEffect(() => {
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, []);
+
+  // Persona postMessage listener — fires when Persona completes in a new tab (opener postMessage)
+  useEffect(() => {
+    if (view !== "personaInProgress") return;
+
+    const handler = (event: MessageEvent) => {
+      const name: string = event.data?.name ?? event.data?.type ?? "";
+      if (!name.startsWith("persona:")) return;
+      if (name === "persona:inquiry:completed" || name === "persona:inquiry:approved") {
+        checkPersonaStatus();
+      }
+    };
+
+    window.addEventListener("message", handler);
+    return () => window.removeEventListener("message", handler);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view]);
 
   // ── Password strength ──────────────────────────────────────────────────────
 
@@ -233,12 +252,21 @@ export default function RegisterPage() {
   // ── Step 3: Persona KYC ───────────────────────────────────────────────────
 
   const [checkingStatus, setCheckingStatus] = useState(false);
+  const [personaAttempts, setPersonaAttempts] = useState(0);
 
   function handleOpenPersona() {
     if (!regData?.personaUrl) return;
-    window.open(regData.personaUrl, "_blank", "noopener,noreferrer");
+    personaAttemptsRef.current = 0;
+    setPersonaAttempts(0);
+    setError("");
+    const tab = window.open(regData.personaUrl, "_blank", "noopener");
     setView("personaInProgress");
     startPolling();
+    if (!tab) {
+      setError(
+        "Your browser blocked the verification tab. Please allow pop-ups for this site, then click \"Re-open Persona Tab\" below."
+      );
+    }
   }
 
   function startPolling() {
@@ -256,17 +284,26 @@ export default function RegisterPage() {
       );
       if (res.data?.status === "REGISTERED") {
         if (pollRef.current) clearInterval(pollRef.current);
-        // Store the setup JWT in localStorage so api.post auto-includes it for WebAuthn and PIN setup
         if (res.data.setupToken) {
           localStorage.setItem("token", res.data.setupToken);
         }
         setView("webauthn");
       } else if (
         res.data?.status === "VERIFICATION_FAILED" ||
-        res.data?.status === "SUSPENDED"
+        res.data?.status === "SUSPENDED" ||
+        res.data?.status === "PENDING_MANUAL_REVIEW"
       ) {
         if (pollRef.current) clearInterval(pollRef.current);
-        setError("Identity verification failed. Please try again or book an in-person appointment.");
+        personaAttemptsRef.current += 1;
+        setPersonaAttempts(personaAttemptsRef.current);
+        if (personaAttemptsRef.current >= 3) {
+          setError("Verification failed after 3 attempts. Please book an in-person appointment.");
+        } else {
+          setError(
+            `Verification failed. ${3 - personaAttemptsRef.current} attempt(s) remaining. ` +
+            `Click "Try Again" to re-open Persona, or choose in-person verification.`
+          );
+        }
         setView("options");
       }
     } catch {
@@ -476,24 +513,13 @@ export default function RegisterPage() {
                   <select
                     value={countryCode}
                     onChange={(e) => setCountryCode(e.target.value)}
-                    className="w-36 rounded-lg border border-gray-300 px-3 py-3 text-base focus:border-green-700 focus:ring-2 focus:ring-green-700 focus:outline-none"
+                    className="w-44 rounded-lg border border-gray-300 px-3 py-3 text-base focus:border-green-700 focus:ring-2 focus:ring-green-700 focus:outline-none"
                   >
-                    <option value="+254">🇰🇪 +254</option>
-                    <option value="+255">🇹🇿 +255</option>
-                    <option value="+256">🇺🇬 +256</option>
-                    <option value="+250">🇷🇼 +250</option>
-                    <option value="+251">🇪🇹 +251</option>
-                    <option value="+252">🇸🇴 +252</option>
-                    <option value="+253">🇩🇯 +253</option>
-                    <option value="+257">🇧🇮 +257</option>
-                    <option value="+258">🇲🇿 +258</option>
-                    <option value="+260">🇿🇲 +260</option>
-                    <option value="+263">🇿🇼 +263</option>
-                    <option value="+27">🇿🇦 +27</option>
-                    <option value="+234">🇳🇬 +234</option>
-                    <option value="+233">🇬🇭 +233</option>
-                    <option value="+1">🇺🇸 +1</option>
-                    <option value="+44">🇬🇧 +44</option>
+                    {COUNTRY_CODES.map((c) => (
+                      <option key={`${c.dial}-${c.name}`} value={c.dial}>
+                        {c.flag} {c.dial}
+                      </option>
+                    ))}
                   </select>
                   <input
                     id="phone"
@@ -566,6 +592,12 @@ export default function RegisterPage() {
                     : "border-gray-300 focus:border-green-700 focus:ring-green-700"
                 }`}
               />
+              {confirmPassword.length > 0 && confirmPassword !== password && (
+                <p className="mt-1 text-xs font-medium text-red-600">Passwords do not match</p>
+              )}
+              {confirmPassword.length > 0 && confirmPassword === password && (
+                <p className="mt-1 text-xs font-medium text-green-600">Passwords match</p>
+              )}
             </div>
 
             <button
@@ -729,51 +761,76 @@ export default function RegisterPage() {
     );
   }
 
-  // ── Persona in-progress (polling for approval) ────────────────────────────
+  // ── Persona in-progress — new tab, polling-based auto-advance ───────────
 
   if (view === "personaInProgress") {
     return (
       <div className="flex min-h-[60vh] items-center justify-center px-4">
         <div className="w-full max-w-md text-center">
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-blue-100">
-            <svg className="h-8 w-8 animate-spin text-blue-600" fill="none" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-            </svg>
+          <div className="mb-6">
+            <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-blue-100">
+              {checkingStatus ? (
+                <svg className="h-8 w-8 animate-spin text-blue-600" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+              ) : (
+                <svg className="h-8 w-8 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
+                </svg>
+              )}
+            </div>
+            <h1 className="text-2xl font-bold text-gray-900">Identity Verification</h1>
+            <p className="mt-2 text-sm text-gray-500">
+              Persona has opened in a new tab. Complete your Government ID + Selfie check there.
+              This page will advance automatically once verification is complete.
+            </p>
+            {personaAttempts > 0 && (
+              <span className="mt-3 inline-block rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800">
+                Attempt {personaAttempts + 1} / 3
+              </span>
+            )}
           </div>
-          <h1 className="mt-4 text-2xl font-bold text-gray-900">Verification in Progress</h1>
-          <p className="mt-2 text-sm text-gray-500">
-            Complete the Government ID and Selfie check in the tab that opened. This page will advance automatically once approved.
-          </p>
 
           {error && (
-            <div role="alert" className="mt-4 rounded-lg bg-red-50 p-4 text-sm text-red-700">
+            <div role="alert" className="mb-4 rounded-lg bg-red-50 p-4 text-sm text-red-700">
               {error}
             </div>
           )}
 
-          <div className="mt-6 flex flex-col gap-3">
+          <div className="mb-5 rounded-xl border border-blue-100 bg-blue-50 p-4">
+            <p className="text-xs text-blue-700">
+              Status is checked automatically every 6 seconds. Click <strong>Check Status</strong> manually after finishing in the Persona tab.
+            </p>
+          </div>
+
+          <div className="space-y-2">
             <button
               type="button"
               onClick={checkPersonaStatus}
               disabled={checkingStatus}
-              className="w-full rounded-lg bg-green-700 px-6 py-3 text-base font-semibold text-white hover:bg-green-800 disabled:opacity-50"
+              className="w-full rounded-lg bg-green-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-green-800 disabled:opacity-50"
             >
-              {checkingStatus ? "Checking..." : "I've Finished — Check My Status"}
+              {checkingStatus ? "Checking…" : "Check Status"}
             </button>
+            <a
+              href={regData?.personaUrl ?? "#"}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={`block w-full rounded-lg border border-blue-300 bg-white px-4 py-2.5 text-center text-sm font-semibold text-blue-700 hover:bg-blue-50 ${!regData?.personaUrl ? "pointer-events-none opacity-50" : ""}`}
+            >
+              Re-open Persona Tab
+            </a>
             <button
               type="button"
-              onClick={() => { if (regData?.personaUrl) window.open(regData.personaUrl, "_blank", "noopener,noreferrer"); }}
-              className="w-full rounded-lg bg-blue-600 px-6 py-3 text-base font-semibold text-white hover:bg-blue-700"
+              onClick={() => {
+                if (pollRef.current) clearInterval(pollRef.current);
+                setError("");
+                setView("options");
+              }}
+              className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50"
             >
-              Reopen Verification
-            </button>
-            <button
-              type="button"
-              onClick={() => setView("options")}
-              className="w-full rounded-lg border border-gray-300 px-6 py-3 text-base font-semibold text-gray-700 hover:bg-gray-50"
-            >
-              Back to Options
+              Cancel
             </button>
           </div>
         </div>

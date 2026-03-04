@@ -1,9 +1,94 @@
 import { ethers } from 'ethers';
 import { voterRepository } from '../repositories/index.js';
 import { blockchainService } from './blockchain.service.js';
+import { authService } from './auth.service.js';
+import { notificationService } from './notification.service.js';
 import { ServiceError } from './voter.service.js';
 
 export class AdminService {
+  /**
+   * Register a voter in-person (admin-assisted). Bypasses Persona KYC since the
+   * officer has physically verified the voter's identity. Returns a setupToken so
+   * the voter can set their own PIN on-screen — admin never sees either PIN.
+   */
+  async registerVoter(data: {
+    nationalId: string;
+    pollingStationId: string;
+    preferredContact: 'SMS' | 'EMAIL';
+    phoneNumber?: string;
+    email?: string;
+  }) {
+    const existing = await voterRepository.findByNationalId(data.nationalId);
+    if (existing) {
+      throw new ServiceError('A voter with this National ID is already registered', 409);
+    }
+
+    const voter = await voterRepository.create({
+      nationalId: data.nationalId,
+      pollingStationId: data.pollingStationId,
+      preferredContact: data.preferredContact,
+      phoneNumber: data.preferredContact === 'SMS' ? data.phoneNumber : undefined,
+      email: data.preferredContact === 'EMAIL' ? data.email : undefined,
+    });
+
+    // Mint SBT — in-person verification counts as approved identity check
+    const wallet = ethers.Wallet.createRandom();
+    const { tokenId, txHash } = await blockchainService.mintSBT(wallet.address, data.nationalId);
+    await voterRepository.registerWithSbt(voter.id, wallet.address, tokenId);
+    await voterRepository.update(voter.id, {
+      status: 'REGISTERED',
+      personaVerifiedAt: new Date(),
+    });
+
+    // Fingerprint will be enrolled next (WebAuthn on officer's device).
+    // PIN setup link is sent only AFTER successful fingerprint enrollment,
+    // via the separate sendSetupLink() method below.
+    return {
+      voterId: voter.id,
+      nationalId: voter.nationalId,
+      walletAddress: wallet.address,
+      sbtTokenId: tokenId,
+      txHash,
+    };
+  }
+
+  /**
+   * Generate a short-lived PIN-setup JWT and deliver the link to the voter's
+   * registered contact (email or SMS). Called by the admin after fingerprint
+   * enrollment is complete so the PIN link is only sent once biometrics are
+   * confirmed.  The admin never sees the token — it travels only to the voter.
+   */
+  async sendSetupLink(voterId: string) {
+    const voter = await voterRepository.findById(voterId);
+    if (!voter) throw new ServiceError('Voter not found', 404);
+    const linkAllowedStatuses = ['REGISTERED', 'VOTED', 'REVOTED', 'DISTRESS_FLAGGED'];
+    if (!linkAllowedStatuses.includes(voter.status)) {
+      throw new ServiceError('Voter is not eligible for a PIN setup link', 400);
+    }
+
+    const setupToken = authService.generateToken({
+      sub: voter.id,
+      nationalId: voter.nationalId,
+      status: 'REGISTERED',
+      role: voter.role,
+      isDistress: false,
+    });
+
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3001';
+    const setupUrl = `${frontendUrl}/setup-pin?token=${setupToken}`;
+    const channel: 'SMS' | 'EMAIL' = voter.preferredContact ?? (voter.phoneNumber ? 'SMS' : 'EMAIL');
+    const recipient = channel === 'SMS' ? voter.phoneNumber! : voter.email!;
+
+    await notificationService.sendPinSetupLink({
+      channel,
+      recipient,
+      nationalId: voter.nationalId,
+      setupUrl,
+    });
+
+    return { contact: recipient, channel };
+  }
+
   async getPendingReviews(page = 1, limit = 20) {
     return voterRepository.findPendingManualReview({ page, limit });
   }

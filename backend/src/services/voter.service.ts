@@ -204,8 +204,9 @@ export class VoterService {
     const voter = await voterRepository.findById(voterId);
     if (!voter) throw new ServiceError('Voter not found', 404);
 
-    if (voter.status !== 'REGISTERED') {
-      throw new ServiceError('Only registered voters can set a PIN', 400);
+    const pinAllowedStatuses = ['REGISTERED', 'VOTED', 'REVOTED', 'DISTRESS_FLAGGED'];
+    if (!pinAllowedStatuses.includes(voter.status)) {
+      throw new ServiceError('PIN setup is not available for this voter status', 400);
     }
 
     // Hash the normal PIN
