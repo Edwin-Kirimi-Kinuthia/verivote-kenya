@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { api } from "@/lib/api-client";
 import { useTranslation } from "@/contexts/language-context";
 import { AppointmentSlotPicker } from "@/components/appointment-slot-picker";
-import { COUNTRY_CODES } from "@/lib/country-codes";
+import { CountryCodeSelect } from "@/components/country-code-select";
 import type {
   PollingStation,
   BookedAppointmentResult,
@@ -510,17 +510,11 @@ export default function RegisterPage() {
                   Phone Number
                 </label>
                 <div className="flex gap-2">
-                  <select
+                  <CountryCodeSelect
                     value={countryCode}
-                    onChange={(e) => setCountryCode(e.target.value)}
-                    className="w-44 rounded-lg border border-gray-300 px-3 py-3 text-base focus:border-green-700 focus:ring-2 focus:ring-green-700 focus:outline-none"
-                  >
-                    {COUNTRY_CODES.map((c) => (
-                      <option key={`${c.dial}-${c.name}`} value={c.dial}>
-                        {c.flag} {c.dial}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={setCountryCode}
+                    className="w-36"
+                  />
                   <input
                     id="phone"
                     type="tel"

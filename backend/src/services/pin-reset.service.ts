@@ -164,7 +164,7 @@ export class PinResetService {
     let linkResult: { contact: string; channel: 'SMS' | 'EMAIL' } | null = null;
     try {
       linkResult = await adminService.sendSetupLink(voterId);
-    } catch (_err) {
+    } catch {
       // Don't fail the whole reset if link sending fails — admin can resend via send-setup-link
     }
 
