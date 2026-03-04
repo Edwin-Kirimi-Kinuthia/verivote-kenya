@@ -3,7 +3,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api } from "@/lib/api-client";
 import { Header } from "@/components/header";
-import { COUNTRY_CODES } from "@/lib/country-codes";
+import { CountryCodeSelect } from "@/components/country-code-select";
 import type { ApiResponse, PaginatedResponse, PollingStation, AdminRegisterResult, SetupLinkResult } from "@/lib/types";
 
 type View = "form" | "fingerprint" | "done";
@@ -254,15 +254,11 @@ export default function RegisterPage() {
                     Voter&apos;s Phone Number
                   </label>
                   <div className="flex gap-2">
-                    <select
+                    <CountryCodeSelect
                       value={countryCode}
-                      onChange={(e) => setCountryCode(e.target.value)}
-                      className="w-36 rounded-md border border-gray-300 px-2 py-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
-                    >
-                      {COUNTRY_CODES.map((c) => (
-                        <option key={`${c.dial}-${c.name}`} value={c.dial}>{c.flag} {c.dial}</option>
-                      ))}
-                    </select>
+                      onChange={setCountryCode}
+                      className="w-36"
+                    />
                     <input
                       type="tel"
                       inputMode="numeric"
