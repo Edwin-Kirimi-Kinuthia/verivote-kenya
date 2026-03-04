@@ -89,9 +89,18 @@ export class OtpService {
       data: { voterId: voter.id, purpose, codeHash, expiresAt },
     });
 
-    // Prefer SMS (SIM-bound = harder to intercept); fallback to email
-    const channel: 'SMS' | 'EMAIL' = voter.phoneNumber ? 'SMS' : 'EMAIL';
+    // Respect voter's preferred contact channel; fallback based on what's available
+    const channel: 'SMS' | 'EMAIL' =
+      voter.preferredContact ??
+      (voter.phoneNumber ? 'SMS' : 'EMAIL');
     const recipient = channel === 'SMS' ? voter.phoneNumber! : voter.email!;
+
+    if (!recipient) {
+      throw new ServiceError(
+        `No ${channel === 'SMS' ? 'phone number' : 'email'} on file for this voter.`,
+        400,
+      );
+    }
 
     await notificationService.sendOtp({
       channel,

@@ -52,13 +52,23 @@ export class PersonaService {
 
     const result = await response.json() as {
       data: { id: string; attributes: { referenceId: string } };
-      meta: { sessionToken: string };
+      meta?: { sessionToken?: string; 'session-token'?: string };
     };
 
     const inquiryId = result.data.id;
-    const sessionToken = result.meta.sessionToken;
-    const url = `https://withpersona.com/verify?inquiry-id=${inquiryId}&session-token=${sessionToken}`;
+    // Persona may return the key as camelCase or kebab-case depending on inflection support
+    const sessionToken =
+      result.meta?.sessionToken ??
+      result.meta?.['session-token'];
 
+    if (!sessionToken) {
+      // Fall back to template-based hosted URL (no session token needed)
+      console.warn('[Persona] No session token in inquiry response — using template URL fallback');
+      const url = `https://withpersona.com/verify?inquiry-template-id=${this.templateId}&inquiry-id=${inquiryId}`;
+      return { inquiryId, url };
+    }
+
+    const url = `https://withpersona.com/verify?inquiry-id=${inquiryId}&session-token=${sessionToken}`;
     return { inquiryId, url };
   }
 

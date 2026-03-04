@@ -1,5 +1,5 @@
 # VeriVote Kenya — Milestone Testing Guide
-### Weeks 1 – 4 (Infrastructure → Voting → Verification)
+### Weeks 1 – 8 (Infrastructure → Voting → Verification → Auth & KYC)
 
 ---
 
@@ -11,6 +11,10 @@
 | 2 | Auth & Admin Panel | Persona KYC, JWT auth, rate limiting, PIN reset flow, full Next.js admin dashboard (register, approve, reject, appointments, PIN resets) |
 | 3 | Voter-Facing Voting | Login page (`/vote`), ballot UI, review page, receipt page with print support, revoting (supersede chain) |
 | 4 | Encryption & Verification | ElGamal vote encryption, vote hash integrity check, `GET /api/votes/verify/:serial`, `/verify` web page, bilingual UI (EN/SW), printable verification receipt |
+| 5 | Hybrid PIN System | Voter-chosen normal PIN + server-generated distress PIN; both stored as Argon2id hashes; distress detection is silent (`isDistressFlagged`) |
+| 6 | Password Auth + OTP Login | Password-based voter registration at `/register`; OTP login via Africa's Talking (SMS) or email; setup JWT for post-KYC enrollment |
+| 7 | WebAuthn Biometric Login | Fingerprint / Windows Hello enrollment during registration; biometric login tab on `/vote` using `@simplewebauthn/browser` |
+| 8 | KYC & UX Improvements | Persona inline iframe (same page, no new tab), 3-attempt tracking, postMessage auto-advance; all-countries phone dropdown with flag emojis; real-time password match feedback; "Forgot password" button |
 
 ---
 
@@ -53,9 +57,9 @@ docker compose ps
 cp backend/.env.example backend/.env
 ```
 
-Open `backend/.env` and make these two changes:
+Open `backend/.env` and make these changes:
 
-**a) Fix the CORS origin** — the frontend runs on port 3001, not 5173:
+**a) Frontend URL** — already set correctly, but confirm it reads:
 
 ```
 FRONTEND_URL=http://localhost:3001
@@ -74,6 +78,25 @@ ELGAMAL_PRIVATE_KEY=<paste value here>
 ```
 
 > Without this key the backend will refuse to start with an error about missing `ELGAMAL_PRIVATE_KEY`.
+
+**c) Africa's Talking SMS sandbox** (OTP delivery):
+
+```
+AT_USERNAME=sandbox
+AT_API_KEY=<your AT sandbox API key>
+NOTIFICATION_MOCK=false
+```
+
+OTPs are always printed to the backend console regardless of the sandbox setting — watch the terminal for the code during testing.
+
+**d) Email (optional sandbox)** — emails fall back to the backend console in development. To see emails in a web inbox, sign up at [mailtrap.io](https://mailtrap.io) and set:
+
+```
+SMTP_HOST=sandbox.smtp.mailtrap.io
+SMTP_PORT=2525
+SMTP_USER=<mailtrap username>
+SMTP_PASS=<mailtrap password>
+```
 
 ### 4. Run Database Migrations
 
@@ -95,12 +118,12 @@ What gets created:
 | Data | Count | Notes |
 |------|-------|-------|
 | Polling stations | 10 | Real Kenyan locations (Nairobi, Mombasa, Kisumu, Nakuru, Eldoret, Kiambu, Meru) |
-| Test voters | 100 | Random national IDs; **PINs are not testable** (fake hashes) |
-| Admin user | 1 | National ID `00000001`, PIN `1234`, Distress PIN `5678` |
+| Test voters | 100 | Random national IDs; PINs and passwords unknown — cannot log in |
+| Admin user | 1 | National ID `00000001`, password `Admin@1234`, role ADMIN |
 | Sample votes | 30 | Mix of CONFIRMED, PENDING, SUPERSEDED |
 | Print queue items | 20 | Mix of statuses |
 
-> **Important:** The 100 seed voters have randomly generated Argon2 hashes — their PINs are unknown and cannot be used to log in. To test the full voter flow, register a new voter through the admin panel, which gives you real PINs.
+> **Important:** The 100 seed voters have randomly generated hashes — their credentials are unknown. To test the full voter flow, self-register at `/register` or use the admin panel at `/admin/register`.
 
 ### 6. Start the Local Blockchain
 
@@ -140,12 +163,12 @@ Expected startup output:
 ```
 ✅ Database connected
 ✅ Blockchain connected
-✅ Server running on http://localhost:3000
+✅ Server running on http://localhost:3005
 ```
 
 Verify health:
 ```
-GET http://localhost:3000/health
+GET http://localhost:3005/health
 ```
 
 Expected response:
@@ -195,13 +218,15 @@ Browse all tables at `http://localhost:5555`.
 | Service | URL | Purpose |
 |---------|-----|---------|
 | Frontend | http://localhost:3001 | All voter/admin pages |
-| Backend API | http://localhost:3000 | REST API server |
-| Health Check | http://localhost:3000/health | Server + DB + blockchain status |
-| System Stats | http://localhost:3000/api/stats | Voter/vote/station counts |
+| Backend API | http://localhost:3005 | REST API server |
+| Health Check | http://localhost:3005/health | Server + DB + blockchain status |
+| System Stats | http://localhost:3005/api/stats | Voter/vote/station counts |
+| AT SMS Simulator | https://simulator.africastalking.com | View incoming OTP SMS messages |
+| Swagger API Docs | http://localhost:3005/api/docs | Interactive API documentation |
 | Prisma Studio | http://localhost:5555 | Live database browser |
 | Hardhat Node | http://localhost:8545 | Local Ethereum blockchain |
 | PostgreSQL | localhost:5432 | Primary database |
-| Redis | localhost:6379 | Rate limiting store |
+| Redis | localhost:6379 | Rate limiting + OTP store |
 
 ---
 
@@ -212,13 +237,29 @@ Browse all tables at `http://localhost:5555`.
 | Field | Value |
 |-------|-------|
 | National ID | `00000001` |
-| PIN | `1234` |
-| Distress PIN | `5678` |
+| Password | `Admin@1234` |
 | Role | ADMIN |
 
-### Test Voter (register one through admin panel)
+### Test Voter — Self-Registration Flow
 
-Register a new voter via the admin panel at `/admin/register` to get a real PIN pair for the voter-facing flow. The 100 seeded voters have unknown PINs and cannot be used to log in.
+The recommended way to test is to self-register:
+
+1. Navigate to `http://localhost:3001/register`
+2. Fill in an 8-digit National ID, preferred contact (Email or SMS), and a strong password
+3. Complete OTP verification (check backend console or AT Simulator / Mailtrap for the code)
+4. Complete Persona KYC in the inline iframe (sandbox auto-approves)
+5. Optionally enroll fingerprint / Windows Hello
+6. Set your 4-digit voting PIN
+7. Your distress PIN is sent to your registered contact — note it down
+
+You can then log in at `http://localhost:3001/vote` using any of:
+- **Password tab** — National ID + password
+- **One-Time Code tab** — National ID → OTP sent to your contact
+- **Fingerprint tab** — National ID → Windows Hello / device biometric prompt
+
+### Admin-Created Voter (Legacy)
+
+Register a voter via `/admin/register` for a simpler flow (no self-registration steps). After approval, the voter's credentials are shown in the admin panel.
 
 ---
 
@@ -227,53 +268,77 @@ Register a new voter via the admin panel at `/admin/register` to get a real PIN 
 ### Scenario 1 — Admin Login
 
 1. Navigate to `http://localhost:3001/admin`
-2. Enter National ID `00000001` and PIN `1234`
+2. Enter National ID `00000001` and password `Admin@1234`
 3. Confirm you land on the dashboard showing stats cards and recent registrations
-
-**Distress PIN test:** Log in with PIN `5678`. The login appears identical from the outside. Check the database (`Prisma Studio → voters`) to confirm `status` is now `DISTRESS_FLAGGED`.
 
 ---
 
-### Scenario 2 — Register a New Voter
+### Scenario 2 — Self-Register a Voter (Full KYC Flow)
 
-1. Admin panel → Sidebar → **Register Voter**
-2. Enter any 8-digit National ID (e.g. `12345678`) and pick a polling station
-3. Submit
-4. The response box shows:
-   - **PIN** — 4-digit normal PIN
-   - **Distress PIN** — 4-digit coercion PIN
-5. Note these down — you need them for voter login in Scenario 4
+This is the primary voter-facing registration flow.
 
-> In mock mode (`PERSONA_MOCK=true`, the default), registration completes immediately with PINs. In live mode, it would redirect to Persona for biometric verification.
+1. Navigate to `http://localhost:3001/register`
+2. Enter an 8-digit National ID (e.g. `87654321`)
+3. Optionally select a polling station
+4. Choose contact preference: **Email** or **SMS**
+   - Email: enter a valid address
+   - SMS: select country flag + dial code from the dropdown (all countries available), enter local number
+5. Create a strong password (min 8 chars, uppercase, lowercase, number, special char — no sequential patterns like "abcd")
+6. Confirm password — live "Passwords match / Passwords do not match" feedback appears
+7. Submit → OTP is sent to your contact
+8. Enter the 6-digit code (check backend console or AT Simulator / Mailtrap)
+9. Choose **Online KYC** — Persona verification loads in an inline iframe on the same page
+   - The sandbox flow auto-completes; the page advances automatically when approved
+   - If verification fails, you have up to 3 attempts before falling back to in-person booking
+10. **Fingerprint setup** (optional) — click "Enroll Fingerprint / Windows Hello" to register your device biometric, or "Skip for now"
+11. **Set your PIN** — choose a 4-digit normal PIN (must be unique, non-sequential, non-repeating)
+12. Registration complete — your **distress PIN** is sent to your registered contact
 
 ---
 
 ### Scenario 3 — Manual Review Flow
 
-1. Register a voter with a national ID that Persona flags (set `PERSONA_MOCK=false` and use a test ID that fails, or manually set a voter's status to `PENDING_MANUAL_REVIEW` in Prisma Studio)
-2. Admin panel → **Reviews** — the voter appears in the pending list
-3. **Approve:** Click Approve, add optional notes, submit — PINs are shown
-4. **Reject:** Click Reject, enter a rejection reason, submit
+1. During registration, choose **In-Person Appointment** instead of Online KYC
+2. Book an appointment slot — choose date and time
+3. Admin panel → **Reviews** — the voter appears in the pending list
+4. **Approve:** Click Approve, add optional notes, submit
+5. **Reject:** Click Reject, enter a rejection reason, submit
 
 ---
 
-### Scenario 4 — Cast a Vote (End-to-End Voter Flow)
+### Scenario 4 — Log In and Cast a Vote
 
-Using the PIN pair from Scenario 2:
+Using credentials from Scenario 2:
 
+**Option A — Password Login:**
 1. Navigate to `http://localhost:3001/vote`
-2. Enter the national ID and PIN you registered
-3. You land on the **Ballot** page — select one candidate per position
-4. Click **Review My Selections** — confirm your choices
-5. Click **Confirm & Submit Vote**
-6. The **Receipt** page shows:
+2. Enter National ID and password → Sign In
+
+**Option B — OTP Login:**
+1. Click the **One-Time Code** tab
+2. Enter National ID → Send Code
+3. Enter the 6-digit code sent to your contact
+
+**Option C — Fingerprint Login** (requires enrollment in Scenario 2):
+1. Click the **Fingerprint** tab
+2. Enter National ID → click "Sign In with Fingerprint / Windows Hello"
+3. Device biometric prompt appears — authenticate
+
+After login:
+1. You land on the **Ballot** page — select one candidate per position
+2. Click **Review My Selections** — confirm your choices
+3. Click **Confirm & Submit Vote**
+4. Enter your **4-digit PIN** when prompted
+5. The **Receipt** page shows:
    - 16-character hexadecimal **serial number** (e.g. `A3F1B2C4D5E60789`)
    - Blockchain transaction hash (or "Pending confirmation" if blockchain is slow)
    - A **"Verify your vote →"** link
 
 > Copy the serial number — you need it for Scenario 5.
 
-**Revote test:** Log in again with the same credentials and cast a different selection. The previous vote will be marked `SUPERSEDED` in the database.
+**Revote test:** Log in again with the same credentials and cast a different selection. The previous vote is marked `SUPERSEDED` in the database.
+
+**Distress PIN test:** At the PIN prompt during voting, enter your distress PIN instead. The vote appears successful from the outside, but the vote record is silently marked `isDistressFlagged = true` in the database.
 
 ---
 
@@ -304,7 +369,7 @@ Using the PIN pair from Scenario 2:
 
 ```bash
 # Valid serial — returns full verification result
-curl http://localhost:3000/api/votes/verify/A3F1B2C4D5E60789
+curl http://localhost:3005/api/votes/verify/A3F1B2C4D5E60789
 
 # Expected response (verified):
 # {
@@ -321,10 +386,10 @@ curl http://localhost:3000/api/votes/verify/A3F1B2C4D5E60789
 # }
 
 # Invalid format — 400 error
-curl http://localhost:3000/api/votes/verify/TOOSHORT
+curl http://localhost:3005/api/votes/verify/TOOSHORT
 
 # Not found — 404 error
-curl http://localhost:3000/api/votes/verify/FFFFFFFFFFFFFFFF
+curl http://localhost:3005/api/votes/verify/FFFFFFFFFFFFFFFF
 ```
 
 > **Note on seeded votes:** The 30 votes from `pnpm db:seed` use the old serial format (`VV-XXXXXX-XXXX`). These will return 400 (invalid format) from the verify endpoint. Only votes cast through the UI or `POST /api/votes/cast` produce 16-char hex serials that are verifiable.
@@ -335,21 +400,21 @@ curl http://localhost:3000/api/votes/verify/FFFFFFFFFFFFFFFF
 
 ```bash
 # Simpler endpoint — returns status and TX hash only, no crypto verification
-curl http://localhost:3000/api/receipts/A3F1B2C4D5E60789
+curl http://localhost:3005/api/receipts/A3F1B2C4D5E60789
 ```
 
 ---
 
-### Scenario 8 — PIN Reset Flow
+### Scenario 8 — Forgot Password / PIN Reset Flow
 
 1. Voter goes to `http://localhost:3001/vote`
-2. Clicks **Forgot your PIN?** below the login form
-3. Enters their National ID and submits the reset request
+2. Clicks **Forgot password?** (in the Password tab) or **Reset your PIN** (below the login box)
+3. Enters their National ID and submits
 4. Chooses verification method:
-   - **Online** — Persona biometric (mock mode completes immediately)
-   - **In Person** — shown the steps to visit an IEBC office
+   - **Online** — Persona biometric (sandbox completes immediately) in an inline iframe
+   - **In Person** — Book an appointment at their polling station
 
-**Admin side:**
+**Admin side (PIN reset):**
 1. Admin panel → **PIN Resets** — the request appears
 2. Click **Verify & Reset**, enter your officer ID, optional notes, submit
 3. New PIN + Distress PIN are shown — give to voter
@@ -365,12 +430,23 @@ curl http://localhost:3000/api/receipts/A3F1B2C4D5E60789
 
 API test (get available slots):
 ```bash
-curl "http://localhost:3000/api/appointments/available?pollingStationId=<id>"
+curl "http://localhost:3005/api/appointments/available?pollingStationId=<id>"
 ```
 
 ---
 
-### Scenario 10 — Run Tests
+### Scenario 10 — Biometric Enrollment + Login
+
+1. Register a voter at `/register` and choose **Enroll Fingerprint / Windows Hello** after KYC
+2. Your browser prompts for device biometric — authenticate (fingerprint, PIN, or Windows Hello)
+3. The credential is stored in the database against your voter ID
+4. Log in at `/vote` → **Fingerprint** tab → enter National ID → click Sign In
+5. Device biometric prompt appears again — authenticate
+6. If successful, you are logged in and redirected to the ballot
+
+---
+
+### Scenario 11 — Run Tests
 
 **Smart contract tests:**
 ```bash
@@ -402,10 +478,17 @@ pnpm test --coverage
 | GET | `/api/stats` | System-wide counts and breakdowns |
 | GET | `/api/polling-stations` | List stations (`?county=Nairobi&page=1&limit=20`) |
 | GET | `/api/counties` | List all counties |
-| POST | `/api/voters/register` | Register a new voter (triggers Persona or mock) |
-| POST | `/api/voters/verify-pin` | Authenticate with National ID + PIN → JWT |
+| POST | `/api/voters/register` | Register a new voter (returns Persona inquiry URL) |
 | POST | `/api/voters/request-manual-review` | Request IEBC manual verification |
-| GET | `/api/voters/registration-status/:inquiryId` | Check Persona inquiry status |
+| GET | `/api/voters/registration-status/:inquiryId` | Check Persona inquiry status + issue setup JWT |
+| POST | `/api/voters/set-pin` | Set voter PIN + generate distress PIN (requires setup JWT) |
+| POST | `/api/auth/login` | Password login → JWT |
+| POST | `/api/auth/request-otp` | Request OTP for login or contact verification |
+| POST | `/api/auth/verify-otp` | Verify OTP → JWT (login) or advance registration |
+| POST | `/api/webauthn/register/options` | Get WebAuthn registration challenge (requires setup JWT) |
+| POST | `/api/webauthn/register/verify` | Store enrolled credential (requires setup JWT) |
+| POST | `/api/webauthn/authenticate/options` | Get WebAuthn authentication challenge |
+| POST | `/api/webauthn/authenticate/verify` | Verify biometric assertion → JWT |
 | GET | `/api/votes/verify/:serial` | **Full cryptographic + blockchain verification** |
 | GET | `/api/receipts/:serial` | Legacy receipt lookup (status + TX hash only) |
 | GET | `/api/appointments/available` | Browse open appointment slots |
@@ -422,8 +505,9 @@ pnpm test --coverage
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| POST | `/api/votes/cast` | Cast a vote (ballot selections + polling station ID) |
+| POST | `/api/votes/cast` | Cast a vote (ballot selections + 4-digit PIN) |
 | GET | `/api/voters/:id/status` | Get voter status (own record only) |
+| GET | `/api/webauthn/credentials/:voterId` | List enrolled biometric credentials |
 | GET | `/api/admin/pending-reviews` | List voters pending manual review |
 | GET | `/api/admin/review-stats` | Counts of pending/approved/rejected |
 | GET | `/api/admin/review/:voterId` | Full details for one voter under review |
@@ -448,13 +532,34 @@ pnpm test --coverage
     "president": "candidate-id-here",
     "governor": "candidate-id-here"
   },
-  "pollingStationId": "uuid-optional"
+  "pollingStationId": "uuid-optional",
+  "pin": "1234"
 }
 ```
 
 Authorization header:
 ```
 Authorization: Bearer <jwt-token>
+```
+
+### Register Voter Request Body
+
+```json
+{
+  "nationalId": "12345678",
+  "pollingStationId": "uuid-optional",
+  "preferredContact": "EMAIL",
+  "email": "voter@example.com",
+  "password": "MyStr0ng!Pass"
+}
+```
+
+For SMS contact:
+```json
+{
+  "preferredContact": "SMS",
+  "phoneNumber": "+254712345678"
+}
 ```
 
 ---
@@ -464,8 +569,9 @@ Authorization: Bearer <jwt-token>
 | URL | Access | Description |
 |-----|--------|-------------|
 | `http://localhost:3001/` | Public | Home — Vote / Verify / Admin cards |
+| `http://localhost:3001/register` | Public | Self-registration — OTP, Persona KYC, WebAuthn, PIN setup |
 | `http://localhost:3001/verify` | Public | Vote verification — enter serial, see result, print |
-| `http://localhost:3001/vote` | Public | Voter login (National ID + PIN) |
+| `http://localhost:3001/vote` | Public | Voter login (Password / OTP / Fingerprint tabs) |
 | `http://localhost:3001/vote/ballot` | Authenticated voter | Candidate selection |
 | `http://localhost:3001/vote/review` | Authenticated voter | Review selections before submit |
 | `http://localhost:3001/vote/receipt` | Authenticated voter | Serial + TX hash + verify link |
@@ -480,15 +586,33 @@ Authorization: Bearer <jwt-token>
 
 ---
 
+## Voter Registration Flow
+
+```
+/register
+  └─> Form (National ID, polling station, contact, password)
+        └─> OTP verification (SMS via Africa's Talking or Email)
+              └─> Identity options
+                    ├─> Online KYC (Persona inline iframe — same page)
+                    │     └─> Auto-advance on approval (postMessage + polling)
+                    │           └─> Fingerprint enrollment (optional, WebAuthn)
+                    │                 └─> PIN setup (4-digit + distress PIN sent)
+                    │                       └─> Registration complete → /vote
+                    └─> In-person appointment → /vote (restricted until approved)
+```
+
+---
+
 ## Rate Limits
 
 | Endpoint Type | Limit | Window |
 |---------------|-------|--------|
 | Global (all routes) | 100 requests | 15 min per IP |
-| Auth (`/api/voters/verify-pin`) | 5 requests | 15 min per IP + National ID |
+| Auth (`/api/auth/login`, `/api/auth/verify-otp`) | 5 requests | 15 min per IP + National ID |
 | Registration | 10 requests | 15 min per IP |
 | Vote casting | 5 requests | 15 min per IP |
 | Vote / receipt verification | 20 requests | 15 min per IP |
+| WebAuthn authentication | 5 requests | 15 min per IP + National ID |
 | Admin routes | 200 requests | 15 min per IP |
 
 ---
@@ -499,9 +623,13 @@ Authorization: Bearer <jwt-token>
 |---------|---------------|
 | Vote data encryption | ElGamal (2048-bit FFDHE, RFC 7919 group) — same plaintext encrypts differently each time |
 | Integrity check | SHA-256 hash of ciphertext stored alongside; verify recomputes and compares |
-| PIN hashing | Argon2id (memory-hard, GPU-resistant) |
-| Distress PIN | Identical login experience; silently flags voter as `DISTRESS_FLAGGED` in DB and JWT |
+| Password hashing | Argon2id (memory-hard, GPU-resistant) |
+| PIN hashing | Argon2id — normal PIN + distress PIN stored separately |
+| Distress PIN | Identical vote experience; silently sets `isDistressFlagged = true` on the vote |
 | JWT authentication | 24-hour expiry, role embedded in payload |
+| Setup JWT | Short-lived token issued post-KYC for WebAuthn enrollment + PIN setup only |
+| OTP | 6-digit code, 10-minute TTL, stored in Redis; purpose-scoped (`LOGIN`, `CONTACT_VERIFY`) |
+| WebAuthn | FIDO2 / Passkeys via `@simplewebauthn/server`; credentials stored per voter; origin-validated |
 | Blockchain anchoring | Vote hash + serial recorded on Ethereum; non-fatal if blockchain unavailable |
 | Soul-Bound Tokens | ERC721 with blocked transfers/approvals — one identity per voter |
 | Revoting | Previous vote marked `SUPERSEDED`, new vote created with `previousVoteId` link — full audit chain |
@@ -527,19 +655,24 @@ verivote-kenya/
 │   │   │   ├── vote.service.ts     # Cast vote, verify vote (crypto + blockchain)
 │   │   │   ├── encryption.service.ts  # ElGamal encrypt/decrypt + SHA-256 hash
 │   │   │   ├── blockchain.service.ts  # ethers.js — SBT, recordVote, getVoteRecord
-│   │   │   ├── voter.service.ts    # Registration, PIN verification, JWT
+│   │   │   ├── voter.service.ts    # Registration, password auth, PIN, JWT
 │   │   │   ├── admin.service.ts    # Approve/reject manual reviews
-│   │   │   ├── persona.service.ts  # KYC integration (mock or live)
+│   │   │   ├── persona.service.ts  # KYC integration (mock or live Persona)
+│   │   │   ├── webauthn.service.ts # FIDO2 credential registration + authentication
+│   │   │   ├── otp.service.ts      # OTP generation, delivery (AT/email), verification
+│   │   │   ├── notification.service.ts  # SMS (Africa's Talking) + Email (SMTP)
+│   │   │   ├── auth.service.ts     # Password login, OTP login flows
 │   │   │   ├── pin-reset.service.ts
-│   │   │   ├── appointment.service.ts
-│   │   │   └── auth.service.ts
+│   │   │   └── appointment.service.ts
 │   │   ├── middleware/
-│   │   │   ├── auth.middleware.ts  # requireAuth, requireSelf
-│   │   │   └── rate-limit.middleware.ts
+│   │   │   ├── auth.middleware.ts  # requireAuth, requireAdmin, rate limiters
+│   │   │   └── index.ts
 │   │   ├── routes/
+│   │   │   ├── auth.routes.ts      # POST /login, /request-otp, /verify-otp
+│   │   │   ├── webauthn.routes.ts  # POST register/options, register/verify, authenticate/*
 │   │   │   ├── vote.routes.ts      # POST /cast, GET /verify/:serial
 │   │   │   ├── receipt.routes.ts   # GET /receipts/:serial (legacy)
-│   │   │   ├── voter.routes.ts
+│   │   │   ├── voter.routes.ts     # POST /register, GET /registration-status, POST /set-pin
 │   │   │   ├── admin.routes.ts
 │   │   │   ├── appointment.routes.ts
 │   │   │   ├── pin-reset.routes.ts
@@ -565,14 +698,16 @@ verivote-kenya/
 │   └── src/
 │       ├── app/
 │       │   ├── page.tsx            # Home — Vote / Verify / Admin cards
+│       │   ├── register/page.tsx   # Self-registration — OTP, Persona, WebAuthn, PIN
 │       │   ├── verify/page.tsx     # Serial lookup + result + print
-│       │   ├── vote/               # Login, ballot, review, receipt
+│       │   ├── vote/               # Login (password/OTP/biometric), ballot, review, receipt
 │       │   └── admin/              # Login + full dashboard
-│       ├── components/             # DataTable, StatusBadge, Pagination, etc.
+│       ├── components/             # DataTable, StatusBadge, Pagination, AppointmentSlotPicker
 │       ├── contexts/               # AuthContext, LanguageContext (i18n)
 │       └── lib/
 │           ├── api-client.ts       # Fetch wrapper with JWT injection
-│           ├── types.ts            # VerifyVoteResult, VoteReceipt, etc.
+│           ├── country-codes.ts    # All countries with flag emoji + dial code (~195 entries)
+│           ├── types.ts            # VerifyVoteResult, VoteReceipt, AuthData, etc.
 │           └── i18n/
 │               ├── en.json         # English — all feature namespaces
 │               └── sw.json         # Kiswahili — all feature namespaces
@@ -599,8 +734,8 @@ verivote-kenya/
 | `npx hardhat node` | `smart-contracts/` | Start local blockchain (keep terminal open) |
 | `npx hardhat run scripts/deploy.ts --network localhost` | `smart-contracts/` | Deploy contracts |
 | `npx hardhat test` | `smart-contracts/` | Run Solidity contract tests |
-| `pnpm dev` | `backend/` | Start backend with hot-reload |
-| `pnpm dev` | `frontend/` | Start frontend dev server |
+| `pnpm dev` | `backend/` | Start backend with hot-reload (port 3005) |
+| `pnpm dev` | `frontend/` | Start frontend dev server (port 3001) |
 | `pnpm test` | `backend/` | Run Jest unit tests |
 | `pnpm test --coverage` | `backend/` | Tests + coverage report |
 | `npx next build` | `frontend/` | Production build check |
@@ -614,8 +749,8 @@ Docker (PostgreSQL + Redis)
   └─> Prisma migrate + seed (backend/)
         └─> Hardhat node (smart-contracts/)
               └─> Deploy contracts → copy addresses to .env
-                    └─> Start backend (backend/ pnpm dev)
-                          └─> Start frontend (frontend/ pnpm dev)
+                    └─> Start backend (backend/ pnpm dev) — port 3005
+                          └─> Start frontend (frontend/ pnpm dev) — port 3001
 ```
 
 ---
@@ -627,9 +762,15 @@ Docker (PostgreSQL + Redis)
 | Backend fails to start: "ELGAMAL_PRIVATE_KEY not set" | Missing env var | Run `node scripts/generate-elgamal-keys.js` and paste key into `.env` |
 | Vote casting returns 500 | ElGamal key set but wrong format | Regenerate the key; must be a valid hex string |
 | Verify endpoint returns 400 for seeded serial | Seed uses old `VV-XXX` format | Only serials from `POST /api/votes/cast` are 16-char hex — cast a vote first |
-| CORS errors in browser | `FRONTEND_URL` still set to 5173 | Change to `http://localhost:3001` in `backend/.env` and restart backend |
+| CORS errors in browser | `FRONTEND_URL` mismatch | Confirm `FRONTEND_URL=http://localhost:3001` in `backend/.env` and restart backend |
+| OTP not arriving via SMS | AT sandbox credentials wrong or voter has email preference | Check backend console — OTP is always logged there; also check AT Simulator |
+| OTP not arriving via email | SMTP not configured | Check backend console — emails fall back to console log in dev |
+| WebAuthn: "Not allowed" error | Browser security policy | Must access frontend via `http://localhost:3001` (not IP or other origin); or device has no enrolled authenticator |
+| WebAuthn login: "No credential found" | Voter never enrolled biometric | Skip to Password or OTP login; enroll fingerprint at registration |
+| Persona iframe blank or blocked | Browser security policy on localhost | Persona sandbox allows iframe embedding; try Chrome; check CSP headers |
 | "Blockchain not available" warning on startup | Hardhat node not running | Start `npx hardhat node` first, then redeploy contracts |
 | Blockchain confirmation shows "Pending" | Blockchain connected but slow | Normal — vote is still stored in DB and cryptographically verified |
 | Rate limit hit (429) | Too many requests | Wait 15 minutes or restart Redis (`docker compose restart redis`) |
 | Admin login fails with known credentials | Database not seeded | Run `pnpm db:seed` from `backend/` |
 | Prisma Studio won't open | Port 5555 in use | Kill the process using that port or specify `--port 5556` |
+| Port 3005 already in use | Previous backend process still running | `Get-Process -Name node \| Stop-Process` (PowerShell) or kill from Task Manager |

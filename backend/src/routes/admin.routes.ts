@@ -11,6 +11,60 @@ const router: Router = Router();
 router.use(adminRateLimiter);
 router.use(requireAuth, requireAdmin);
 
+const registerVoterSchema = z.object({
+  nationalId: z.string().regex(/^\d{8}$/, 'National ID must be exactly 8 digits'),
+  pollingStationId: z.string().uuid('Invalid polling station ID'),
+  preferredContact: z.enum(['SMS', 'EMAIL']),
+  phoneNumber: z.string().regex(/^\+\d{7,15}$/, 'Phone must be E.164 format, e.g. +254712345678').optional(),
+  email: z.string().email('Invalid email address').optional(),
+}).superRefine((data, ctx) => {
+  if (data.preferredContact === 'SMS' && !data.phoneNumber) {
+    ctx.addIssue({ path: ['phoneNumber'], code: z.ZodIssueCode.custom, message: 'phoneNumber is required for SMS contact' });
+  }
+  if (data.preferredContact === 'EMAIL' && !data.email) {
+    ctx.addIssue({ path: ['email'], code: z.ZodIssueCode.custom, message: 'email is required for EMAIL contact' });
+  }
+});
+
+// POST /api/admin/register-voter — in-person registration (bypasses Persona KYC)
+// Returns setupToken for immediate PIN setup; never returns the PINs themselves.
+router.post('/register-voter', async (req: Request, res: Response) => {
+  const parsed = registerVoterSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+    return;
+  }
+  try {
+    const result = await adminService.registerVoter(parsed.data);
+    res.status(201).json({ success: true, data: result });
+  } catch (error) {
+    if (error instanceof ServiceError) {
+      res.status(error.statusCode).json({ success: false, error: error.message });
+      return;
+    }
+    res.status(500).json({ success: false, error: 'Registration failed' });
+  }
+});
+
+// POST /api/admin/send-setup-link — Send PIN setup link after fingerprint enrolled
+router.post('/send-setup-link', async (req: Request, res: Response) => {
+  const parsed = z.object({ voterId: z.string().uuid('Invalid voter ID') }).safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+    return;
+  }
+  try {
+    const result = await adminService.sendSetupLink(parsed.data.voterId);
+    res.json({ success: true, data: result });
+  } catch (error) {
+    if (error instanceof ServiceError) {
+      res.status(error.statusCode).json({ success: false, error: error.message });
+      return;
+    }
+    res.status(500).json({ success: false, error: 'Failed to send setup link' });
+  }
+});
+
 const approveSchema = z.object({
   reviewerId: z.string().min(1, 'Reviewer ID is required'),
   notes: z.string().optional(),

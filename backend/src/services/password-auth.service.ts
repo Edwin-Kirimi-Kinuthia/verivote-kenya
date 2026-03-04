@@ -50,15 +50,13 @@ export class PasswordAuthService {
     });
 
     return {
-      auth: {
-        token,
-        expiresIn: authService.getExpiresIn(),
-        voter: {
-          id: voter.id,
-          nationalId: voter.nationalId,
-          status: voter.status,
-          role: voter.role,
-        },
+      token,
+      expiresIn: authService.getExpiresIn(),
+      voter: {
+        id: voter.id,
+        nationalId: voter.nationalId,
+        status: voter.status,
+        role: voter.role,
       },
     };
   }

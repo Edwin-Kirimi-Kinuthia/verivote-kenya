@@ -215,8 +215,8 @@ export interface UpdateVoterInput {
   sbtAddress?: string;
   sbtTokenId?: string;
   sbtMintedAt?: Date;
-  normalPinHash?: string;
-  distressPinHash?: string;
+  normalPinHash?: string | null;
+  distressPinHash?: string | null;
   pinSetAt?: Date;
   personaInquiryId?: string;
   personaStatus?: string;
@@ -308,7 +308,7 @@ export interface CreateAppointmentInput {
 
 export interface UpdateAppointmentInput {
   status?: AppointmentStatus;
-  voterId?: string;
+  voterId?: string | null;
   bookedAt?: Date;
   notes?: string;
   assignedOfficerId?: string;

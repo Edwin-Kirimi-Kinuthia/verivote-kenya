@@ -173,15 +173,13 @@ router.post('/verify-otp', otpRateLimiter, async (req: Request, res: Response) =
     res.json({
       success: true,
       data: {
-        auth: {
-          token,
-          expiresIn: authService.getExpiresIn(),
-          voter: {
-            id: voter.id,
-            nationalId: voter.nationalId,
-            status: voter.status,
-            role: voter.role,
-          },
+        token,
+        expiresIn: authService.getExpiresIn(),
+        voter: {
+          id: voter.id,
+          nationalId: voter.nationalId,
+          status: voter.status,
+          role: voter.role,
         },
       },
     });

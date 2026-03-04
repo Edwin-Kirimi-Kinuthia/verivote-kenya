@@ -166,44 +166,38 @@ export default function PinResetsPage() {
         )}
 
         {resetResult && (
-          <div className="mb-4 rounded-lg border border-green-200 bg-green-50 p-6">
+          <div className="mb-4 rounded-lg border border-green-200 bg-green-50 p-5">
             <h3 className="mb-3 text-sm font-semibold text-green-900">
-              PIN Reset Successful
+              PIN Reset Verified
             </h3>
-            <dl className="space-y-2 text-sm">
-              <div className="flex justify-between">
-                <dt className="text-green-700">National ID</dt>
-                <dd className="font-mono text-green-900">
-                  {resetResult.nationalId}
-                </dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-green-700">New PIN</dt>
-                <dd className="font-mono text-lg font-bold text-green-900">
-                  {resetResult.pin}
-                </dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-green-700">New Distress PIN</dt>
-                <dd className="font-mono text-lg font-bold text-red-700">
-                  {resetResult.distressPin}
-                </dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-green-700">Reset At</dt>
-                <dd className="font-mono text-green-900">
-                  {new Date(resetResult.resetAt).toLocaleString()}
-                </dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-green-700">Verified By</dt>
-                <dd className="font-mono text-green-900">
-                  {resetResult.verifiedBy}
-                </dd>
-              </div>
-            </dl>
-            <p className="mt-4 text-xs text-green-600">
-              Save these PINs securely. They cannot be retrieved later.
+            <ul className="space-y-2 text-sm text-green-800">
+              <li className="flex items-start gap-2">
+                <span className="text-green-600">✓</span>
+                <span>Old PINs invalidated — voter must set a new PIN</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-green-600">✓</span>
+                <span>WebAuthn credentials cleared — voter must re-enroll fingerprint</span>
+              </li>
+              {resetResult.linkSent ? (
+                <li className="flex items-start gap-2">
+                  <span className="text-green-600">✓</span>
+                  <span>
+                    PIN setup link sent to{" "}
+                    <span className="font-medium">{resetResult.linkSent.contact}</span>
+                  </span>
+                </li>
+              ) : (
+                <li className="flex items-start gap-2">
+                  <span className="text-amber-600">!</span>
+                  <span className="text-amber-800">
+                    Could not send setup link automatically — use &quot;Send PIN Setup Link&quot; from the voter&apos;s record.
+                  </span>
+                </li>
+              )}
+            </ul>
+            <p className="mt-3 text-xs text-green-600">
+              The voter will set their own PIN privately using the link. Neither PIN is visible to officers.
             </p>
             <button
               onClick={() => setResetResult(null)}

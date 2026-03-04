@@ -114,6 +114,11 @@ export class WebAuthnService {
       },
     });
 
+    // Mark the voter record so we know biometrics were captured.
+    // fingerprintHash is reserved for a future IPRS raw-template integration;
+    // for now the WebAuthnCredential table IS the secure fingerprint store.
+    await voterRepository.update(voterId, { fingerprintCapturedAt: new Date() });
+
     return { verified: true, credentialId: credential.id };
   }
 
