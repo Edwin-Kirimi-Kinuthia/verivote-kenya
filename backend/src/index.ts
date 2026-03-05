@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
+import http from 'http';
 import express, { type Express, type Request, type Response, type NextFunction } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -24,6 +25,7 @@ import blockchainRoutes from './routes/blockchain.routes.js';
 import { blockchainService } from './services/blockchain.service.js';
 import { encryptionService } from './services/encryption.service.js';
 import { startScheduler } from './services/scheduler.js';
+import { initSocket } from './lib/socket.js';
 import authRoutes from './routes/auth.routes.js';
 import voterRoutes from './routes/voter.routes.js';
 import adminRoutes from './routes/admin.routes.js';
@@ -212,6 +214,61 @@ app.get('/api/stats', async (_req: Request, res: Response) => {
   }
 });
 
+// Turnout breakdown by county and per-station (public)
+app.get('/api/stats/turnout', async (_req: Request, res: Response) => {
+  try {
+    const [stationStats, stationTurnout] = await Promise.all([
+      pollingStationRepository.getStats(),
+      pollingStationRepository.getTurnoutByStation(),
+    ]);
+    res.json({
+      success: true,
+      data: {
+        byCounty: stationStats.byCounty,
+        byStation: stationTurnout,
+        overall: {
+          registered: stationStats.totalRegisteredVoters,
+          voted: stationStats.totalVotesCast,
+          turnout: stationStats.overallTurnout,
+        },
+      },
+    });
+  } catch {
+    res.status(500).json({ success: false, error: 'Failed to fetch turnout' });
+  }
+});
+
+// Votes per hour for the last 24 hours (public)
+app.get('/api/stats/hourly', async (_req: Request, res: Response) => {
+  try {
+    const to = new Date();
+    const from = new Date(to.getTime() - 24 * 60 * 60 * 1000);
+    const data = await voteRepository.getVotesPerHour(from, to);
+    res.json({ success: true, data });
+  } catch {
+    res.status(500).json({ success: false, error: 'Failed to fetch hourly data' });
+  }
+});
+
+// Blockchain explorer — recent 20 confirmed votes (public)
+app.get('/api/stats/explorer', async (_req: Request, res: Response) => {
+  try {
+    const { data } = await voteRepository.findMany({ page: 1, limit: 20, status: 'CONFIRMED' });
+    const rows = data.map((v) => ({
+      serial: v.serialNumber,
+      status: v.status,
+      timestamp: v.timestamp,
+      txHash: v.blockchainTxHash ?? null,
+      blockNumber: v.blockNumber ?? null,
+      isDistressFlagged: v.isDistressFlagged,
+    }));
+    const totalConfirmed = await voteRepository.findMany({ page: 1, limit: 1, status: 'CONFIRMED' });
+    res.json({ success: true, data: rows, totalConfirmed: totalConfirmed.pagination.total });
+  } catch {
+    res.status(500).json({ success: false, error: 'Failed to fetch explorer data' });
+  }
+});
+
 app.get('/api/polling-stations', async (req: Request, res: Response) => {
   try {
     const page = parseInt(req.query.page as string) || 1;
@@ -332,7 +389,10 @@ async function startServer() {
     // Start background maintenance scheduler
     startScheduler();
 
-    app.listen(PORT, () => {
+    const httpServer = http.createServer(app);
+    initSocket(httpServer, allowedOrigins);
+
+    httpServer.listen(PORT, () => {
       console.log('='.repeat(50));
       console.log('🗳️  VeriVote Kenya API Server');
       console.log('='.repeat(50));
@@ -340,6 +400,7 @@ async function startServer() {
       console.log(`📋 Health check: http://localhost:${PORT}/health`);
       console.log(`📚 API Docs:     http://localhost:${PORT}/api/docs`);
       console.log(`📊 Statistics:   http://localhost:${PORT}/api/stats`);
+      console.log(`🔌 WebSocket:    ws://localhost:${PORT}/socket.io`);
       console.log(`🌐 Environment:  ${process.env.NODE_ENV || 'development'}`);
       console.log('='.repeat(50));
     });

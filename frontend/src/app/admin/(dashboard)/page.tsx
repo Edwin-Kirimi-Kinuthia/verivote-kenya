@@ -1,7 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  LineChart, Line, CartesianGrid,
+} from "recharts";
+import { getSocket } from "@/lib/socket";
 import { api } from "@/lib/api-client";
 import { Header } from "@/components/header";
 import { StatCard } from "@/components/stat-card";
@@ -69,6 +74,35 @@ export default function DashboardPage() {
   const [distressVotes, setDistressVotes] = useState<DistressVote[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [countyChart, setCountyChart] = useState<{ county: string; turnout: number }[]>([]);
+  const [hourlyChart, setHourlyChart] = useState<{ hour: string; count: number }[]>([]);
+  const [liveVotes, setLiveVotes] = useState<number | null>(null);
+  const [distressAlerts, setDistressAlerts] = useState<{ serial: string; stationName: string; timestamp: string }[]>([]);
+
+  const loadCharts = useCallback(async () => {
+    try {
+      const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3005";
+      const [turnoutRes, hourlyRes] = await Promise.all([
+        fetch(`${API}/api/stats/turnout`).then((r) => r.json()),
+        fetch(`${API}/api/stats/hourly`).then((r) => r.json()),
+      ]);
+      if (turnoutRes.success) {
+        setCountyChart(
+          [...turnoutRes.data.byCounty]
+            .sort((a: { turnout: number }, b: { turnout: number }) => b.turnout - a.turnout)
+            .slice(0, 8)
+        );
+      }
+      if (hourlyRes.success) {
+        setHourlyChart(
+          hourlyRes.data.map((p: { hour: string; count: number }) => ({
+            hour: new Date(p.hour).toLocaleTimeString("en-KE", { hour: "2-digit", minute: "2-digit" }),
+            count: p.count,
+          }))
+        );
+      }
+    } catch { /* non-fatal */ }
+  }, []);
 
   useEffect(() => {
     async function load() {
@@ -92,7 +126,22 @@ export default function DashboardPage() {
       }
     }
     load();
-  }, []);
+    loadCharts();
+
+    const socket = getSocket();
+    socket.on("vote:update", (data: { totalVotes: number }) => {
+      setLiveVotes(data.totalVotes);
+      loadCharts();
+    });
+    socket.on("distress:alert", (data: { serial: string; stationName: string; timestamp: string }) => {
+      setDistressAlerts((prev) => [data, ...prev].slice(0, 5));
+    });
+
+    return () => {
+      socket.off("vote:update");
+      socket.off("distress:alert");
+    };
+  }, [loadCharts]);
 
   return (
     <>
@@ -137,6 +186,68 @@ export default function DashboardPage() {
             </>
           ) : null}
         </div>
+
+        {/* Live vote ticker */}
+        {liveVotes !== null && (
+          <div className="mb-4 flex items-center gap-3 rounded-lg bg-green-50 border border-green-200 px-4 py-3">
+            <span className="h-2.5 w-2.5 rounded-full bg-green-500 animate-pulse" />
+            <span className="text-sm font-semibold text-green-900">
+              Live: {liveVotes.toLocaleString()} votes cast
+            </span>
+          </div>
+        )}
+
+        {/* Real-time distress alerts from socket */}
+        {distressAlerts.length > 0 && (
+          <div className="mb-6 rounded-lg border border-red-400 bg-red-50 p-4">
+            <p className="text-sm font-bold text-red-800 mb-2">
+              🚨 Real-time distress alerts ({distressAlerts.length} new this session)
+            </p>
+            <ul className="space-y-1">
+              {distressAlerts.map((a, i) => (
+                <li key={i} className="text-xs text-red-700">
+                  <span className="font-mono font-semibold">{a.serial}</span>
+                  {" — "}{a.stationName}
+                  {" — "}{new Date(a.timestamp).toLocaleTimeString("en-KE")}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* Charts row */}
+        {(countyChart.length > 0 || hourlyChart.length > 0) && (
+          <div className="mb-6 grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {countyChart.length > 0 && (
+              <div className="rounded-lg border border-gray-200 bg-white p-4">
+                <h2 className="mb-3 text-sm font-semibold text-gray-800">Turnout by County</h2>
+                <ResponsiveContainer width="100%" height={180}>
+                  <BarChart data={countyChart} margin={{ top: 0, right: 8, left: -20, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                    <XAxis dataKey="county" tick={{ fontSize: 10 }} interval={0} angle={-28} textAnchor="end" height={46} />
+                    <YAxis tick={{ fontSize: 11 }} unit="%" domain={[0, 100]} />
+                    <Tooltip formatter={(v) => [`${v ?? 0}%`, "Turnout"]} />
+                    <Bar dataKey="turnout" fill="#166534" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+            {hourlyChart.length > 0 && (
+              <div className="rounded-lg border border-gray-200 bg-white p-4">
+                <h2 className="mb-3 text-sm font-semibold text-gray-800">Votes/Hour — Last 24h</h2>
+                <ResponsiveContainer width="100%" height={180}>
+                  <LineChart data={hourlyChart} margin={{ top: 0, right: 8, left: -20, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                    <XAxis dataKey="hour" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
+                    <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                    <Tooltip />
+                    <Line type="monotone" dataKey="count" stroke="#1d4ed8" strokeWidth={2} dot={false} name="Votes" />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </div>
+        )}
 
         {!loading && stats && stats.distressFlagged > 0 && (
           <div className="mb-6 rounded-lg border border-red-300 bg-red-50 p-4">
