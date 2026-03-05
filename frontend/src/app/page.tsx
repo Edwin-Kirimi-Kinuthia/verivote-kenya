@@ -43,6 +43,7 @@ interface LiveStats {
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3005";
 
 export default function Home() {
+  const [isMounted, setIsMounted] = useState(false);
   const [live, setLive] = useState<LiveStats | null>(null);
   const [county, setCounty] = useState<CountyStat[]>([]);
   const [hourly, setHourly] = useState<HourlyPoint[]>([]);
@@ -101,23 +102,28 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    setIsMounted(true);
     fetchAll();
 
     const socket = getSocket();
-    socket.on("connect", () => setConnected(true));
-    socket.on("disconnect", () => setConnected(false));
-    socket.on("vote:update", (data: { totalVotes: number; turnout: number }) => {
-      setLive((prev) =>
-        prev ? { ...prev, totalVotes: data.totalVotes, turnout: data.turnout } : prev
-      );
-    });
+    if (socket) {
+      socket.on("connect", () => setConnected(true));
+      socket.on("disconnect", () => setConnected(false));
+      socket.on("vote:update", (data: { totalVotes: number; turnout: number }) => {
+        setLive((prev) =>
+          prev ? { ...prev, totalVotes: data.totalVotes, turnout: data.turnout } : prev
+        );
+      });
+    }
 
     const interval = setInterval(fetchAll, 30_000);
     return () => {
       clearInterval(interval);
-      socket.off("vote:update");
-      socket.off("connect");
-      socket.off("disconnect");
+      if (socket) {
+        socket.off("vote:update");
+        socket.off("connect");
+        socket.off("disconnect");
+      }
     };
   }, [fetchAll]);
 
@@ -173,7 +179,7 @@ export default function Home() {
 
         {/* Charts */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {county.length > 0 && (
+          {isMounted && county.length > 0 && (
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
               <h2 className="font-semibold text-gray-800 mb-4 text-sm">Turnout by County (Top 8)</h2>
               <ResponsiveContainer width="100%" height={220}>
@@ -188,7 +194,7 @@ export default function Home() {
             </div>
           )}
 
-          {hourly.length > 0 && (
+          {isMounted && hourly.length > 0 && (
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
               <h2 className="font-semibold text-gray-800 mb-4 text-sm">Votes Cast — Last 24 Hours</h2>
               <ResponsiveContainer width="100%" height={220}>

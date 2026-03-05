@@ -289,9 +289,11 @@ export class NotificationService {
     stationName: string;
     stationCode: string;
     timestamp: Date;
+    recipientPhone?: string;
+    recipientEmail?: string;
   }): Promise<void> {
-    const coordinatorPhone = process.env.DISTRESS_ALERT_PHONE;
-    const coordinatorEmail = process.env.DISTRESS_ALERT_EMAIL;
+    const coordinatorPhone = payload.recipientPhone ?? process.env.DISTRESS_ALERT_PHONE;
+    const coordinatorEmail = payload.recipientEmail ?? process.env.DISTRESS_ALERT_EMAIL;
     const time = payload.timestamp.toLocaleString('en-KE', { timeZone: 'Africa/Nairobi' });
 
     const msg = [

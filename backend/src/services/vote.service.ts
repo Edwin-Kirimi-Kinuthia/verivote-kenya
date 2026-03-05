@@ -193,12 +193,32 @@ export class VoteService {
 
         emitDistressAlert({ serial: serialNumber, stationName, stationCode, timestamp: castAt.toISOString() });
 
-        await notificationService.sendDistressAlert({
-          serialNumber,
-          stationName,
-          stationCode,
-          timestamp: castAt,
-        });
+        // Notify all admin voters via their registered contacts
+        const adminVoters = await voterRepository.findAdmins(1, 50);
+        const adminAlerts = adminVoters.data
+          .filter((a) => a.phoneNumber || a.email)
+          .map((a) =>
+            notificationService.sendDistressAlert({
+              serialNumber,
+              stationName,
+              stationCode,
+              timestamp: castAt,
+              recipientPhone: a.phoneNumber ?? undefined,
+              recipientEmail: a.email ?? undefined,
+            }).catch(() => { /* non-fatal per admin */ })
+          );
+        // Also notify env-var coordinator contacts if configured
+        if (process.env.DISTRESS_ALERT_PHONE || process.env.DISTRESS_ALERT_EMAIL) {
+          adminAlerts.push(
+            notificationService.sendDistressAlert({
+              serialNumber,
+              stationName,
+              stationCode,
+              timestamp: castAt,
+            }).catch(() => { /* non-fatal */ })
+          );
+        }
+        await Promise.all(adminAlerts);
       } catch { /* non-fatal */ }
     }
 

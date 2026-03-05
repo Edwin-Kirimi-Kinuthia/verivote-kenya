@@ -69,6 +69,7 @@ const distressColumns: ColumnDef<DistressVote>[] = [
 
 export default function DashboardPage() {
   const router = useRouter();
+  const [isMounted, setIsMounted] = useState(false);
   const [stats, setStats] = useState<ReviewStats | null>(null);
   const [recent, setRecent] = useState<Voter[]>([]);
   const [distressVotes, setDistressVotes] = useState<DistressVote[]>([]);
@@ -125,21 +126,26 @@ export default function DashboardPage() {
         setLoading(false);
       }
     }
+    setIsMounted(true);
     load();
     loadCharts();
 
     const socket = getSocket();
-    socket.on("vote:update", (data: { totalVotes: number }) => {
-      setLiveVotes(data.totalVotes);
-      loadCharts();
-    });
-    socket.on("distress:alert", (data: { serial: string; stationName: string; timestamp: string }) => {
-      setDistressAlerts((prev) => [data, ...prev].slice(0, 5));
-    });
+    if (socket) {
+      socket.on("vote:update", (data: { totalVotes: number }) => {
+        setLiveVotes(data.totalVotes);
+        loadCharts();
+      });
+      socket.on("distress:alert", (data: { serial: string; stationName: string; timestamp: string }) => {
+        setDistressAlerts((prev) => [data, ...prev].slice(0, 5));
+      });
+    }
 
     return () => {
-      socket.off("vote:update");
-      socket.off("distress:alert");
+      if (socket) {
+        socket.off("vote:update");
+        socket.off("distress:alert");
+      }
     };
   }, [loadCharts]);
 
@@ -216,7 +222,7 @@ export default function DashboardPage() {
         )}
 
         {/* Charts row */}
-        {(countyChart.length > 0 || hourlyChart.length > 0) && (
+        {isMounted && (countyChart.length > 0 || hourlyChart.length > 0) && (
           <div className="mb-6 grid grid-cols-1 lg:grid-cols-2 gap-4">
             {countyChart.length > 0 && (
               <div className="rounded-lg border border-gray-200 bg-white p-4">

@@ -16,6 +16,7 @@ interface ExplorerRow {
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3005";
 
 export default function ExplorerPage() {
+  const [isMounted, setIsMounted] = useState(false);
   const [rows, setRows] = useState<ExplorerRow[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -38,21 +39,24 @@ export default function ExplorerPage() {
   }, []);
 
   useEffect(() => {
+    setIsMounted(true);
     fetchExplorer();
 
     const socket = getSocket();
-    socket.on("connect", () => setConnected(true));
-    socket.on("disconnect", () => setConnected(false));
-
-    // Refresh explorer list on each new vote
-    socket.on("vote:update", () => fetchExplorer());
+    if (socket) {
+      socket.on("connect", () => setConnected(true));
+      socket.on("disconnect", () => setConnected(false));
+      socket.on("vote:update", () => fetchExplorer());
+    }
 
     const interval = setInterval(fetchExplorer, 15_000);
     return () => {
       clearInterval(interval);
-      socket.off("vote:update");
-      socket.off("connect");
-      socket.off("disconnect");
+      if (socket) {
+        socket.off("vote:update");
+        socket.off("connect");
+        socket.off("disconnect");
+      }
     };
   }, [fetchExplorer]);
 
