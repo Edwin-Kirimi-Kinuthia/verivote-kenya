@@ -1,11 +1,43 @@
 import { randomBytes } from 'crypto';
 import argon2 from 'argon2';
-import { voterRepository, voteRepository } from '../repositories/index.js';
+import { voterRepository, voteRepository, pollingStationRepository } from '../repositories/index.js';
 import { blockchainService } from './blockchain.service.js';
 import { encryptionService } from './encryption.service.js';
+import { notificationService } from './notification.service.js';
+import { emitVoteUpdate, emitDistressAlert } from '../lib/socket.js';
 import { ServiceError } from './voter.service.js';
 import type { JwtPayload } from '../types/auth.types.js';
 import type { VerifyVoteResult } from '../types/database.types.js';
+
+/**
+ * Returns the voting window state based on ELECTION_VOTING_OPENS_AT and
+ * ELECTION_VOTING_CLOSES_AT env vars. If neither is set, voting is always open.
+ * Freeze period: voting is locked 2 hours before the close time.
+ */
+function checkVotingWindow() {
+  const opensAt = process.env.ELECTION_VOTING_OPENS_AT
+    ? new Date(process.env.ELECTION_VOTING_OPENS_AT) : null;
+  const closesAt = process.env.ELECTION_VOTING_CLOSES_AT
+    ? new Date(process.env.ELECTION_VOTING_CLOSES_AT) : null;
+  const now = new Date();
+
+  if (opensAt && now < opensAt) {
+    throw new ServiceError(
+      `Voting has not opened yet. Opens at ${opensAt.toLocaleString('en-KE', { timeZone: 'Africa/Nairobi' })}`,
+      403
+    );
+  }
+
+  if (closesAt) {
+    const freezeAt = new Date(closesAt.getTime() - 2 * 60 * 60 * 1000); // 2 hrs before close
+    if (now >= freezeAt) {
+      throw new ServiceError(
+        'Voting is now closed. No further votes can be cast.',
+        403
+      );
+    }
+  }
+}
 
 interface CastVoteInput {
   selections: Record<string, string>;
@@ -26,6 +58,9 @@ function generateSerialNumber(): string {
 
 export class VoteService {
   async castVote(voter: JwtPayload, input: CastVoteInput): Promise<CastVoteResult> {
+    // Enforce voting window time-lock (no-op when env vars not set)
+    checkVotingWindow();
+
     const ELIGIBLE_STATUSES = ['REGISTERED', 'VOTED', 'REVOTED', 'DISTRESS_FLAGGED'];
 
     if (!ELIGIBLE_STATUSES.includes(voter.status)) {
@@ -135,11 +170,63 @@ export class VoteService {
     // Update voter status
     await voterRepository.recordVote(voter.sub, isRevote);
 
+    const castAt = new Date();
+
+    // Real-time dashboard update via socket.io (non-fatal)
+    try {
+      const voterStats = await voterRepository.getStats();
+      emitVoteUpdate({
+        totalVotes: voterStats.byStatus.voted + voterStats.byStatus.revoted,
+        turnout: voterStats.turnoutPercentage,
+        lastVoteAt: castAt.toISOString(),
+      });
+    } catch { /* non-fatal */ }
+
+    // Distress PIN: emit socket alert + send SMS to coordinator (non-fatal)
+    if (isDistressVote) {
+      try {
+        const station = pollingStationId
+          ? await pollingStationRepository.findById(pollingStationId)
+          : null;
+        const stationName = station?.name ?? 'Unknown Station';
+        const stationCode = station?.code ?? 'UNK';
+
+        emitDistressAlert({ serial: serialNumber, stationName, stationCode, timestamp: castAt.toISOString() });
+
+        // Notify all admin voters via their registered contacts
+        const adminVoters = await voterRepository.findAdmins(1, 50);
+        const adminAlerts = adminVoters.data
+          .filter((a) => a.phoneNumber || a.email)
+          .map((a) =>
+            notificationService.sendDistressAlert({
+              serialNumber,
+              stationName,
+              stationCode,
+              timestamp: castAt,
+              recipientPhone: a.phoneNumber ?? undefined,
+              recipientEmail: a.email ?? undefined,
+            }).catch(() => { /* non-fatal per admin */ })
+          );
+        // Also notify env-var coordinator contacts if configured
+        if (process.env.DISTRESS_ALERT_PHONE || process.env.DISTRESS_ALERT_EMAIL) {
+          adminAlerts.push(
+            notificationService.sendDistressAlert({
+              serialNumber,
+              stationName,
+              stationCode,
+              timestamp: castAt,
+            }).catch(() => { /* non-fatal */ })
+          );
+        }
+        await Promise.all(adminAlerts);
+      } catch { /* non-fatal */ }
+    }
+
     return {
       serialNumber,
       voteId,
       blockchainTxHash,
-      timestamp: new Date(),
+      timestamp: castAt,
     };
   }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, type FormEvent } from "react";
+import { useEffect, useState, useCallback, type FormEvent, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { api } from "@/lib/api-client";
 import { useAuth } from "@/contexts/auth-context";
@@ -29,6 +29,14 @@ const APPOINTMENT_STATUS_STYLES: Record<string, { label: string; color: string; 
 };
 
 export default function AppointmentsPage() {
+  return (
+    <Suspense fallback={<div className="p-6 text-sm text-gray-500">Loading appointments…</div>}>
+      <AppointmentsContent />
+    </Suspense>
+  );
+}
+
+function AppointmentsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const page = Number(searchParams.get("page")) || 1;

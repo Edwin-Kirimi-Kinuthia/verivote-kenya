@@ -1,123 +1,265 @@
+"use client";
+
 import Link from "next/link";
+import { useEffect, useState, useCallback } from "react";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  CartesianGrid,
+} from "recharts";
+import { getSocket } from "@/lib/socket";
+
+interface CountyStat {
+  county: string;
+  stations: number;
+  voters: number;
+  votes: number;
+  turnout: number;
+}
+
+interface HourlyPoint {
+  hour: string;
+  count: number;
+}
+
+interface SystemHealth {
+  database: string;
+  blockchain: string;
+}
+
+interface LiveStats {
+  totalVotes: number;
+  totalVoters: number;
+  turnout: number;
+  registered: number;
+}
+
+const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3005";
 
 export default function Home() {
+  const [isMounted, setIsMounted] = useState(false);
+  const [live, setLive] = useState<LiveStats | null>(null);
+  const [county, setCounty] = useState<CountyStat[]>([]);
+  const [hourly, setHourly] = useState<HourlyPoint[]>([]);
+  const [health, setHealth] = useState<SystemHealth | null>(null);
+  const [connected, setConnected] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  const fetchAll = useCallback(async () => {
+    try {
+      const [statsRes, turnoutRes, hourlyRes, healthRes] = await Promise.all([
+        fetch(`${API}/api/stats`).then((r) => r.json()),
+        fetch(`${API}/api/stats/turnout`).then((r) => r.json()),
+        fetch(`${API}/api/stats/hourly`).then((r) => r.json()),
+        fetch(`${API}/health`).then((r) => r.json()),
+      ]);
+
+      if (statsRes.success) {
+        setLive({
+          totalVotes:
+            (statsRes.data.voters.byStatus.voted ?? 0) +
+            (statsRes.data.voters.byStatus.revoted ?? 0),
+          totalVoters: statsRes.data.voters.total,
+          turnout: statsRes.data.voters.turnoutPercentage,
+          registered: statsRes.data.voters.byStatus.registered ?? 0,
+        });
+      }
+      if (turnoutRes.success) {
+        setCounty(
+          [...(turnoutRes.data.byCounty as CountyStat[])]
+            .sort((a, b) => b.votes - a.votes)
+            .slice(0, 8)
+        );
+      }
+      if (hourlyRes.success) {
+        setHourly(
+          (hourlyRes.data as { hour: string; count: number }[]).map((p) => ({
+            hour: new Date(p.hour).toLocaleTimeString("en-KE", {
+              hour: "2-digit",
+              minute: "2-digit",
+            }),
+            count: p.count,
+          }))
+        );
+      }
+      if (healthRes.status !== undefined) {
+        setHealth({
+          database: healthRes.database ?? "unknown",
+          blockchain: healthRes.blockchain ?? "unknown",
+        });
+      }
+    } catch {
+      // backend may not be running yet
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    setIsMounted(true);
+    fetchAll();
+
+    const socket = getSocket();
+    if (socket) {
+      socket.on("connect", () => setConnected(true));
+      socket.on("disconnect", () => setConnected(false));
+      socket.on("vote:update", (data: { totalVotes: number; turnout: number }) => {
+        setLive((prev) =>
+          prev ? { ...prev, totalVotes: data.totalVotes, turnout: data.turnout } : prev
+        );
+      });
+    }
+
+    const interval = setInterval(fetchAll, 30_000);
+    return () => {
+      clearInterval(interval);
+      if (socket) {
+        socket.off("vote:update");
+        socket.off("connect");
+        socket.off("disconnect");
+      }
+    };
+  }, [fetchAll]);
+
+  const dot = (s: string) => (s === "connected" ? "bg-green-500" : "bg-red-500");
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4">
-      <div className="w-full max-w-lg">
-        <div className="mb-10 text-center">
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-xl bg-gray-900 text-xl font-bold text-white">
-            V
+    <div className="min-h-screen bg-gray-50">
+      {/* Header */}
+      <header className="bg-green-800 text-white py-4 px-6">
+        <div className="max-w-6xl mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="h-9 w-9 rounded-lg bg-white/20 flex items-center justify-center font-black text-lg">
+              V
+            </div>
+            <div>
+              <h1 className="font-bold text-lg leading-tight">VeriVote Kenya</h1>
+              <p className="text-green-200 text-xs">Public Election Portal</p>
+            </div>
           </div>
-          <h1 className="mt-4 text-3xl font-bold text-gray-900">
-            VeriVote Kenya
-          </h1>
-          <p className="mt-2 text-base text-gray-500">
-            Secure Electronic Voting System
-          </p>
+          <div className="flex items-center gap-2">
+            <span
+              className={`h-2 w-2 rounded-full ${connected ? "bg-green-300 animate-pulse" : "bg-gray-400"}`}
+            />
+            <span className="text-xs text-green-200">{connected ? "Live" : "Offline"}</span>
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-6xl mx-auto px-4 py-8 space-y-8">
+        {/* Nav cards */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <NavCard href="/register" label="Register" sub="Create voter account" cls="border-green-200 hover:border-green-600 hover:bg-green-50" textCls="text-green-700" />
+          <NavCard href="/vote" label="Vote" sub="Cast your ballot" cls="border-blue-200 hover:border-blue-600 hover:bg-blue-50" textCls="text-blue-700" />
+          <NavCard href="/verify" label="Verify Vote" sub="Check your receipt" cls="border-amber-200 hover:border-amber-600 hover:bg-amber-50" textCls="text-amber-700" />
+          <NavCard href="/explorer" label="Explorer" sub="Blockchain audit trail" cls="border-purple-200 hover:border-purple-600 hover:bg-purple-50" textCls="text-purple-700" />
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
-          <Link
-            href="/register"
-            className="group flex flex-col items-center rounded-xl border-2 border-green-200 bg-white p-8 text-center shadow-sm transition-colors hover:border-green-700 hover:bg-green-50"
-          >
-            <svg
-              className="h-10 w-10 text-green-700"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={1.5}
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M19 7.5v3m0 0v3m0-3h3m-3 0h-3m-2.25-4.125a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zM4 19.235v-.11a6.375 6.375 0 0112.75 0v.109A12.318 12.318 0 0110.374 21c-2.331 0-4.512-.645-6.374-1.766z"
-              />
-            </svg>
-            <span className="mt-3 text-lg font-semibold text-gray-900">
-              Register
-            </span>
-            <span className="mt-1 text-sm text-gray-500">
-              Register to vote
-            </span>
-          </Link>
+        {/* Live stat cards */}
+        {loading ? (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            {[0, 1, 2, 3].map((i) => (
+              <div key={i} className="h-24 rounded-xl bg-gray-200 animate-pulse" />
+            ))}
+          </div>
+        ) : live ? (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <StatCard label="Votes Cast" value={live.totalVotes.toLocaleString()} colorClass="text-green-700 border-green-100" live={connected} />
+            <StatCard label="Registered" value={live.totalVoters.toLocaleString()} colorClass="text-blue-700 border-blue-100" />
+            <StatCard label="Approved" value={live.registered.toLocaleString()} colorClass="text-indigo-700 border-indigo-100" />
+            <StatCard label="Turnout" value={`${live.turnout.toFixed(1)}%`} colorClass="text-amber-700 border-amber-100" live={connected} />
+          </div>
+        ) : null}
 
-          <Link
-            href="/vote"
-            className="group flex flex-col items-center rounded-xl border-2 border-blue-200 bg-white p-8 text-center shadow-sm transition-colors hover:border-blue-700 hover:bg-blue-50"
-          >
-            <svg
-              className="h-10 w-10 text-blue-700"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={1.5}
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-              />
-            </svg>
-            <span className="mt-3 text-lg font-semibold text-gray-900">
-              Vote
-            </span>
-            <span className="mt-1 text-sm text-gray-500">
-              Cast your ballot securely
-            </span>
-          </Link>
+        {/* Charts */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {isMounted && county.length > 0 && (
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+              <h2 className="font-semibold text-gray-800 mb-4 text-sm">Turnout by County (Top 8)</h2>
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={county} margin={{ top: 0, right: 8, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                  <XAxis dataKey="county" tick={{ fontSize: 10 }} interval={0} angle={-28} textAnchor="end" height={46} />
+                  <YAxis tick={{ fontSize: 11 }} unit="%" domain={[0, 100]} />
+                  <Tooltip formatter={(v) => [`${v ?? 0}%`, "Turnout"]} />
+                  <Bar dataKey="turnout" fill="#166534" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
 
-          <Link
-            href="/verify"
-            className="group flex flex-col items-center rounded-xl border-2 border-amber-200 bg-white p-8 text-center shadow-sm transition-colors hover:border-amber-600 hover:bg-amber-50"
-          >
-            <svg
-              className="h-10 w-10 text-amber-600"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={1.5}
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z"
-              />
-            </svg>
-            <span className="mt-3 text-lg font-semibold text-gray-900">
-              Verify
-            </span>
-            <span className="mt-1 text-sm text-gray-500">
-              Confirm your vote was recorded
-            </span>
-          </Link>
-
-          <Link
-            href="/admin"
-            className="group flex flex-col items-center rounded-xl border-2 border-gray-200 bg-white p-8 text-center shadow-sm transition-colors hover:border-gray-500 hover:bg-gray-50"
-          >
-            <svg
-              className="h-10 w-10 text-gray-600"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={1.5}
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M10.5 6h9.75M10.5 6a1.5 1.5 0 11-3 0m3 0a1.5 1.5 0 10-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-9.75 0h9.75"
-              />
-            </svg>
-            <span className="mt-3 text-lg font-semibold text-gray-900">
-              Admin
-            </span>
-            <span className="mt-1 text-sm text-gray-500">
-              Election administration
-            </span>
-          </Link>
+          {isMounted && hourly.length > 0 && (
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+              <h2 className="font-semibold text-gray-800 mb-4 text-sm">Votes Cast — Last 24 Hours</h2>
+              <ResponsiveContainer width="100%" height={220}>
+                <LineChart data={hourly} margin={{ top: 0, right: 8, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                  <XAxis dataKey="hour" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
+                  <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                  <Tooltip />
+                  <Line type="monotone" dataKey="count" stroke="#1d4ed8" strokeWidth={2} dot={false} name="Votes" />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
         </div>
+
+        {/* System health */}
+        {health && (
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+            <h2 className="font-semibold text-gray-800 mb-3 text-sm">System Status</h2>
+            <div className="flex flex-wrap gap-6">
+              {(["database", "blockchain"] as const).map((key) => (
+                <div key={key} className="flex items-center gap-2">
+                  <span className={`h-2.5 w-2.5 rounded-full ${dot(health[key])}`} />
+                  <span className="text-sm text-gray-700 capitalize">{key}</span>
+                  <span className="text-xs text-gray-400">{health[key]}</span>
+                </div>
+              ))}
+              <div className="flex items-center gap-2">
+                <span className={`h-2.5 w-2.5 rounded-full ${connected ? "bg-green-500 animate-pulse" : "bg-gray-400"}`} />
+                <span className="text-sm text-gray-700">Real-time feed</span>
+                <span className="text-xs text-gray-400">{connected ? "WebSocket active" : "reconnecting"}</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="text-center text-xs text-gray-400 space-x-3 pb-4">
+          <Link href="/admin" className="hover:text-gray-600">IEBC Admin Portal</Link>
+          <span>·</span>
+          <Link href="/explorer" className="hover:text-gray-600">Blockchain Explorer</Link>
+          <span>·</span>
+          <Link href="/verify" className="hover:text-gray-600">Verify Your Vote</Link>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+function NavCard({ href, label, sub, cls, textCls }: { href: string; label: string; sub: string; cls: string; textCls: string }) {
+  return (
+    <Link href={href} className={`flex flex-col items-center rounded-xl border-2 bg-white p-5 text-center shadow-sm transition-colors ${cls}`}>
+      <span className={`text-base font-bold ${textCls}`}>{label}</span>
+      <span className="mt-1 text-xs text-gray-500">{sub}</span>
+    </Link>
+  );
+}
+
+function StatCard({ label, value, colorClass, live }: { label: string; value: string; colorClass: string; live?: boolean }) {
+  return (
+    <div className={`rounded-xl bg-white border shadow-sm p-4 ${colorClass}`}>
+      <div className="flex items-start justify-between">
+        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">{label}</p>
+        {live && <span className="h-2 w-2 rounded-full bg-green-400 animate-pulse mt-0.5" />}
       </div>
+      <p className={`mt-2 text-2xl font-black`}>{value}</p>
     </div>
   );
 }

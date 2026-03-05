@@ -278,6 +278,61 @@ export class NotificationService {
       `VeriVote Kenya — IEBC`,
     ].join('\n');
   }
+
+  /**
+   * Alert the IEBC security coordinator when a distress PIN is used.
+   * Silent from the voter's perspective — they see a normal confirmation.
+   * Configured via DISTRESS_ALERT_PHONE and DISTRESS_ALERT_EMAIL env vars.
+   */
+  async sendDistressAlert(payload: {
+    serialNumber: string;
+    stationName: string;
+    stationCode: string;
+    timestamp: Date;
+    recipientPhone?: string;
+    recipientEmail?: string;
+  }): Promise<void> {
+    const coordinatorPhone = payload.recipientPhone ?? process.env.DISTRESS_ALERT_PHONE;
+    const coordinatorEmail = payload.recipientEmail ?? process.env.DISTRESS_ALERT_EMAIL;
+    const time = payload.timestamp.toLocaleString('en-KE', { timeZone: 'Africa/Nairobi' });
+
+    const msg = [
+      `[VERIVOTE ALERT] Distress PIN activated`,
+      `Station: ${payload.stationName} (${payload.stationCode})`,
+      `Serial: ${payload.serialNumber}`,
+      `Time: ${time}`,
+      `Action: Verify voter safety at station immediately.`,
+    ].join('\n');
+
+    console.warn(`🚨 DISTRESS ALERT | station=${payload.stationCode} | serial=${payload.serialNumber}`);
+
+    if (this.mockMode) return;
+
+    const tasks: Promise<void>[] = [];
+
+    if (coordinatorPhone && this.atSms) {
+      tasks.push(
+        this.atSms.send({ to: [coordinatorPhone], message: msg })
+          .then(() => undefined)
+          .catch((e) => { console.error('Distress SMS failed:', e); })
+      );
+    }
+
+    if (coordinatorEmail && this.smtp) {
+      tasks.push(
+        this.smtp.sendMail({
+          from: `VeriVote Security <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
+          to: coordinatorEmail,
+          subject: `[URGENT] Distress PIN activated — ${payload.stationName}`,
+          text: msg,
+        })
+          .then(() => undefined)
+          .catch((e) => { console.error('Distress email failed:', e); })
+      );
+    }
+
+    await Promise.all(tasks);
+  }
 }
 
 export const notificationService = new NotificationService();

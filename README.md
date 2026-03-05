@@ -2,23 +2,26 @@
 
 **Hybrid Electronic Voting System for Kenya**
 
-A secure, transparent, and verifiable voting system that combines the trustworthiness of paper ballots with cutting-edge cryptography and blockchain technology.
+A secure, transparent, and verifiable voting system combining in-person identity verification, ElGamal cryptographic encryption, Soul-Bound Tokens on an EVM blockchain, and a real-time public transparency portal.
 
 ---
 
 ## Features
 
-- **Soul-Bound Tokens (SBTs)** - Tamper-proof digital voter identity on Ethereum
-- **Persona Identity Verification** - Automated ID document + liveness check
-- **IEBC Manual Review** - Fallback physical verification when automated check fails
-- **Appointment Scheduling** - Book verification slots at nearby polling stations
-- **Zero-Knowledge Proofs** - Verify votes without revealing choices
-- **Blockchain Recording** - Immutable, transparent vote storage on Polygon
-- **Homomorphic Encryption** - Privacy-preserving vote tallying
-- **Distress PIN** - Coercion resistance mechanism
-- **PIN Reset** - Secure PIN recovery via in-person or biometric verification
-- **Multiple Voting** - Voters can change their vote (only last counts)
-- **Paper Audit Trail** - Post-election printing for manual recounts
+- **Soul-Bound Tokens (SBTs)** — Non-transferable ERC-721 voter identity anchored on-chain
+- **Persona KYC** — Automated ID document + liveness detection (inline iframe, no redirect)
+- **IEBC Manual Review** — Fallback in-person verification with appointment scheduling
+- **WebAuthn / FIDO2** — Fingerprint enrollment at the polling station during approval
+- **ElGamal Encryption** — 2048-bit FFDHE (RFC 7919) vote encryption before storage
+- **Blockchain Recording** — SHA-256 hash of each encrypted vote anchored on-chain
+- **Dual-PIN System** — Normal PIN + silent Distress PIN (coercion resistance)
+- **Distress Alerts** — Real-time socket alert + SMS/email to all registered IEBC officials
+- **Voting Time-Lock** — Configurable window; freeze period 2 hours before polls close
+- **Multiple Voting** — Voters can change their vote; only the last submission counts
+- **Receipt Verification** — Every voter gets a serial number to verify their vote publicly
+- **Blockchain Explorer** — Public audit trail of all confirmed votes with TX hashes
+- **Real-Time Dashboard** — WebSocket-powered live vote counter, charts, distress feed
+- **Paper Audit Trail** — Admin print queue for post-election physical recount
 
 ---
 
@@ -26,12 +29,15 @@ A secure, transparent, and verifiable voting system that combines the trustworth
 
 | Category | Technologies |
 |----------|-------------|
-| **Backend** | Node.js, TypeScript, Express.js, Prisma ORM |
+| **Backend** | Node.js 20, TypeScript, Express.js, Prisma ORM |
 | **Database** | PostgreSQL 16, Redis 7 |
-| **Blockchain** | Polygon (Ethereum L2), Solidity, Hardhat |
-| **Identity** | Persona (ID verification + liveness) |
-| **Frontend** | React, Next.js, Tailwind CSS |
-| **DevOps** | Docker, GitHub Actions |
+| **Blockchain** | EVM-compatible (local Hardhat testnet; Polygon for production), Solidity, ethers.js |
+| **Encryption** | ElGamal 2048-bit FFDHE, Argon2id (PIN hashing) |
+| **Identity** | Persona (ID + liveness), WebAuthn / FIDO2 (fingerprint) |
+| **Frontend** | Next.js 15, React, Tailwind CSS, Recharts |
+| **Real-Time** | Socket.IO (WebSocket + polling fallback) |
+| **Notifications** | Africa's Talking (SMS), Nodemailer (SMTP) |
+| **DevOps** | Docker, Docker Compose, GitHub Actions |
 
 ---
 
@@ -43,168 +49,204 @@ verivote-kenya/
 │   ├── prisma/              # Database schema & migrations
 │   │   ├── schema.prisma
 │   │   └── seed.ts
-│   ├── src/
-│   │   ├── index.ts         # Server entry point
-│   │   ├── database/        # Prisma client
-│   │   ├── repositories/    # Data access layer
-│   │   ├── services/        # Business logic
-│   │   │   ├── voter.service.ts
-│   │   │   ├── admin.service.ts
-│   │   │   ├── appointment.service.ts
-│   │   │   ├── pin-reset.service.ts
-│   │   │   ├── persona.service.ts
-│   │   │   └── blockchain.service.ts
-│   │   ├── routes/          # API endpoints
-│   │   └── types/           # TypeScript definitions
-│   └── package.json
+│   └── src/
+│       ├── index.ts         # Server entry point (Express + Socket.IO)
+│       ├── lib/
+│       │   └── socket.ts    # Socket.IO emitters (vote:update, distress:alert)
+│       ├── database/        # Prisma client
+│       ├── repositories/    # Data access layer
+│       ├── services/        # Business logic
+│       │   ├── voter.service.ts
+│       │   ├── vote.service.ts
+│       │   ├── admin.service.ts
+│       │   ├── appointment.service.ts
+│       │   ├── pin-reset.service.ts
+│       │   ├── persona.service.ts
+│       │   ├── notification.service.ts
+│       │   ├── encryption.service.ts
+│       │   ├── blockchain.service.ts
+│       │   └── scheduler.ts
+│       └── routes/          # API endpoint handlers
 ├── contracts/               # Solidity smart contracts
 │   ├── contracts/
-│   │   └── VoterSBT.sol     # Soul-Bound Token contract
+│   │   └── VoterSBT.sol     # Soul-Bound Token (ERC-721, all transfers blocked)
 │   └── hardhat.config.ts
-├── frontend/                # Next.js web application
-├── docs/                    # Documentation
-├── .github/workflows/       # CI/CD pipelines
+├── frontend/                # Next.js 15 web application
+│   └── src/app/
+│       ├── page.tsx             # Public election portal (live stats + charts)
+│       ├── explorer/            # Blockchain explorer (public audit trail)
+│       ├── register/            # Voter self-registration + KYC flow
+│       ├── vote/                # Ballot, review, receipt pages
+│       ├── verify/              # Receipt verification
+│       └── admin/               # IEBC admin portal
 ├── docker-compose.yml       # Local development services
 └── package.json             # Root monorepo config
 ```
 
 ---
 
-## API Documentation
+## API Endpoints
 
-### Health & Stats
+### Public
+
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/health` | GET | Server status, database & blockchain connection |
-| `/api/stats` | GET | System-wide statistics |
+| `/health` | GET | Server status, database & blockchain health |
+| `/api/stats` | GET | System-wide voter and vote statistics |
+| `/api/stats/turnout` | GET | Turnout breakdown by county and polling station |
+| `/api/stats/hourly` | GET | Votes per hour for the last 24 hours |
+| `/api/stats/explorer` | GET | Latest 20 confirmed votes for the blockchain explorer |
 | `/api/counties` | GET | List of Kenyan counties |
-| `/api/polling-stations` | GET | List polling stations with filters |
+| `/api/polling-stations` | GET | Polling stations with county filter |
+| `/api/receipts/:serial` | GET | Verify a vote by serial number |
+
+### Authentication
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/auth/login` | POST | Password login (returns JWT) |
+| `/api/auth/otp-login` | POST | OTP-based login |
+| `/api/auth/set-password` | POST | Set account password |
 
 ### Voter Registration
+
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/voters/register` | POST | Initiate registration (starts Persona verification) |
-| `/api/voters/persona-webhook` | POST | Persona callback on verification complete |
-| `/api/voters/registration-status/:inquiryId` | GET | Check registration status |
-| `/api/voters/verify-pin` | POST | Verify voter PIN |
+| `/api/voters/register` | POST | Start registration (triggers Persona KYC) |
+| `/api/voters/persona-webhook` | POST | Persona webhook on verification complete |
+| `/api/voters/registration-status/:inquiryId` | GET | Poll KYC status; issues setup JWT when approved |
+| `/api/voters/set-pin` | POST | Set normal voting PIN (requires setup JWT) |
 | `/api/voters/:id/status` | GET | Get voter status |
-| `/api/voters` | GET | List all voters (paginated) |
+| `/api/voters` | GET | List voters, paginated (admin) |
 
-### IEBC Manual Review (Admin)
+### Vote Casting
+
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/admin/pending-reviews` | GET | List voters pending manual review |
-| `/api/admin/review/:voterId` | GET | Get voter details for review |
-| `/api/admin/approve/:voterId` | POST | Approve voter (mints SBT, generates PINs) |
-| `/api/admin/reject/:voterId` | POST | Reject voter verification |
-| `/api/admin/stats` | GET | Review statistics |
+| `/api/votes/cast` | POST | Cast or change a vote (requires PIN) |
+| `/api/votes/status` | GET | Check own vote status |
 
-### Appointment Scheduling
+### IEBC Admin Portal
+
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/appointments/slots` | POST | Create appointment slots (admin) |
-| `/api/appointments/available` | GET | List available slots |
-| `/api/appointments/nearby` | GET | Find slots near GPS coordinates |
-| `/api/appointments/voter/:voterId/nearby` | GET | Find slots near voter's station |
-| `/api/appointments/book/:slotId` | POST | Book an appointment slot |
+| `/api/admin/review-stats` | GET | Dashboard stats (voters, reviews, distress) |
+| `/api/admin/pending-reviews` | GET | Voters awaiting manual review |
+| `/api/admin/review/:voterId` | GET | Voter detail for in-person review |
+| `/api/admin/approve/:voterId` | POST | Approve voter (mints SBT) |
+| `/api/admin/reject/:voterId` | POST | Reject voter |
+| `/api/admin/distress-votes` | GET | List distress-flagged votes |
+| `/api/admin/send-setup-link` | POST | Send PIN setup link to approved voter |
+| `/api/admin/officials` | GET | List IEBC officials |
+| `/api/admin/officials` | POST | Grant official access (voter must be REGISTERED) |
+
+### Appointments
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/appointments/create-slots` | POST | Bulk-create time slots (admin) |
+| `/api/appointments/slots` | DELETE | Delete available slots (admin) |
+| `/api/appointments/available` | GET | List open slots |
+| `/api/appointments/nearby` | GET | Slots near GPS coordinates |
+| `/api/appointments/book/:slotId` | POST | Book a slot |
 | `/api/appointments/cancel/:slotId` | POST | Cancel a booking |
-| `/api/appointments/complete/:slotId` | POST | Mark appointment complete |
-| `/api/appointments/no-show/:slotId` | POST | Mark voter as no-show |
-| `/api/appointments/scheduled` | GET | List scheduled appointments |
+| `/api/appointments/:id/approve-voter` | POST | Approve voter at appointment |
+| `/api/appointments/:id/reject-voter` | POST | Reject voter at appointment |
+| `/api/appointments/scheduled` | GET | List booked appointments (admin) |
 
 ### PIN Reset
+
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/pin-reset/request` | POST | Request PIN reset |
-| `/api/pin-reset/cancel` | POST | Cancel pending reset request |
+| `/api/pin-reset/request` | POST | Request a PIN reset |
 | `/api/pin-reset/status` | GET | Check reset status |
 | `/api/pin-reset/pending` | GET | List pending resets (admin) |
-| `/api/pin-reset/verify/:voterId` | POST | Complete in-person verification |
-| `/api/pin-reset/biometric-webhook` | POST | Persona biometric callback |
+| `/api/pin-reset/verify/:voterId` | POST | Complete in-person reset verification |
 
-### Blockchain
+### WebAuthn
+
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/blockchain/status` | GET | Contract deployment status |
-| `/api/blockchain/mint-sbt` | POST | Mint SBT for voter |
+| `/api/webauthn/register/options` | POST | Get registration options |
+| `/api/webauthn/register/verify` | POST | Verify and store credential |
+| `/api/webauthn/authenticate/options` | POST | Get authentication options |
+| `/api/webauthn/authenticate/verify` | POST | Verify authentication response |
+
+### Blockchain
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/blockchain/status` | GET | Contract deployment and connection status |
+| `/api/blockchain/mint-sbt` | POST | Mint SBT for a voter |
 | `/api/blockchain/verify-sbt/:address` | GET | Verify SBT ownership |
 
 ---
 
-## Voter Registration Flow
+## Real-Time Events (Socket.IO)
+
+| Event | Direction | Payload |
+|-------|-----------|---------|
+| `vote:update` | Server → Client | `{ totalVotes, turnout, lastVoteAt }` |
+| `distress:alert` | Server → Client | `{ serial, stationName, stationCode, timestamp }` |
+
+---
+
+## Registration Flow
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        VOTER REGISTRATION                           │
-└─────────────────────────────────────────────────────────────────────┘
-                                │
-                                ▼
-                    ┌───────────────────────┐
-                    │  POST /voters/register │
-                    │  (nationalId, station) │
-                    └───────────────────────┘
-                                │
-                                ▼
-                    ┌───────────────────────┐
-                    │  Persona ID + Liveness │
-                    │    Verification        │
-                    └───────────────────────┘
-                                │
-              ┌─────────────────┼─────────────────┐
-              ▼                 ▼                 ▼
-        ┌──────────┐    ┌─────────────┐    ┌──────────────┐
-        │ APPROVED │    │   FAILED    │    │   EXPIRED    │
-        └──────────┘    └─────────────┘    └──────────────┘
-              │                 │
-              ▼                 ▼
-    ┌──────────────────┐  ┌─────────────────────┐
-    │ Mint SBT Token   │  │ Route to IEBC       │
-    │ Generate PINs    │  │ Manual Review       │
-    │ Status: REGISTERED│ │ Book Appointment    │
-    └──────────────────┘  └─────────────────────┘
-                                │
-                                ▼
-                    ┌───────────────────────┐
-                    │  In-Person Verification│
-                    │  at Polling Station    │
-                    └───────────────────────┘
-                                │
-              ┌─────────────────┼─────────────────┐
-              ▼                                   ▼
-    ┌──────────────────┐              ┌──────────────────┐
-    │ APPROVED         │              │ REJECTED         │
-    │ Mint SBT + PINs  │              │ Status: FAILED   │
-    └──────────────────┘              └──────────────────┘
+Voter submits form
+        │
+        ▼
+  Persona KYC (inline)
+        │
+   ┌────┴────┐
+   │         │
+APPROVED   FAILED
+   │         │
+   ▼         ▼
+Mint SBT   Book appointment at polling station
+Set PINs        │
+   │        IEBC officer verifies in person
+   │            │
+   │       ┌────┴────┐
+   │       │         │
+   │   APPROVED   REJECTED
+   │       │
+   └───────┤
+           ▼
+  Setup JWT issued → voter sets PIN on own device
+  Distress PIN delivered via SMS/email
+  WebAuthn fingerprint enrolled at station (optional)
 ```
 
 ---
 
-## PIN Reset Flow
+## Voting Flow
 
 ```
-Voter forgot PIN
-       │
-       ▼
-POST /pin-reset/request
-       │
-       ├─────────────────────────────────┐
-       ▼                                 ▼
-┌─────────────────┐            ┌─────────────────┐
-│  In-Person      │            │   Biometric     │
-│  Verification   │            │   (Persona)     │
-└─────────────────┘            └─────────────────┘
-       │                                 │
-       ▼                                 ▼
-Visit Polling Station          Complete Liveness Check
-IEBC verifies ID                       │
-       │                                 │
-       ▼                                 ▼
-POST /verify/:voterId          Webhook Callback
-       │                                 │
-       └─────────────┬───────────────────┘
-                     ▼
-           New PINs Generated
-           (PIN + Distress PIN)
+Voter logs in (password or OTP)
+        │
+        ▼
+Check: REGISTERED status + PIN set
+        │
+        ▼
+Voting window open? (ELECTION_VOTING_OPENS_AT / ELECTION_VOTING_CLOSES_AT)
+        │
+        ▼
+Enter ballot selections + PIN
+        │
+   ┌────┴────────────┐
+Normal PIN       Distress PIN
+   │                  │
+   ▼                  ▼
+Vote recorded    Vote recorded silently
+                 isDistressFlagged = true
+                 SMS/email → all IEBC admins
+                 socket distress:alert emitted
+        │
+        ▼
+ElGamal encrypt → SHA-256 hash → blockchain anchor
+Serial number issued → voter can verify receipt
 ```
 
 ---
@@ -212,58 +254,79 @@ POST /verify/:voterId          Webhook Callback
 ## Quick Start
 
 ### Prerequisites
-- Node.js 18+
+
+- Node.js 20+
 - pnpm
 - Docker & Docker Compose
-- PostgreSQL 16
 
 ### Setup
 
 ```bash
-# Clone repository
 git clone https://github.com/Edwin-Kirimi-Kinuthia/verivote-kenya.git
 cd verivote-kenya
 
 # Install dependencies
 pnpm install
 
-# Start database
+# Start PostgreSQL, Redis, and Hardhat
 docker-compose up -d
 
-# Setup environment
+# Configure environment
 cp backend/.env.example backend/.env
-# Edit .env with your configuration
+# Edit backend/.env with your values
 
-# Run database migrations
+# Run migrations and seed
 cd backend
 npx prisma migrate dev
-
-# Seed database (optional)
 npx prisma db seed
 
-# Start development server
+# Start everything
+cd ..
 pnpm dev
 ```
 
-### Environment Variables
+Frontend: `http://localhost:3001` | API: `http://localhost:3005` | API Docs: `http://localhost:3005/api/docs`
+
+### Key Environment Variables
 
 ```env
 # Database
 DATABASE_URL="postgresql://user:password@localhost:5432/verivote_dev"
 
-# Blockchain (Hardhat local)
-HARDHAT_RPC_URL="http://127.0.0.1:8545"
-DEPLOYER_PRIVATE_KEY="0xac0974..."
+# Blockchain (local Hardhat; swap RPC URL for Polygon in production)
+BLOCKCHAIN_MOCK=true
+BLOCKCHAIN_RPC_URL=http://localhost:8545
+BLOCKCHAIN_NETWORK=localhost
+DEPLOYER_PRIVATE_KEY=0xac0974...
 
-# Persona Identity Verification
-PERSONA_API_KEY="persona_sandbox_xxx"
-PERSONA_TEMPLATE_ID="itmpl_xxx"
-PERSONA_WEBHOOK_SECRET="wbhsec_xxx"
-PERSONA_MOCK="true"  # Set to false for production
+# Persona KYC
+PERSONA_API_KEY=persona_sandbox_xxx
+PERSONA_TEMPLATE_ID=itmpl_xxx
+PERSONA_WEBHOOK_SECRET=wbhsec_xxx
+PERSONA_MOCK=false
 
-# Server
-PORT=3000
-NODE_ENV=development
+# SMS & Email (Africa's Talking + SMTP)
+NOTIFICATION_MOCK=false
+AT_API_KEY=atsk_xxx
+AT_USERNAME=sandbox
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=you@gmail.com
+SMTP_PASS=app_password
+
+# Distress alert recipients (also sent to all admin voter contacts)
+DISTRESS_ALERT_PHONE=+254700000000
+DISTRESS_ALERT_EMAIL=security@iebc.or.ke
+
+# Voting window (optional — if unset, voting is always open)
+ELECTION_VOTING_OPENS_AT=2027-08-09T06:00:00+03:00
+ELECTION_VOTING_CLOSES_AT=2027-08-09T17:00:00+03:00
+
+# Encryption
+ELGAMAL_PRIVATE_KEY=...
+
+# JWT
+JWT_SECRET=your_jwt_secret
 ```
 
 ---
@@ -273,78 +336,43 @@ NODE_ENV=development
 | Service | Port | Purpose |
 |---------|------|---------|
 | PostgreSQL | 5432 | Main database |
-| Redis | 6379 | Caching & sessions |
-| Hardhat | 8545 | Local blockchain |
+| Redis | 6379 | OTP cache & rate limiting |
+| Hardhat | 8545 | Local EVM blockchain |
 
 ---
 
-## Security Features
+## Security
 
-| Feature | Description |
-|---------|-------------|
-| **Argon2id Hashing** | Industry-standard PIN hashing |
-| **Distress PIN** | Silent coercion alert system |
-| **SBT Tokens** | Non-transferable voter identity |
-| **Webhook Signatures** | HMAC-SHA256 verification |
-| **Rate Limiting** | Brute-force protection |
-| **ZK Proofs** | Vote validity without revealing choice |
-| **Blockchain Anchoring** | Tamper-proof vote records |
+| Feature | Implementation |
+|---------|----------------|
+| PIN hashing | Argon2id |
+| Vote encryption | ElGamal 2048-bit FFDHE RFC 7919 |
+| Vote integrity | SHA-256 hash anchored on-chain |
+| Coercion resistance | Dual-PIN (normal + distress) with silent flagging |
+| Identity | Soul-Bound Token (non-transferable ERC-721) |
+| Biometrics | WebAuthn / FIDO2 — only public key stored, no raw biometric |
+| Transport | JWT (24h expiry), CORS, Helmet, rate limiting |
+| Webhooks | HMAC-SHA256 signature verification |
 
 ---
 
 ## Development Roadmap
 
-| Week | Focus | Status |
-|------|-------|--------|
-| 1 | Foundation & Infrastructure | Done |
-| 2 | Voter Registration & SBT | Done |
-| 3 | Vote Casting & Encryption | In Progress |
-| 4 | Verification & Print System | Planned |
-| 5 | Public Portal & Real-time | Planned |
-| 6 | AI Security Layer | Planned |
-| 7 | Polish & Security Audit | Planned |
-| 8 | Testing & Demo | Planned |
-
----
-
-## Testing
-
-```bash
-# Run backend tests
-cd backend
-pnpm test
-
-# Run linter
-pnpm lint
-
-# Type check
-npx tsc --noEmit
-```
-
----
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+| Milestone | Focus | Status |
+|-----------|-------|--------|
+| Week 1–2 | Infrastructure, database, blockchain, SBT contract | Done |
+| Week 3 | Voter registration, Persona KYC, IEBC review portal | Done |
+| Week 4 | Vote casting, ElGamal encryption, receipt verification, print queue | Done |
+| Week 5 | PIN system, WebAuthn, password auth, OTP login, admin hardening | Done |
+| Week 6 | Public portal, blockchain explorer, real-time WebSocket, time-lock | Done |
+| Week 7 | AI fraud detection (face re-ID, anomaly detection) | Planned |
+| Week 8 | Load testing, security audit, production deployment | Planned |
 
 ---
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
-
----
-
-## Acknowledgments
-
-- IEBC Kenya for electoral process insights
-- Persona for identity verification platform
-- Polygon & Ethereum communities
-- Open-source cryptography libraries
+MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
