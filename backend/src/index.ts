@@ -35,6 +35,7 @@ import webAuthnRoutes from './routes/webauthn.routes.js';
 import voteRoutes from './routes/vote.routes.js';
 import receiptRoutes from './routes/receipt.routes.js';
 import printQueueRoutes from './routes/print-queue.routes.js';
+import aiRoutes from './routes/ai.routes.js';
 
 // ============================================
 // CREATE EXPRESS APPLICATION
@@ -341,6 +342,7 @@ app.use('/api/print-queue', printQueueRoutes);
 // ============================================
 
 app.use('/api/blockchain', blockchainRoutes);
+app.use('/api/ai', aiRoutes);
 
 // ============================================
 // ERROR HANDLING MIDDLEWARE

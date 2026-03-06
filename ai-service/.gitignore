@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+logs/
+models/isolation_forest.joblib
+models/scaler.joblib
+models/training_data.csv
+# Keep model_meta.json and training scripts
