@@ -1,0 +1,13 @@
+{
+  "features": [
+    "voting_velocity",
+    "temporal_deviation",
+    "geographic_cluster_score",
+    "repeat_attempt_rate",
+    "distress_correlation"
+  ],
+  "contamination": 0.111,
+  "n_estimators": 200,
+  "training_samples": 9000,
+  "anomaly_threshold": 70
+}

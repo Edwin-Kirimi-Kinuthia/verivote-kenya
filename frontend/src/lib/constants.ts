@@ -54,4 +54,5 @@ export const NAV_ITEMS = [
   { href: "/admin/appointments", label: "Appointments", icon: "calendar" },
   { href: "/admin/pin-resets", label: "PIN Resets", icon: "key" },
   { href: "/admin/officials", label: "IEBC Officials", icon: "shield" },
+  { href: "/admin/ai-security", label: "AI Security", icon: "cpu" },
 ] as const;
