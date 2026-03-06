@@ -3,10 +3,10 @@
  * Forwards requests to the Python FastAPI microservice on port 8000.
  * All processing is on-premise — no external API calls.
  */
-import { Router, type Request, type Response } from 'express';
+import { Router, type Router as ExpressRouter, type Request, type Response } from 'express';
 import { requireAdmin } from '../middleware/auth.middleware.js';
 
-const router = Router();
+const router: ExpressRouter = Router();
 const AI_SERVICE = process.env.AI_SERVICE_URL ?? 'http://localhost:8000';
 
 async function proxyToAI(path: string, method: 'GET' | 'POST', body?: unknown) {
