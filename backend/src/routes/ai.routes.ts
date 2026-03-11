@@ -4,7 +4,7 @@
  * All processing is on-premise — no external API calls.
  */
 import { Router, type Router as ExpressRouter, type Request, type Response } from 'express';
-import { requireAdmin } from '../middleware/auth.middleware.js';
+import { requireAuth, requireAdmin } from '../middleware/auth.middleware.js';
 
 const router: ExpressRouter = Router();
 const AI_SERVICE = process.env.AI_SERVICE_URL ?? 'http://localhost:8000';
@@ -22,7 +22,7 @@ async function proxyToAI(path: string, method: 'GET' | 'POST', body?: unknown) {
 }
 
 // POST /api/ai/analyze-voting-pattern — admin only
-router.post('/analyze-voting-pattern', requireAdmin, async (req: Request, res: Response) => {
+router.post('/analyze-voting-pattern', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   try {
     const { status, data } = await proxyToAI('/api/ai/analyze-voting-pattern', 'POST', req.body);
     res.status(status).json(data);
@@ -42,7 +42,7 @@ router.get('/health', async (_req: Request, res: Response) => {
 });
 
 // GET /api/ai/audit/recent — admin only
-router.get('/audit/recent', requireAdmin, async (req: Request, res: Response) => {
+router.get('/audit/recent', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   const limit = Math.min(Number(req.query.limit) || 50, 200);
   try {
     const { status, data } = await proxyToAI(`/api/ai/audit/recent?limit=${limit}`, 'GET');
@@ -53,7 +53,7 @@ router.get('/audit/recent', requireAdmin, async (req: Request, res: Response) =>
 });
 
 // GET /api/ai/model-info — admin only
-router.get('/model-info', requireAdmin, async (_req: Request, res: Response) => {
+router.get('/model-info', requireAuth, requireAdmin, async (_req: Request, res: Response) => {
   try {
     const { status, data } = await proxyToAI('/api/ai/model-info', 'GET');
     res.status(status).json(data);
@@ -63,7 +63,7 @@ router.get('/model-info', requireAdmin, async (_req: Request, res: Response) => 
 });
 
 // GET /api/ai/llm-status — admin only
-router.get('/llm-status', requireAdmin, async (_req: Request, res: Response) => {
+router.get('/llm-status', requireAuth, requireAdmin, async (_req: Request, res: Response) => {
   try {
     const { status, data } = await proxyToAI('/api/ai/llm-status', 'GET');
     res.status(status).json(data);

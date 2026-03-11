@@ -261,7 +261,7 @@ app.get('/api/stats/explorer', async (_req: Request, res: Response) => {
       status: v.status,
       timestamp: v.timestamp,
       txHash: v.blockchainTxHash ?? null,
-      blockNumber: v.blockNumber ?? null,
+      blockNumber: v.blockNumber != null ? v.blockNumber.toString() : null,
       isDistressFlagged: v.isDistressFlagged,
     }));
     const totalConfirmed = await voteRepository.findMany({ page: 1, limit: 1, status: 'CONFIRMED' });

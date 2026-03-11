@@ -7,7 +7,7 @@
  * GET  /api/tally/audit-report — Full data blob for PDF generation
  */
 import { Router, type Router as ExpressRouter, type Request, type Response } from 'express';
-import { requireAdmin } from '../middleware/auth.middleware.js';
+import { requireAuth, requireAdmin } from '../middleware/auth.middleware.js';
 import {
   runDecryptionCeremony,
   getCachedTally,
@@ -15,6 +15,9 @@ import {
 } from '../services/tally.service.js';
 
 const router: ExpressRouter = Router();
+
+// All tally routes require admin authentication
+router.use(requireAuth, requireAdmin);
 
 // POST /api/tally/start — run (or re-run) the decryption ceremony
 router.post('/start', requireAdmin, async (_req: Request, res: Response) => {

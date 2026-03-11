@@ -18,6 +18,11 @@
 import { PrismaClient, VoterStatus, VoteStatus, PrintStatus, UserRole } from '@prisma/client';
 import { randomBytes, createHash } from 'crypto';
 import argon2 from 'argon2';
+import * as dotenv from 'dotenv';
+import { encryptionService } from '../src/services/encryption.service.js';
+
+dotenv.config();
+encryptionService.init();
 
 // Create Prisma client for database operations
 const prisma = new PrismaClient();
@@ -406,14 +411,19 @@ async function seedVotes(stationIds: string[]): Promise<string[]> {
       status = VoteStatus.SUPERSEDED;
     }
     
+    // Candidate pools
+    const presidentCandidates = ['pres-1', 'pres-2', 'pres-3', 'pres-4'];
+    const governorCandidates = ['gov-1', 'gov-2', 'gov-3'];
+    const selections = {
+      president: getRandomElement(presidentCandidates),
+      governor: getRandomElement(governorCandidates),
+    };
+    const encryptedVoteData = encryptionService.encryptVote(selections);
+
     const vote = await prisma.vote.create({
       data: {
-        encryptedVoteHash: generateVoteHash(),
-        encryptedVoteData: JSON.stringify({
-          encrypted: true,
-          scheme: 'BFV',  // Brakerski-Fan-Vercauteren homomorphic encryption
-          ciphertext: randomBytes(128).toString('base64'),
-        }),
+        encryptedVoteData: encryptedVoteData,
+        encryptedVoteHash: encryptionService.hashEncryptedData(encryptedVoteData),
         serialNumber: generateSerialNumber(),
         zkpProof: generateZkpProof(),
         blockchainTxHash,
