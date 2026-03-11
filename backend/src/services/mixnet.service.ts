@@ -208,13 +208,7 @@ export async function runMixnet(): Promise<MixnetResult> {
   log.push(`[${ts()}] Loaded ${batch.length} valid ciphertexts for mixing`);
 
   // ── 3. Get public key from encryption service ─────────────────────────────
-  // Access the internal publicKey field. EncryptionService exposes it via init().
-  const svc = encryptionService as unknown as { publicKey: bigint | null };
-  const publicKey = svc.publicKey;
-
-  if (!publicKey) {
-    throw new Error('EncryptionService not initialized. Call encryptionService.init() first.');
-  }
+  const publicKey = encryptionService.getPublicKey(); // throws if not initialized
 
   // ── 4. Run each mix node ──────────────────────────────────────────────────
   const nodeProofs: MixNodeProof[] = [];
