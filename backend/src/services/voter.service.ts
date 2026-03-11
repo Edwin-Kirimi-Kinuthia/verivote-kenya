@@ -5,6 +5,7 @@ import { voterRepository } from '../repositories/index.js';
 import { blockchainService } from './blockchain.service.js';
 import { notificationService } from './notification.service.js';
 import { personaService } from './persona.service.js';
+import { logger } from '../lib/logger.js';
 
 export class VoterService {
   async registerVoter(
@@ -247,8 +248,8 @@ export class VoterService {
         context: 'REGISTRATION',
       });
     } else {
-      // Fallback: log so devs can still test without contact info configured
-      console.log(`[PIN DEV] distressPin=${distressPin} for voter ${voterId}`);
+      // No contact info: log that delivery was skipped (PIN is NOT logged in plaintext)
+      logger.warn('Distress PIN could not be delivered — voter has no registered contact', { voterId });
     }
 
     return {

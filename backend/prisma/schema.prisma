@@ -226,10 +226,14 @@ model Voter {
   // When they last cast a vote
   lastVotedAt       DateTime?    @map("last_voted_at")
 
+  // The ID of the voter's most recent active vote — used to locate the correct
+  // vote to supersede during a revote. Cleared when the vote is superseded.
+  lastVoteId        String?      @map("last_vote_id") @db.Uuid
+
   // --------------------------------------------------------------------------
   // RELATIONSHIPS
   // --------------------------------------------------------------------------
-  
+
   // Each voter is assigned to one polling station
   // @relation() defines the foreign key relationship
   pollingStationId  String?      @map("polling_station_id") @db.Uuid
@@ -340,6 +344,12 @@ model Vote {
   // This allows tallying without decrypting individual votes
   // @db.Text = unlimited length string in PostgreSQL
   encryptedVoteData   String?      @map("encrypted_vote_data") @db.Text
+
+  // Per-candidate exponential ElGamal encoding for homomorphic tallying.
+  // Stores E(g^1) for the chosen candidate, E(g^0) for all others.
+  // Aggregating these across all votes gives E(g^count) per candidate —
+  // decryptable with a threshold of IEBC commissioner key shares.
+  homomorphicBallot   String?      @map("homomorphic_ballot") @db.Text
 
   // --------------------------------------------------------------------------
   // VERIFICATION

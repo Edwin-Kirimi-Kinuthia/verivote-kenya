@@ -56,4 +56,6 @@ export const NAV_ITEMS = [
   { href: "/admin/officials", label: "IEBC Officials", icon: "shield" },
   { href: "/admin/ai-security", label: "AI Security", icon: "cpu" },
   { href: "/admin/results", label: "Election Results", icon: "chart-bar" },
+  { href: "/admin/mixnet", label: "Mixnet", icon: "shuffle" },
+  { href: "/admin/ceremony", label: "Homomorphic Tally", icon: "lock-open" },
 ] as const;

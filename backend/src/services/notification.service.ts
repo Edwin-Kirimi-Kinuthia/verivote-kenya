@@ -1,6 +1,7 @@
 import nodemailer from 'nodemailer';
 import AfricasTalking from 'africastalking';
 import type { OtpPurpose } from './otp.service.js';
+import { logger } from '../lib/logger.js';
 
 export interface OtpNotificationPayload {
   channel: 'SMS' | 'EMAIL';
@@ -45,16 +46,23 @@ export class NotificationService {
    */
   async sendOtp(payload: OtpNotificationPayload): Promise<void> {
     if (this.mockMode) {
-      console.log(
-        `[OTP MOCK] nationalId=${payload.nationalId} purpose=${payload.purpose}` +
-        ` channel=${payload.channel} code=${payload.code}`,
-      );
+      // Log that OTP was sent in mock mode — do NOT log the code itself
+      logger.debug('[OTP MOCK] OTP issued', {
+        nationalId: payload.nationalId,
+        purpose: payload.purpose,
+        channel: payload.channel,
+      });
       return;
     }
 
-    // Always log OTP to console in development for easy testing
+    // In development, log that OTP was dispatched (recipient only, never the code)
     if (process.env.NODE_ENV !== 'production') {
-      console.log(`[OTP DEV] nationalId=${payload.nationalId} purpose=${payload.purpose} channel=${payload.channel} recipient=${payload.recipient} code=${payload.code}`);
+      logger.debug('[OTP DEV] OTP dispatched', {
+        nationalId: payload.nationalId,
+        purpose: payload.purpose,
+        channel: payload.channel,
+        recipient: payload.recipient,
+      });
     }
 
     if (payload.channel === 'SMS') {
@@ -64,9 +72,12 @@ export class NotificationService {
           message: this.smsText(payload),
         });
       } catch (smsErr) {
-        // In development, fall back to console (AT sandbox doesn't deliver to real phones)
+        // In development, fall back to logger (AT sandbox doesn't deliver to real phones)
         if (process.env.NODE_ENV !== 'production') {
-          console.warn(`[SMS FALLBACK] AT failed (${(smsErr as Error).message}). OTP for ${payload.nationalId}: ${payload.code}`);
+          logger.warn('[SMS FALLBACK] AT send failed — OTP not delivered', {
+            nationalId: payload.nationalId,
+            reason: (smsErr as Error).message,
+          });
           return;
         }
         throw smsErr;
@@ -80,9 +91,12 @@ export class NotificationService {
           text: this.emailText(payload),
         });
       } catch (smtpErr) {
-        // In development, fall back to console so SMTP misconfiguration doesn't block the demo
+        // In development, fall back to logger so SMTP misconfiguration doesn't block the demo
         if (process.env.NODE_ENV !== 'production') {
-          console.warn(`[EMAIL FALLBACK] SMTP failed (${(smtpErr as Error).message}). OTP for ${payload.nationalId}: ${payload.code}`);
+          logger.warn('[EMAIL FALLBACK] SMTP send failed — OTP not delivered', {
+            nationalId: payload.nationalId,
+            reason: (smtpErr as Error).message,
+          });
           return;
         }
         throw smtpErr;
@@ -98,18 +112,22 @@ export class NotificationService {
     const contextLabel = payload.context === 'REGISTRATION' ? 'registration' : 'PIN reset';
 
     if (this.mockMode) {
-      console.log(
-        `[DISTRESS PIN MOCK] nationalId=${payload.nationalId} context=${payload.context}` +
-        ` distressPin=${payload.distressPin}`,
-      );
+      // Log delivery event — do NOT log the distress PIN itself
+      logger.debug('[DISTRESS PIN MOCK] Distress PIN issued', {
+        nationalId: payload.nationalId,
+        context: payload.context,
+        channel: payload.channel,
+      });
       return;
     }
 
     if (process.env.NODE_ENV !== 'production') {
-      console.log(
-        `[DISTRESS PIN DEV] nationalId=${payload.nationalId} context=${payload.context}` +
-        ` channel=${payload.channel} recipient=${payload.recipient} distressPin=${payload.distressPin}`,
-      );
+      logger.debug('[DISTRESS PIN DEV] Distress PIN dispatched', {
+        nationalId: payload.nationalId,
+        context: payload.context,
+        channel: payload.channel,
+        recipient: payload.recipient,
+      });
     }
 
     const smsMsg = (
@@ -139,7 +157,10 @@ export class NotificationService {
         await this.atSms!.send({ to: [payload.recipient], message: smsMsg });
       } catch (err) {
         if (process.env.NODE_ENV !== 'production') {
-          console.warn(`[DISTRESS PIN SMS FALLBACK] AT failed. distressPin for ${payload.nationalId}: ${payload.distressPin}`);
+          logger.warn('[DISTRESS PIN SMS FALLBACK] AT send failed — distress PIN not delivered', {
+            nationalId: payload.nationalId,
+            reason: (err as Error).message,
+          });
           return;
         }
         throw err;
@@ -154,7 +175,10 @@ export class NotificationService {
         });
       } catch (err) {
         if (process.env.NODE_ENV !== 'production') {
-          console.warn(`[DISTRESS PIN EMAIL FALLBACK] SMTP failed. distressPin for ${payload.nationalId}: ${payload.distressPin}`);
+          logger.warn('[DISTRESS PIN EMAIL FALLBACK] SMTP send failed — distress PIN not delivered', {
+            nationalId: payload.nationalId,
+            reason: (err as Error).message,
+          });
           return;
         }
         throw err;
@@ -304,7 +328,11 @@ export class NotificationService {
       `Action: Verify voter safety at station immediately.`,
     ].join('\n');
 
-    console.warn(`🚨 DISTRESS ALERT | station=${payload.stationCode} | serial=${payload.serialNumber}`);
+    logger.warn('DISTRESS ALERT received', {
+      stationCode: payload.stationCode,
+      stationName: payload.stationName,
+      serial: payload.serialNumber,
+    });
 
     if (this.mockMode) return;
 
@@ -314,7 +342,7 @@ export class NotificationService {
       tasks.push(
         this.atSms.send({ to: [coordinatorPhone], message: msg })
           .then(() => undefined)
-          .catch((e) => { console.error('Distress SMS failed:', e); })
+          .catch((e) => { logger.error('Distress SMS alert failed', { reason: (e as Error).message }); })
       );
     }
 
@@ -327,7 +355,7 @@ export class NotificationService {
           text: msg,
         })
           .then(() => undefined)
-          .catch((e) => { console.error('Distress email failed:', e); })
+          .catch((e) => { logger.error('Distress email alert failed', { reason: (e as Error).message }); })
       );
     }
 

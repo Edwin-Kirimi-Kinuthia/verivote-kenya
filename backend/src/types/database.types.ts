@@ -91,6 +91,7 @@ export interface Voter {
   status: VoterStatus;
   voteCount: number;
   lastVotedAt: Date | null;
+  lastVoteId: string | null;
   pollingStationId: string | null;
   createdAt: Date;
   updatedAt: Date;
@@ -234,12 +235,14 @@ export interface UpdateVoterInput {
   role?: UserRole;
   voteCount?: number;
   lastVotedAt?: Date;
+  lastVoteId?: string | null;
   pollingStationId?: string;
 }
 
 export interface CreateVoteInput {
   encryptedVoteHash: string;
   encryptedVoteData?: string;
+  homomorphicBallot?: string;
   serialNumber: string;
   zkpProof?: string;
   pollingStationId: string;
@@ -334,6 +337,7 @@ export interface VoterQueryParams extends PaginationParams {
 
 export interface VoteQueryParams extends PaginationParams {
   status?: VoteStatus;
+  voterId?: string;
   pollingStationId?: string;
   fromDate?: Date;
   toDate?: Date;

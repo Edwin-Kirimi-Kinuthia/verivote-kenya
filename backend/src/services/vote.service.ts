@@ -3,9 +3,11 @@ import argon2 from 'argon2';
 import { voterRepository, voteRepository, pollingStationRepository } from '../repositories/index.js';
 import { blockchainService } from './blockchain.service.js';
 import { encryptionService } from './encryption.service.js';
+import { encryptHomomorphicBallot } from './homomorphic.service.js';
 import { notificationService } from './notification.service.js';
 import { emitVoteUpdate, emitDistressAlert } from '../lib/socket.js';
 import { ServiceError } from './voter.service.js';
+import { logger } from '../lib/logger.js';
 import type { JwtPayload } from '../types/auth.types.js';
 import type { VerifyVoteResult } from '../types/database.types.js';
 
@@ -114,33 +116,33 @@ export class VoteService {
     // Encrypt selections and hash the ciphertext
     const encryptedData = encryptionService.encryptVote(input.selections);
     const voteHash = encryptionService.hashEncryptedData(encryptedData);
+
+    // Generate per-candidate exponential ElGamal ballot for homomorphic tallying
+    const homomorphicBallot = JSON.stringify(
+      encryptHomomorphicBallot(input.selections, encryptionService.getPublicKey())
+    );
     const serialNumber = generateSerialNumber();
     const isRevote = voterRecord.voteCount > 0;
 
     let voteId: string;
 
     if (isRevote) {
-      // Find the last active vote to supersede
-      const votes = await voteRepository.findMany({
-        page: 1,
-        limit: 1,
-        status: 'PENDING',
-      });
-      // Also check CONFIRMED votes
-      const confirmedVotes = await voteRepository.findMany({
-        page: 1,
-        limit: 1,
-        status: 'CONFIRMED',
-      });
-
-      const lastVote = votes.data[0] || confirmedVotes.data[0];
-      if (!lastVote) {
+      // Locate this voter's most recent active vote via lastVoteId tracked on the Voter record.
+      // We do NOT filter the votes table by voter — Vote intentionally has no voter FK (anonymity).
+      const previousVoteId = voterRecord.lastVoteId;
+      if (!previousVoteId) {
         throw new ServiceError('Previous vote not found for revote', 404);
       }
 
-      const { newVote } = await voteRepository.castRevote(lastVote.id, {
+      const previousVote = await voteRepository.findById(previousVoteId);
+      if (!previousVote || (previousVote.status !== 'PENDING' && previousVote.status !== 'CONFIRMED')) {
+        throw new ServiceError('Previous vote is not in a supersedable state', 409);
+      }
+
+      const { newVote } = await voteRepository.castRevote(previousVoteId, {
         encryptedVoteHash: voteHash,
         encryptedVoteData: encryptedData,
+        homomorphicBallot,
         serialNumber,
         pollingStationId,
         isDistressFlagged: isDistressVote,
@@ -150,6 +152,7 @@ export class VoteService {
       const vote = await voteRepository.create({
         encryptedVoteHash: voteHash,
         encryptedVoteData: encryptedData,
+        homomorphicBallot,
         serialNumber,
         pollingStationId,
         isDistressFlagged: isDistressVote,
@@ -164,11 +167,11 @@ export class VoteService {
       blockchainTxHash = result.txHash;
       await voteRepository.confirmOnBlockchain(voteId, blockchainTxHash, 0n);
     } catch (error) {
-      console.warn('Blockchain recording failed (non-fatal):', error instanceof Error ? error.message : error);
+      logger.warn('Blockchain recording failed (non-fatal)', { reason: error instanceof Error ? error.message : String(error) });
     }
 
-    // Update voter status
-    await voterRepository.recordVote(voter.sub, isRevote);
+    // Update voter status and record their latest voteId for future revotes
+    await voterRepository.recordVote(voter.sub, isRevote, voteId);
 
     const castAt = new Date();
 
@@ -263,7 +266,7 @@ export class VoteService {
     try {
       blockchainRecord = await blockchainService.getVoteRecord(serial);
     } catch (err) {
-      console.warn('Blockchain query failed (non-fatal):', err instanceof Error ? err.message : err);
+      logger.warn('Blockchain query failed (non-fatal)', { reason: err instanceof Error ? err.message : String(err) });
     }
 
     let message: string;
