@@ -62,4 +62,14 @@ router.get('/model-info', requireAdmin, async (_req: Request, res: Response) => 
   }
 });
 
+// GET /api/ai/llm-status — admin only
+router.get('/llm-status', requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    const { status, data } = await proxyToAI('/api/ai/llm-status', 'GET');
+    res.status(status).json(data);
+  } catch {
+    res.status(503).json({ error: 'AI service unavailable' });
+  }
+});
+
 export default router;

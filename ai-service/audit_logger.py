@@ -47,9 +47,13 @@ def log_decision(
     alert_triggered: bool,
     processing_ms: float,
     source_ip: str = "internal",
+    explanation: str | None = None,
+    explanation_tier: str | None = None,
+    explanation_model: str | None = None,
 ) -> None:
     """
     Write a single audit entry. Called for every /analyze-voting-pattern request.
+    Includes LLM explanation and tier so supervisors can reconstruct every decision (NIRU D2).
     """
     entry = {
         "ts": datetime.now(timezone.utc).isoformat(),
@@ -64,6 +68,9 @@ def log_decision(
         "final_alert_level": final_alert_level,
         "alert_triggered": alert_triggered,
         "processing_ms": round(processing_ms, 2),
+        "explanation": explanation,
+        "explanation_tier": explanation_tier,
+        "explanation_model": explanation_model,
     }
 
     line = json.dumps(entry, ensure_ascii=False)

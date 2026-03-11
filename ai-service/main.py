@@ -3,10 +3,11 @@ VeriVote Kenya — AI Fraud Detection Microservice
 FastAPI service running fully on-premise. Zero external API calls.
 
 Endpoints:
-  POST /api/ai/analyze-voting-pattern   — main anomaly detection
-  GET  /api/ai/health                   — liveness check
+  POST /api/ai/analyze-voting-pattern   — main anomaly detection + LLM explanation
+  GET  /api/ai/health                   — liveness check (includes Ollama status)
   GET  /api/ai/audit/recent             — recent decisions for dashboard
   GET  /api/ai/model-info               — model metadata
+  GET  /api/ai/llm-status               — Ollama health + model availability
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ from pydantic import BaseModel, Field, field_validator
 
 import audit_logger
 import rule_engine
+import llm_explainer
 from rule_engine import Severity
 
 # ── Paths ────────────────────────────────────────────────────────────────────
@@ -118,6 +120,10 @@ class AnalysisResponse(BaseModel):
     triggered_rules: list[RuleDetail]
     features: dict[str, float]
     message: str
+    explanation: str = Field(..., description="Plain-English briefing for IEBC officers")
+    explanation_tier: str = Field(..., description="llm | template")
+    explanation_model: str | None = Field(None, description="e.g. llama3.2:1b when LLM used")
+    explanation_latency_ms: float
     sovereignty_note: str = "All inference executed on-premise. No data transmitted externally."
 
 
@@ -153,7 +159,7 @@ def _alert_level(anomaly_score: float, rule_severity: Severity) -> str:
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @app.post("/api/ai/analyze-voting-pattern", response_model=AnalysisResponse)
-async def analyze_voting_pattern(body: VotingPatternRequest, request: Request) -> AnalysisResponse:
+async def analyze_voting_pattern(body: VotingPatternRequest, request: Request) -> AnalysisResponse:  # noqa: C901
     if _model is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
 
@@ -195,7 +201,6 @@ async def analyze_voting_pattern(body: VotingPatternRequest, request: Request) -
 
     processing_ms = (time.perf_counter() - t_start) * 1000
 
-    # ── Audit log (every request) ────────────────────────────────────────────
     triggered_rules_dicts = [
         {
             "rule_id": r.rule_id,
@@ -206,6 +211,17 @@ async def analyze_voting_pattern(body: VotingPatternRequest, request: Request) -
         for r in re_output.triggered_rules
     ]
 
+    # ── LLM explanation ───────────────────────────────────────────────────────
+    explanation_result = await llm_explainer.explain_anomaly(
+        station_code=body.station_code,
+        anomaly_score=anomaly_score,
+        alert_level=final_level,
+        features=features_dict,
+        triggered_rules=triggered_rules_dicts,
+        station_hourly_average=body.station_hourly_average,
+    )
+
+    # ── Audit log (every request, includes explanation) ───────────────────────
     audit_logger.log_decision(
         request_id=request_id,
         station_code=body.station_code,
@@ -216,8 +232,11 @@ async def analyze_voting_pattern(body: VotingPatternRequest, request: Request) -
         triggered_rules=triggered_rules_dicts,
         final_alert_level=final_level,
         alert_triggered=alert_triggered,
-        processing_ms=processing_ms,
+        processing_ms=processing_ms + explanation_result.latency_ms,
         source_ip=request.client.host if request.client else "unknown",
+        explanation=explanation_result.explanation,
+        explanation_tier=explanation_result.tier,
+        explanation_model=explanation_result.model,
     )
 
     if alert_triggered:
@@ -229,23 +248,13 @@ async def analyze_voting_pattern(body: VotingPatternRequest, request: Request) -
             channels=["socket.io", "admin_dashboard"],
         )
 
-    # ── Human-readable message ────────────────────────────────────────────────
+    # ── Short status message (separate from full explanation) ─────────────────
     if final_level == "CRITICAL":
-        message = (
-            f"CRITICAL: Station {body.station_code} requires immediate verification. "
-            f"Score {anomaly_score}/100. "
-            + (re_output.triggered_rules[0].description if re_output.triggered_rules else "")
-        )
+        message = f"CRITICAL: Station {body.station_code} requires immediate verification. Score {anomaly_score}/100."
     elif final_level == "HIGH":
-        message = (
-            f"HIGH ALERT: Suspicious pattern at station {body.station_code}. "
-            f"Score {anomaly_score}/100. Recommend supervisory review."
-        )
+        message = f"HIGH ALERT: Suspicious pattern at station {body.station_code}. Score {anomaly_score}/100."
     elif final_level == "MEDIUM":
-        message = (
-            f"MEDIUM: Elevated signals at station {body.station_code}. "
-            f"Score {anomaly_score}/100. Monitor closely."
-        )
+        message = f"MEDIUM: Elevated signals at station {body.station_code}. Score {anomaly_score}/100. Monitor closely."
     else:
         message = f"Normal voting pattern at station {body.station_code}. Score {anomaly_score}/100."
 
@@ -268,16 +277,34 @@ async def analyze_voting_pattern(body: VotingPatternRequest, request: Request) -
         ],
         features={k: round(v, 4) for k, v in features_dict.items()},
         message=message,
+        explanation=explanation_result.explanation,
+        explanation_tier=explanation_result.tier,
+        explanation_model=explanation_result.model,
+        explanation_latency_ms=round(explanation_result.latency_ms, 1),
     )
 
 
 @app.get("/api/ai/health")
 async def health() -> dict[str, Any]:
+    llm_status = await llm_explainer.check_ollama_health()
     return {
         "status": "ok",
         "model_loaded": _model is not None,
         "model_meta": _meta,
+        "llm": llm_status,
         "sovereignty": "on-premise — no external API calls",
+    }
+
+
+@app.get("/api/ai/llm-status")
+async def llm_status() -> dict[str, Any]:
+    status = await llm_explainer.check_ollama_health()
+    return {
+        **status,
+        "fallback_active": not status.get("model_available", False),
+        "fallback_description": "Template-based explanations (deterministic, fully auditable)",
+        "gpu_upgrade_path": "Set OLLAMA_MODEL=llama3.2:8b when GPU available — no code changes required",
+        "sovereignty": "on-premise — no external API calls at any tier",
     }
 
 
