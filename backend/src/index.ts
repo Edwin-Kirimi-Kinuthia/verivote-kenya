@@ -36,6 +36,7 @@ import voteRoutes from './routes/vote.routes.js';
 import receiptRoutes from './routes/receipt.routes.js';
 import printQueueRoutes from './routes/print-queue.routes.js';
 import aiRoutes from './routes/ai.routes.js';
+import tallyRoutes from './routes/tally.routes.js';
 
 // ============================================
 // CREATE EXPRESS APPLICATION
@@ -343,6 +344,7 @@ app.use('/api/print-queue', printQueueRoutes);
 
 app.use('/api/blockchain', blockchainRoutes);
 app.use('/api/ai', aiRoutes);
+app.use('/api/tally', tallyRoutes);
 
 // ============================================
 // ERROR HANDLING MIDDLEWARE
