@@ -4,7 +4,7 @@ import { voterService, ServiceError } from '../services/voter.service.js';
 import { personaService } from '../services/persona.service.js';
 import { voterRepository } from '../repositories/index.js';
 import { authService } from '../services/auth.service.js';
-import { registrationRateLimiter, requireAuth, requireSelf } from '../middleware/index.js';
+import { registrationRateLimiter, requireAuth, requireAdmin, requireSelf, adminRateLimiter } from '../middleware/index.js';
 import { passwordSchema } from './auth.routes.js';
 import type { AuthenticatedRequest } from '../types/auth.types.js';
 
@@ -181,16 +181,20 @@ router.get('/registration-status/:inquiryId', async (req: Request, res: Response
 });
 
 // POST /api/voters/request-manual-review - Request manual IEBC verification
+const manualReviewSchema = z.object({
+  nationalId: z.string().regex(/^\d{8}$/, 'National ID must be exactly 8 digits'),
+  reason: z.string().trim().max(500, 'Reason must be 500 characters or fewer').optional(),
+});
+
 router.post('/request-manual-review', async (req: Request, res: Response) => {
+  const parsed = manualReviewSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ success: false, error: parsed.error.errors.map(e => e.message).join(', ') });
+    return;
+  }
   try {
-    const { nationalId, reason } = req.body;
-
-    if (!nationalId) {
-      res.status(400).json({ success: false, error: 'National ID is required' });
-      return;
-    }
-
-    const result = await voterService.requestManualReview(nationalId, reason || '');
+    const { nationalId, reason } = parsed.data;
+    const result = await voterService.requestManualReview(nationalId, reason ?? '');
 
     res.status(200).json({
       success: true,
@@ -269,13 +273,21 @@ router.get('/:id/status', requireAuth, requireSelf, async (req: Request, res: Re
   }
 });
 
-// GET /api/voters - List voters with pagination
-router.get('/', async (req: Request, res: Response) => {
-  try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 20;
-    const nationalId = (req.query.nationalId as string) || undefined;
+const voterListQuerySchema = z.object({
+  page:       z.coerce.number().int().min(1).max(10000).optional().default(1),
+  limit:      z.coerce.number().int().min(1).max(100).optional().default(20),
+  nationalId: z.string().regex(/^\d{8}$/).optional(),
+});
 
+// GET /api/voters - List voters with pagination (admin only — prevents voter enumeration)
+router.get('/', adminRateLimiter, requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const parsed = voterListQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ success: false, error: parsed.error.errors.map(e => e.message).join(', ') });
+    return;
+  }
+  try {
+    const { page, limit, nationalId } = parsed.data;
     const result = await voterRepository.findMany({ page, limit, nationalId });
 
     res.json({

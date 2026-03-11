@@ -100,6 +100,15 @@ export const printQueueRateLimiter = rateLimit({
  * Key is the X-API-Key header value, falling back to IP.
  * Mobile clients get a higher burst allowance (500 req / 15 min).
  */
+// Public stats endpoints (turnout, explorer, counties) — generous but guarded
+export const publicStatsRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 60,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { success: false, error: 'Too many requests, please try again later' },
+});
+
 export const mobileApiRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 500,

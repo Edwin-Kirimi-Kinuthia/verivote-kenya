@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
+import * as Sentry from '@sentry/node';
 import http from 'http';
 import express, { type Express, type Request, type Response, type NextFunction } from 'express';
 import cors from 'cors';
@@ -8,9 +9,10 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import swaggerUi from 'swagger-ui-express';
 import swaggerJsdoc from 'swagger-jsdoc';
+import { logger, morganStream, requestLogger } from './lib/logger.js';
 
 import { prisma } from './database/client.js';
-import { globalRateLimiter } from './middleware/index.js';
+import { globalRateLimiter, publicStatsRateLimiter } from './middleware/index.js';
 import { disconnectRedis } from './config/redis.js';
 import { swaggerOptions } from './config/swagger.js';
 
@@ -37,6 +39,21 @@ import receiptRoutes from './routes/receipt.routes.js';
 import printQueueRoutes from './routes/print-queue.routes.js';
 import aiRoutes from './routes/ai.routes.js';
 import tallyRoutes from './routes/tally.routes.js';
+import mixnetRoutes from './routes/mixnet.routes.js';
+import ceremonyRoutes from './routes/ceremony.routes.js';
+
+// ============================================
+// SENTRY — initialise before anything else
+// ============================================
+
+if (process.env.SENTRY_DSN) {
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    environment: process.env.NODE_ENV ?? 'development',
+    tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.1 : 1.0,
+  });
+  logger.info('Sentry error tracking initialised');
+}
 
 // ============================================
 // CREATE EXPRESS APPLICATION
@@ -60,8 +77,14 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow requests with no origin (mobile apps, curl, Postman)
-    if (!origin) return callback(null, true);
+    // In production: require an explicit origin (block curl/Postman scraping)
+    // In development: allow no-origin for ease of testing
+    if (!origin) {
+      if (process.env.NODE_ENV === 'production') {
+        return callback(new Error('CORS: requests with no origin are not permitted in production'));
+      }
+      return callback(null, true);
+    }
     if (allowedOrigins.includes(origin)) return callback(null, true);
     callback(new Error(`CORS: origin '${origin}' not allowed`));
   },
@@ -76,8 +99,32 @@ app.use(cors({
 // ============================================
 
 app.use(helmet({
-  // Allow Swagger UI to load its own assets in development
-  contentSecurityPolicy: process.env.NODE_ENV === 'production' ? undefined : false,
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc:     ["'self'"],
+      scriptSrc:      ["'self'"],
+      styleSrc:       ["'self'", "'unsafe-inline'"],   // Swagger UI needs inline styles
+      imgSrc:         ["'self'", 'data:'],
+      connectSrc:     ["'self'"],
+      fontSrc:        ["'self'"],
+      objectSrc:      ["'none'"],
+      frameAncestors: ["'none'"],
+      upgradeInsecureRequests: process.env.NODE_ENV === 'production' ? [] : null,
+      ...(process.env.NODE_ENV !== 'production' && {
+        // Swagger UI loads scripts from CDN in dev — relax only in dev
+        scriptSrc: ["'self'", "'unsafe-inline'", 'cdn.jsdelivr.net'],
+        styleSrc:  ["'self'", "'unsafe-inline'", 'cdn.jsdelivr.net'],
+        imgSrc:    ["'self'", 'data:', 'cdn.jsdelivr.net'],
+      }),
+    },
+  },
+  crossOriginEmbedderPolicy: false,           // needed for Swagger UI
+  hsts: process.env.NODE_ENV === 'production'
+    ? { maxAge: 31536000, includeSubDomains: true, preload: true }
+    : false,
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+  permittedCrossDomainPolicies: false,
+  dnsPrefetchControl: { allow: false },
 }));
 // Capture raw body for webhook signature verification (must be before json parser)
 app.use((req: Request, _res: Response, next: NextFunction) => {
@@ -104,9 +151,13 @@ app.use((_req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
-if (process.env.NODE_ENV !== 'production') {
-  app.use(morgan('dev'));
-}
+// Structured request logging — dev uses 'dev' format through Winston stream,
+// production uses 'combined' (Apache format) for log aggregation tools.
+app.use(morgan(
+  process.env.NODE_ENV === 'production' ? 'combined' : 'dev',
+  { stream: morganStream },
+));
+app.use(requestLogger);
 
 // ============================================
 // SWAGGER API DOCS
@@ -217,7 +268,7 @@ app.get('/api/stats', async (_req: Request, res: Response) => {
 });
 
 // Turnout breakdown by county and per-station (public)
-app.get('/api/stats/turnout', async (_req: Request, res: Response) => {
+app.get('/api/stats/turnout', publicStatsRateLimiter, async (_req: Request, res: Response) => {
   try {
     const [stationStats, stationTurnout] = await Promise.all([
       pollingStationRepository.getStats(),
@@ -241,7 +292,7 @@ app.get('/api/stats/turnout', async (_req: Request, res: Response) => {
 });
 
 // Votes per hour for the last 24 hours (public)
-app.get('/api/stats/hourly', async (_req: Request, res: Response) => {
+app.get('/api/stats/hourly', publicStatsRateLimiter, async (_req: Request, res: Response) => {
   try {
     const to = new Date();
     const from = new Date(to.getTime() - 24 * 60 * 60 * 1000);
@@ -253,7 +304,7 @@ app.get('/api/stats/hourly', async (_req: Request, res: Response) => {
 });
 
 // Blockchain explorer — recent 20 confirmed votes (public)
-app.get('/api/stats/explorer', async (_req: Request, res: Response) => {
+app.get('/api/stats/explorer', publicStatsRateLimiter, async (_req: Request, res: Response) => {
   try {
     const { data } = await voteRepository.findMany({ page: 1, limit: 20, status: 'CONFIRMED' });
     const rows = data.map((v) => ({
@@ -345,6 +396,8 @@ app.use('/api/print-queue', printQueueRoutes);
 app.use('/api/blockchain', blockchainRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/tally', tallyRoutes);
+app.use('/api/mixnet', mixnetRoutes);
+app.use('/api/ceremony', ceremonyRoutes);
 
 // ============================================
 // ERROR HANDLING MIDDLEWARE
@@ -358,8 +411,19 @@ app.use((req: Request, res: Response) => {
   });
 });
 
-app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
-  console.error('Error:', err.message);
+app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
+  logger.error('Unhandled error', {
+    message: err.message,
+    stack:   err.stack,
+    method:  req.method,
+    path:    req.path,
+    requestId: res.getHeader('X-Request-ID'),
+  });
+
+  // Forward to Sentry if configured
+  if (process.env.SENTRY_DSN) {
+    Sentry.captureException(err);
+  }
 
   res.status(500).json({
     success: false,
@@ -377,7 +441,7 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
 async function startServer() {
   try {
     await prisma.$connect();
-    console.log('✅ Database connected');
+    logger.info('Database connected');
 
     // Initialize ElGamal encryption (fail-fast if key missing)
     encryptionService.init();
@@ -385,9 +449,11 @@ async function startServer() {
     // Connect to blockchain (non-fatal if unavailable)
     try {
       await blockchainService.connect();
-      console.log('✅ Blockchain connected');
+      logger.info('Blockchain connected');
     } catch (error) {
-      console.warn('⚠️  Blockchain not available:', error instanceof Error ? error.message : 'Unknown error');
+      logger.warn('Blockchain not available', {
+        reason: error instanceof Error ? error.message : 'Unknown error',
+      });
     }
 
     // Start background maintenance scheduler
@@ -397,19 +463,19 @@ async function startServer() {
     initSocket(httpServer, allowedOrigins);
 
     httpServer.listen(PORT, () => {
-      console.log('='.repeat(50));
-      console.log('🗳️  VeriVote Kenya API Server');
-      console.log('='.repeat(50));
-      console.log(`✅ Server running on http://localhost:${PORT}`);
-      console.log(`📋 Health check: http://localhost:${PORT}/health`);
-      console.log(`📚 API Docs:     http://localhost:${PORT}/api/docs`);
-      console.log(`📊 Statistics:   http://localhost:${PORT}/api/stats`);
-      console.log(`🔌 WebSocket:    ws://localhost:${PORT}/socket.io`);
-      console.log(`🌐 Environment:  ${process.env.NODE_ENV || 'development'}`);
-      console.log('='.repeat(50));
+      logger.info('VeriVote Kenya API Server started', {
+        port:        PORT,
+        environment: process.env.NODE_ENV ?? 'development',
+        health:      `http://localhost:${PORT}/health`,
+        docs:        `http://localhost:${PORT}/api/docs`,
+        websocket:   `ws://localhost:${PORT}/socket.io`,
+      });
     });
   } catch (error) {
-    console.error('❌ Failed to start server:', error);
+    logger.error('Failed to start server', {
+      message: error instanceof Error ? error.message : String(error),
+      stack:   error instanceof Error ? error.stack : undefined,
+    });
     process.exit(1);
   }
 }
@@ -420,18 +486,14 @@ startServer();
 // GRACEFUL SHUTDOWN
 // ============================================
 
-process.on('SIGINT', async () => {
-  console.log('\n🛑 Shutting down...');
+async function gracefulShutdown(signal: string) {
+  logger.info(`Shutting down on ${signal}`);
   await prisma.$disconnect();
   await disconnectRedis();
   process.exit(0);
-});
+}
 
-process.on('SIGTERM', async () => {
-  console.log('\n🛑 Shutting down...');
-  await prisma.$disconnect();
-  await disconnectRedis();
-  process.exit(0);
-});
+process.on('SIGINT',  () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
 export default app;

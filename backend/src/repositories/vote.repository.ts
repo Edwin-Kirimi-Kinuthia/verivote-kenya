@@ -55,7 +55,7 @@ export class VoteRepository extends BaseRepository<Vote, CreateVoteInput, Update
     if (params.status) {
       where.status = params.status;
     }
-    
+
     if (params.pollingStationId) {
       where.pollingStationId = params.pollingStationId;
     }
@@ -112,6 +112,7 @@ export class VoteRepository extends BaseRepository<Vote, CreateVoteInput, Update
       data: {
         encryptedVoteHash: data.encryptedVoteHash,
         encryptedVoteData: data.encryptedVoteData,
+        homomorphicBallot: data.homomorphicBallot,
         serialNumber: data.serialNumber,
         zkpProof: data.zkpProof,
         pollingStationId: data.pollingStationId,

@@ -80,6 +80,12 @@ class EncryptionService {
     console.log('Encryption service initialized (ElGamal 2048-bit)');
   }
 
+  /** Returns the derived public key h = g^x mod p. Required by external services. */
+  getPublicKey(): bigint {
+    this.ensureInitialized();
+    return this.publicKey!;
+  }
+
   private ensureInitialized(): void {
     if (!this.initialized) {
       throw new Error('EncryptionService not initialized. Call init() first.');

@@ -10,4 +10,5 @@ export {
   receiptRateLimiter,
   printQueueRateLimiter,
   mobileApiRateLimiter,
+  publicStatsRateLimiter,
 } from './rate-limit.middleware.js';

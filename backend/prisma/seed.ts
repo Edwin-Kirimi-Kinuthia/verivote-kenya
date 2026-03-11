@@ -20,6 +20,7 @@ import { randomBytes, createHash } from 'crypto';
 import argon2 from 'argon2';
 import * as dotenv from 'dotenv';
 import { encryptionService } from '../src/services/encryption.service.js';
+import { encryptHomomorphicBallot } from '../src/services/homomorphic.service.js';
 
 dotenv.config();
 encryptionService.init();
@@ -419,10 +420,14 @@ async function seedVotes(stationIds: string[]): Promise<string[]> {
       governor: getRandomElement(governorCandidates),
     };
     const encryptedVoteData = encryptionService.encryptVote(selections);
+    const homomorphicBallot = JSON.stringify(
+      encryptHomomorphicBallot(selections, encryptionService.getPublicKey())
+    );
 
     const vote = await prisma.vote.create({
       data: {
         encryptedVoteData: encryptedVoteData,
+        homomorphicBallot: homomorphicBallot,
         encryptedVoteHash: encryptionService.hashEncryptedData(encryptedVoteData),
         serialNumber: generateSerialNumber(),
         zkpProof: generateZkpProof(),
