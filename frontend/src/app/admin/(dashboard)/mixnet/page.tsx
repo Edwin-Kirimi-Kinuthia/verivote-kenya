@@ -34,7 +34,7 @@ type Phase = "idle" | "running" | "done" | "error";
 
 function authHeader(): Record<string, string> {
   const token =
-    typeof window !== "undefined" ? localStorage.getItem("adminToken") : null;
+    typeof window !== "undefined" ? localStorage.getItem("token") : null;
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 

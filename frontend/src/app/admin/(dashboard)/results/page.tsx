@@ -98,7 +98,7 @@ const CANDIDATE_COLOURS = ['#15803d', '#1d4ed8', '#b91c1c', '#7c3aed', '#0891b2'
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3005';
 
 async function apiFetch(path: string, opts?: RequestInit) {
-  const token = typeof window !== 'undefined' ? localStorage.getItem('adminToken') : null;
+  const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
   const res = await fetch(`${API}${path}`, {
     ...opts,
     headers: {

@@ -77,7 +77,6 @@ class EncryptionService {
     // Derive public key: h = g^x mod p
     this.publicKey = modPow(g, this.privateKey, p);
     this.initialized = true;
-    console.log('Encryption service initialized (ElGamal 2048-bit)');
   }
 
   /** Returns the derived public key h = g^x mod p. Required by external services. */

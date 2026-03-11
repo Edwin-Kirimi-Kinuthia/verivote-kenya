@@ -50,7 +50,7 @@ const COMMISSIONER_COLORS = {
 };
 
 function authHeader(): Record<string, string> {
-  const token = typeof window !== "undefined" ? localStorage.getItem("adminToken") : null;
+  const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
