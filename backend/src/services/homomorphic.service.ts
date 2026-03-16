@@ -1,8 +1,8 @@
 /**
- * VeriVote Kenya — Threshold Homomorphic Tally Service (Days 45-46)
+ * VeriVote Kenya — Threshold Homomorphic Tally Service
  *
  * Implements fully homomorphic vote tallying using exponential ElGamal and
- * a 3-of-3 additive threshold key scheme.
+ * a 3-of-3 Shamir Secret Sharing (SSS) threshold key scheme.
  *
  * ── Ballot encoding ──────────────────────────────────────────────────────────
  * For each candidate across all positions, a separate exponential ElGamal
@@ -16,24 +16,28 @@
  * If k voters chose candidate c, this equals E(g^k) — the count is in the exponent.
  * No individual vote is decrypted in this process.
  *
- * ── Threshold decryption ─────────────────────────────────────────────────────
- * Master key:  x  (IEBC ELGAMAL_PRIVATE_KEY)
- * Shares:      x1, x2, x3  where  x1 + x2 + x3 ≡ x  (mod p-1)
- *              Derived deterministically via HMAC-SHA256 from x.
+ * ── Shamir's Secret Sharing (3-of-3) ─────────────────────────────────────────
+ * At ceremony start the master private key x is split via a degree-2 polynomial
+ * over Z_p (the 2048-bit FFDHE prime, which is prime by construction):
  *
- * Each commissioner i provides:  D_i = AGG.c1^x_i  mod p
- * Combined:  D = D1·D2·D3 = AGG.c1^(x1+x2+x3) = AGG.c1^x  mod p
- * Recover:   g^k = AGG.c2 · D^(-1)  mod p
+ *   f(t) = x + a₁·t + a₂·t²   (mod p)     where a₁, a₂ ← random Z_p
  *
- * ── Baby-step Giant-step (BSGS) ───────────────────────────────────────────────
- * Solves discrete log: given g^k, find k  (feasible for k ≤ 100,000)
- * Step size m = ⌈√max_voters⌉.  Baby-step table: {g^j: j=0..m}.
- * Giant-step loop checks g^k · (g^(-m))^i until match found.
+ *   Share α: (1, f(1))    →  Commissioner Alpha (IEBC Nairobi HQ)
+ *   Share β: (2, f(2))    →  Commissioner Beta  (IEBC Mombasa)
+ *   Share γ: (3, f(3))    →  Commissioner Gamma (IEBC Kisumu)
+ *
+ * Reconstruction requires ALL 3 shares via Lagrange interpolation at t = 0:
+ *   x = f(0) = 3·y₁ − 3·y₂ + y₃   (mod p)
+ *
+ * ── Decryption ────────────────────────────────────────────────────────────────
+ * Once reconstructed: D = AGG.c1^x mod p
+ *   g^count = AGG.c2 · D^(−1) mod p
+ * Baby-step Giant-step (BSGS) solves the discrete log to recover count.
  *
  * Sovereignty: All operations on-premise. Zero foreign API calls.
  */
 
-import { createHash, createHmac, randomBytes } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import { v4 as uuid } from 'uuid';
 import { getGroup } from 'threshold-elgamal';
 import { prisma } from '../database/client.js';
@@ -92,6 +96,57 @@ function modInverse(a: bigint, mod: bigint): bigint {
   return ((x % mod) + mod) % mod;
 }
 
+// ── Shamir's Secret Sharing ───────────────────────────────────────────────────
+
+/** SSS share: a point (index, value) on the secret polynomial over Z_p. */
+export interface SSSShare {
+  index: number;    // x-coordinate (1, 2, or 3)
+  value: bigint;    // f(index) mod p
+  hex:   string;    // value as lowercase hex (for display / submission)
+}
+
+/**
+ * Split `secret` into `n` shares using a degree-(n−1) polynomial over Z_p.
+ * Requires ALL n shares to reconstruct (n-of-n scheme).
+ */
+function shamirSplit(secret: bigint, n: number): SSSShare[] {
+  // Random polynomial coefficients a₁ … a_{n-1}
+  const coeffs: bigint[] = [secret];
+  for (let i = 1; i < n; i++) {
+    const r = BigInt('0x' + randomBytes(32).toString('hex')) % (p - 1n) + 1n;
+    coeffs.push(r);
+  }
+
+  return Array.from({ length: n }, (_, i) => {
+    const x = BigInt(i + 1);
+    let y = 0n;
+    let xPow = 1n;
+    for (const c of coeffs) {
+      y = (y + c * xPow) % p;
+      xPow = (xPow * x) % p;
+    }
+    return { index: i + 1, value: y, hex: y.toString(16) };
+  });
+}
+
+/**
+ * Reconstruct the secret from 3 shares (indices 1, 2, 3) via closed-form Lagrange at t = 0.
+ *
+ * For the degree-2 polynomial f(t) = x + a₁t + a₂t² over Z_p with shares at t = 1, 2, 3:
+ *   x = f(0) = 3·y₁ − 3·y₂ + y₃  (mod p)
+ *
+ * Derived by substituting y_i = f(i) and cancelling a₁ and a₂ terms.
+ * No modular inverse required — avoids TypeScript bigint inference pitfalls.
+ */
+function shamirReconstruct(shares: SSSShare[]): bigint {
+  const y1 = shares.find((s) => s.index === 1)!.value;
+  const y2 = shares.find((s) => s.index === 2)!.value;
+  const y3 = shares.find((s) => s.index === 3)!.value;
+
+  // x = 3y₁ - 3y₂ + y₃ (mod p) — add 2p before mod to guarantee positive result
+  return (3n * y1 % p - 3n * y2 % p + y3 + 2n * p) % p;
+}
+
 // ── Ciphertext type ───────────────────────────────────────────────────────────
 
 interface CT { c1: bigint; c2: bigint; }
@@ -105,30 +160,20 @@ function parseCT(o: { c1: string; c2: string }): CT {
 
 // ── Homomorphic ballot format ─────────────────────────────────────────────────
 
-/** Per-candidate exponential ElGamal encodings stored in the Vote row. */
-export interface HomomorphicBallot {
+/** Legacy v2 ballot — hardcoded candidate IDs (pres-1, gov-1, …) */
+export interface HomomorphicBallotV2 {
   v: 2;
   candidates: Record<string, { c1: string; c2: string }>;
 }
 
-// ── Key splitting ─────────────────────────────────────────────────────────────
-
-/**
- * Deterministically derive commissioner key shares from the master private key.
- * x1 + x2 + x3 ≡ x  (mod p-1)
- * Shares are stable across restarts — derived via HMAC-SHA256.
- */
-function deriveShares(privateKey: bigint): Record<CommissionerId, bigint> {
-  const keyHex = privateKey.toString(16);
-  const order = p - 1n;
-
-  const x1 = BigInt('0x' + createHmac('sha256', keyHex).update('commissioner-alpha').digest('hex')) % order;
-  const x2 = BigInt('0x' + createHmac('sha256', keyHex).update('commissioner-beta').digest('hex')) % order;
-  // x3 ensures x1 + x2 + x3 ≡ x (mod p-1)
-  const x3 = ((privateKey - x1 - x2) % order + order) % order;
-
-  return { alpha: x1, beta: x2, gamma: x3 };
+/** v3 ballot — DB UUID candidate IDs tied to a specific election */
+export interface HomomorphicBallotV3 {
+  v: 3;
+  electionId: string;
+  candidates: Record<string, { c1: string; c2: string }>;
 }
+
+export type HomomorphicBallot = HomomorphicBallotV2 | HomomorphicBallotV3;
 
 // ── Encryption ────────────────────────────────────────────────────────────────
 
@@ -149,20 +194,35 @@ function encryptBit(bit: 0 | 1, publicKey: bigint): CT {
 
 /**
  * Encode a full ballot as per-candidate exponential ElGamal ciphertexts.
- * selections: { president: 'pres-2', governor: 'gov-1' }
+ *
+ * Legacy (v2): selections keyed by positionId using hardcoded IDs (e.g. 'president').
+ *   encryptHomomorphicBallot(selections, publicKey)
+ *
+ * Dynamic (v3): selections keyed by positionId (DB UUID), allCandidates from ballot service.
+ *   encryptHomomorphicBallot(selections, publicKey, electionId, allCandidates)
  */
 export function encryptHomomorphicBallot(
-  selections: Record<string, string>,
-  publicKey: bigint,
+  selections:    Record<string, string>,
+  publicKey:     bigint,
+  electionId?:   string,
+  allCandidates?: Array<{ positionId: string; candidateId: string }>,
 ): HomomorphicBallot {
   const candidates: Record<string, { c1: string; c2: string }> = {};
 
-  for (const cand of ALL_CANDIDATES) {
+  const roster = allCandidates ?? ALL_CANDIDATES.map(c => ({
+    positionId:  c.positionId,
+    candidateId: c.candidateId,
+  }));
+
+  for (const cand of roster) {
     const voted = selections[cand.positionId] === cand.candidateId ? 1 : 0;
     const ct = encryptBit(voted as 0 | 1, publicKey);
     candidates[cand.candidateId] = serializeCT(ct);
   }
 
+  if (electionId) {
+    return { v: 3, electionId, candidates };
+  }
   return { v: 2, candidates };
 }
 
@@ -173,28 +233,21 @@ function aggregate(ballots: HomomorphicBallot[], candidateId: string): CT {
   let aggC1 = 1n;
   let aggC2 = 1n;
   for (const b of ballots) {
-    const ct = parseCT(b.candidates[candidateId]);
+    const raw = b.candidates[candidateId];
+    if (!raw) continue; // ballot doesn't include this candidate (e.g. different election)
+    const ct = parseCT(raw);
     aggC1 = (aggC1 * ct.c1) % p;
     aggC2 = (aggC2 * ct.c2) % p;
   }
   return { c1: aggC1, c2: aggC2 };
 }
 
-// ── Partial decryption ────────────────────────────────────────────────────────
+// ── Decryption (using reconstructed key) ─────────────────────────────────────
 
-/** Commissioner i computes D_i = aggC1^xi mod p */
-function partialDecrypt(aggC1: bigint, xi: bigint): bigint {
-  return modPow(aggC1, xi, p);
-}
-
-/** Combine all partial decryptions: D = D1·D2·D3 mod p */
-function combinePartials(partials: bigint[]): bigint {
-  return partials.reduce((acc, d) => (acc * d) % p, 1n);
-}
-
-/** Recover g^count = aggC2 · D^(-1) mod p */
-function recoverGCount(aggC2: bigint, combined: bigint): bigint {
-  return (aggC2 * modInverse(combined, p)) % p;
+/** Recover g^count = aggC2 · (aggC1^x)^(−1) mod p */
+function decryptAggregate(agg: CT, privateKey: bigint): bigint {
+  const D = modPow(agg.c1, privateKey, p);
+  return (agg.c2 * modInverse(D, p)) % p;
 }
 
 // ── Baby-step Giant-step ──────────────────────────────────────────────────────
@@ -234,14 +287,21 @@ function bsgs(target: bigint, maxN: number): number {
 
 // ── Ceremony state ────────────────────────────────────────────────────────────
 
-/** Intermediate aggregates stored while awaiting commissioner partials. */
 interface CeremonyState {
   ceremonyId: string;
   startedAt: string;
   totalBallots: number;
-  aggregates: Record<string, CT>;       // candidateId → aggregate ciphertext
-  partials: Partial<Record<CommissionerId, Record<string, string>>>;  // commId → {candidateId → Di hex}
+  /** Pre-computed homomorphic aggregates — one per candidate. */
+  aggregates: Record<string, CT>;
+  /** SSS shares generated at ceremony start (held for validation). */
+  sssShares: SSSShare[];
+  /** Shares submitted by each commissioner during the ceremony. */
+  submittedShares: Partial<Record<CommissionerId, SSSShare>>;
   result: HomomorphicResult | null;
+  /** Full candidate roster used for this ceremony (dynamic or legacy). */
+  candidateRoster: typeof ALL_CANDIDATES;
+  /** Election being tallied (null for legacy/all-ballots mode). */
+  electionId?: string;
 }
 
 export interface CandidateTallyH {
@@ -267,27 +327,57 @@ export interface HomomorphicResult {
 let _state: CeremonyState | null = null;
 let _result: HomomorphicResult | null = null;
 
+// ── Dynamic candidate loader ───────────────────────────────────────────────────
+
+async function loadDynamicCandidates(electionId: string): Promise<typeof ALL_CANDIDATES> {
+  const positions = await prisma.position.findMany({
+    where:   { electionId },
+    include: { candidates: { where: { isActive: true } } },
+  });
+  return positions.flatMap(p =>
+    p.candidates.map(c => ({
+      positionId:    p.id,
+      positionTitle: p.title,
+      candidateId:   c.id,
+      candidateName: c.name,
+    }))
+  );
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 /**
- * Step 1 — Load and aggregate all homomorphic ballots from the database.
- * Must be called before commissioner partials can be submitted.
+ * Step 1 — Aggregate ballots and generate SSS key shares.
+ *
+ * Returns the 3 commissioner shares (hex) so the admin can distribute
+ * them to the physical commissioners before starting the ceremony proper.
  */
-export async function startCeremony(): Promise<{
+export async function startCeremony(electionId?: string): Promise<{
   ceremonyId: string;
   totalBallots: number;
-  commissioners: { id: CommissionerId; label: string; publicKeyShare: string }[];
+  commissioners: {
+    id: CommissionerId;
+    label: string;
+    shareIndex: number;
+    shareHex: string;
+    /** First 32 hex chars of the Pedersen commitment g^share for public verification */
+    commitment: string;
+  }[];
 }> {
   encryptionService.getPublicKey(); // Throws if not initialized (fail-fast guard)
-  // Derive shares from the master private key (stored in env, not the public key).
+
+  // Load master key and split it
   const keyHex = process.env.ELGAMAL_PRIVATE_KEY ?? '';
   const cleaned = keyHex.startsWith('0x') ? keyHex.slice(2) : keyHex;
   const masterKey = BigInt('0x' + cleaned);
-  const shares = deriveShares(masterKey);
+  const sssShares = shamirSplit(masterKey, 3);
 
-  // Fetch all CONFIRMED votes with homomorphicBallot
+  // Fetch CONFIRMED votes — filtered to electionId when running a dynamic ceremony
   const votes = await prisma.vote.findMany({
-    where: { status: 'CONFIRMED' },
+    where: {
+      status: 'CONFIRMED',
+      ...(electionId ? { electionId } : {}),
+    },
     select: { homomorphicBallot: true },
   });
 
@@ -297,7 +387,7 @@ export async function startCeremony(): Promise<{
     if (!v.homomorphicBallot) { skipped++; continue; }
     try {
       const parsed = JSON.parse(v.homomorphicBallot) as HomomorphicBallot;
-      if (parsed.v === 2) ballots.push(parsed);
+      if (parsed.v === 2 || parsed.v === 3) ballots.push(parsed);
       else skipped++;
     } catch {
       skipped++;
@@ -306,86 +396,117 @@ export async function startCeremony(): Promise<{
 
   if (ballots.length === 0) {
     throw new Error(
-      `No homomorphic ballots found (${skipped} votes skipped — cast new votes or re-seed to generate v2 ballots).`
+      `No homomorphic ballots found (${skipped} votes skipped — cast new votes or re-seed to generate v2/v3 ballots).`
     );
   }
 
+  // Determine candidate roster: use dynamic DB candidates if electionId provided, else legacy list
+  const candidateRoster = electionId
+    ? await loadDynamicCandidates(electionId)
+    : ALL_CANDIDATES;
+
   // Aggregate per candidate
   const aggregates: Record<string, CT> = {};
-  for (const cand of ALL_CANDIDATES) {
+  for (const cand of candidateRoster) {
     aggregates[cand.candidateId] = aggregate(ballots, cand.candidateId);
   }
 
   const ceremonyId = uuid();
   _state = {
     ceremonyId,
-    startedAt: new Date().toISOString(),
-    totalBallots: ballots.length,
+    startedAt:       new Date().toISOString(),
+    totalBallots:    ballots.length,
     aggregates,
-    partials: {},
-    result: null,
+    sssShares,
+    submittedShares: {},
+    result:          null,
+    candidateRoster,
+    electionId,
   };
 
-  // Build commissioner info (public key shares for verification)
-  const commissioners = COMMISSIONER_IDS.map((id) => ({
+  // Build commissioner info — each commissioner receives their unique share
+  const commissioners = COMMISSIONER_IDS.map((id, i) => ({
     id,
-    label: COMMISSIONER_LABELS[id],
-    // Public share = g^xi — anyone can verify xi is correct by checking g^x1·g^x2·g^x3 = h
-    publicKeyShare: modPow(g, shares[id], p).toString(16).slice(0, 32) + '…',
+    label:       COMMISSIONER_LABELS[id],
+    shareIndex:  i + 1,
+    shareHex:    sssShares[i].hex,
+    // Pedersen commitment g^share mod p — truncated for display; verifiable by anyone with g and p
+    commitment:  modPow(g, sssShares[i].value, p).toString(16).slice(0, 32) + '…',
   }));
 
-  logger.info('Homomorphic ceremony started', { ceremonyId, ballots: ballots.length, skipped: skipped || 0 });
+  logger.info('Homomorphic ceremony started — SSS shares generated', {
+    ceremonyId, ballots: ballots.length, skipped: skipped || 0,
+  });
 
   return { ceremonyId, totalBallots: ballots.length, commissioners };
 }
 
 /**
- * Step 2 — Commissioner submits their partial decryption.
- * In this MVP the server computes the partial using the derived share (demo mode).
- * In production: the commissioner computes D_i = agg_c1^x_i offline and submits only D_i.
+ * Step 2 — Commissioner submits their key share.
+ *
+ * The share hex is validated against the value generated in startCeremony.
+ * On success the commissioner's contribution is recorded.
  */
-export function submitPartial(commissionerId: CommissionerId): {
+export function submitShare(commissionerId: CommissionerId, shareHex: string): {
   received: CommissionerId[];
   remaining: CommissionerId[];
 } {
   if (!_state) throw new Error('Ceremony not started. Call startCeremony first.');
   if (_state.result) throw new Error('Ceremony already finalized.');
-
-  const keyHex = process.env.ELGAMAL_PRIVATE_KEY ?? '';
-  const cleaned = keyHex.startsWith('0x') ? keyHex.slice(2) : keyHex;
-  const masterKey = BigInt('0x' + cleaned);
-  const shares = deriveShares(masterKey);
-
-  const xi = shares[commissionerId];
-  const partials: Record<string, string> = {};
-
-  for (const cand of ALL_CANDIDATES) {
-    const agg = _state.aggregates[cand.candidateId];
-    const Di = partialDecrypt(agg.c1, xi);
-    partials[cand.candidateId] = Di.toString(16);
+  if (_state.submittedShares[commissionerId]) {
+    throw new Error(`Commissioner ${commissionerId} has already submitted their share.`);
   }
 
-  _state.partials[commissionerId] = partials;
+  const commIndex = COMMISSIONER_IDS.indexOf(commissionerId); // 0-based
+  const expected  = _state.sssShares[commIndex];
 
-  const received = COMMISSIONER_IDS.filter((id) => !!_state!.partials[id]);
-  const remaining = COMMISSIONER_IDS.filter((id) => !_state!.partials[id]);
+  // Normalise the submitted hex (strip leading zeros / 0x)
+  let submittedHex = shareHex.trim().toLowerCase().replace(/^0x/, '');
+  // Pad to same length as expected for comparison
+  const maxLen = Math.max(submittedHex.length, expected.hex.length);
+  submittedHex = submittedHex.padStart(maxLen, '0');
+  const expectedHex = expected.hex.padStart(maxLen, '0');
 
-  logger.info('Homomorphic partial decryption received', { commissionerId, received: received.length, total: 3 });
+  if (submittedHex !== expectedHex) {
+    throw new Error(`Invalid key share for Commissioner ${commissionerId}. Please check the value and try again.`);
+  }
+
+  _state.submittedShares[commissionerId] = expected;
+
+  const received  = COMMISSIONER_IDS.filter((id) => !!_state!.submittedShares[id]);
+  const remaining = COMMISSIONER_IDS.filter((id) => !_state!.submittedShares[id]);
+
+  logger.info('SSS key share verified', { commissionerId, received: received.length, total: 3 });
 
   return { received, remaining };
 }
 
 /**
- * Step 3 — Finalize: combine partials, run BSGS, produce results.
- * Requires all 3 commissioners to have submitted their partials.
+ * Step 3 — Reconstruct the decryption key and finalize the tally.
+ *
+ * Requires all 3 commissioners to have submitted their verified shares.
+ * The key is reconstructed via Lagrange interpolation, then used to
+ * decrypt the aggregated ciphertext. Individual votes are never decrypted.
  */
 export function finalizeCeremony(): HomomorphicResult {
   if (!_state) throw new Error('Ceremony not started.');
   if (_state.result) return _state.result;
 
-  const missing = COMMISSIONER_IDS.filter((id) => !_state!.partials[id]);
+  const missing = COMMISSIONER_IDS.filter((id) => !_state!.submittedShares[id]);
   if (missing.length > 0) {
-    throw new Error(`Waiting for partials from: ${missing.join(', ')}`);
+    throw new Error(`Waiting for key shares from: ${missing.map((id) => COMMISSIONER_LABELS[id]).join(', ')}`);
+  }
+
+  // Reconstruct the master private key from the 3 SSS shares
+  const submittedArr = COMMISSIONER_IDS.map((id) => _state!.submittedShares[id]!);
+  const reconstructedKey = shamirReconstruct(submittedArr);
+
+  // Sanity-check: g^reconstructed should equal the public key
+  const expectedPubKey = encryptionService.getPublicKey();
+  const derivedPubKey  = modPow(g, reconstructedKey, p);
+  if (derivedPubKey !== expectedPubKey) {
+    // This should never happen if shares were validated correctly
+    throw new Error('Key reconstruction integrity check failed — derived public key does not match.');
   }
 
   const t0 = Date.now();
@@ -393,22 +514,10 @@ export function finalizeCeremony(): HomomorphicResult {
 
   const candidates: CandidateTallyH[] = [];
 
-  for (const cand of ALL_CANDIDATES) {
-    const agg = _state.aggregates[cand.candidateId];
-
-    // Collect D_i from each commissioner for this candidate
-    const partialsBig = COMMISSIONER_IDS.map((id) =>
-      BigInt('0x' + _state!.partials[id]![cand.candidateId])
-    );
-
-    // Combine: D = D1·D2·D3 = agg.c1^x
-    const combined = combinePartials(partialsBig);
-
-    // g^count = agg.c2 · D^(-1)
-    const gCount = recoverGCount(agg.c2, combined);
-
-    // Solve discrete log
-    const count = bsgs(gCount, maxVoters);
+  for (const cand of _state.candidateRoster) {
+    const agg    = _state.aggregates[cand.candidateId];
+    const gCount = decryptAggregate(agg, reconstructedKey);
+    const count  = bsgs(gCount, maxVoters);
 
     candidates.push({
       candidateId:   cand.candidateId,
@@ -437,13 +546,31 @@ export function finalizeCeremony(): HomomorphicResult {
     commissionersWhoParticipated: [...COMMISSIONER_IDS],
     candidates,
     finalHash,
-    sovereigntyNote: 'Full homomorphic tally on-premise. No individual vote decrypted. Zero foreign API calls.',
+    sovereigntyNote: 'Full homomorphic tally on-premise. Key reconstructed via Shamir\'s Secret Sharing (3-of-3). No individual vote decrypted. Zero foreign API calls.',
   };
 
   _state.result = result;
   _result = result;
 
-  logger.info('Homomorphic ceremony finalized', { ceremonyId: _state.ceremonyId, hashPrefix: finalHash.slice(0, 16), durationMs });
+  // Auto-transition election status CLOSED → TALLIED
+  if (_state.electionId) {
+    prisma.election.updateMany({
+      where: { id: _state.electionId, status: 'CLOSED' },
+      data:  { status: 'TALLIED', tallyResultJson: JSON.stringify(result) },
+    }).catch((err) => {
+      logger.warn('Failed to transition election status to TALLIED', {
+        electionId: _state!.electionId,
+        reason: (err as Error).message,
+      });
+    });
+  }
+
+  logger.info('Homomorphic ceremony finalized', {
+    ceremonyId: _state.ceremonyId,
+    hashPrefix: finalHash.slice(0, 16),
+    durationMs,
+    electionId: _state.electionId,
+  });
 
   return result;
 }

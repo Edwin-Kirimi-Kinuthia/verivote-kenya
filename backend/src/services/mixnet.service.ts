@@ -159,7 +159,7 @@ function parse(s: string): RawCiphertext {
 
 // ── Core mix ceremony ─────────────────────────────────────────────────────────
 
-export async function runMixnet(): Promise<MixnetResult> {
+export async function runMixnet(electionId?: string): Promise<MixnetResult> {
   const log: string[] = [];
   const ceremonyId = uuid();
   const t0 = Date.now();
@@ -178,7 +178,7 @@ export async function runMixnet(): Promise<MixnetResult> {
   log.push(`[${ts()}] Querying confirmed votes...`);
 
   const dbVotes = await prisma.vote.findMany({
-    where: { status: 'CONFIRMED' },
+    where: { status: 'CONFIRMED', ...(electionId ? { electionId } : {}) },
     select: { encryptedVoteData: true },
   });
 

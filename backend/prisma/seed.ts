@@ -15,12 +15,13 @@
  * ============================================================================
  */
 
-import { PrismaClient, VoterStatus, VoteStatus, PrintStatus, UserRole } from '@prisma/client';
+import { PrismaClient, VoterStatus, VoteStatus, PrintStatus, UserRole, ElectionType, ElectionStatus, PositionScope, StaffRole, JurisdictionLevel } from '@prisma/client';
 import { randomBytes, createHash } from 'crypto';
 import argon2 from 'argon2';
 import * as dotenv from 'dotenv';
 import { encryptionService } from '../src/services/encryption.service.js';
 import { encryptHomomorphicBallot } from '../src/services/homomorphic.service.js';
+import { ALL_STATIONS } from './iebc-data.js';
 
 dotenv.config();
 encryptionService.init();
@@ -33,134 +34,8 @@ const prisma = new PrismaClient();
 // ============================================================================
 // Real polling station locations across Kenya's major counties
 
-/**
- * Polling station data structure
- * Each station has location info matching Kenya's administrative hierarchy
- */
-interface PollingStationData {
-  code: string;           // Unique station code
-  name: string;           // Station name (usually a school or public building)
-  county: string;         // One of Kenya's 47 counties
-  constituency: string;   // Electoral constituency
-  ward: string;           // Smallest administrative unit
-  latitude: number;       // GPS latitude
-  longitude: number;      // GPS longitude
-  address: string;        // Physical address
-  registeredVoters: number; // Expected voter count
-}
-
-const POLLING_STATIONS: PollingStationData[] = [
-  {
-    code: 'NAI-WL-001',
-    name: 'Westlands Primary School',
-    county: 'Nairobi',
-    constituency: 'Westlands',
-    ward: 'Parklands/Highridge',
-    latitude: -1.2634,
-    longitude: 36.8045,
-    address: 'Waiyaki Way, Westlands, Nairobi',
-    registeredVoters: 1250,
-  },
-  {
-    code: 'NAI-KB-002',
-    name: 'Olympic Primary School',
-    county: 'Nairobi',
-    constituency: 'Kibra',
-    ward: 'Laini Saba',
-    latitude: -1.3119,
-    longitude: 36.7866,
-    address: 'Kibera Drive, Kibra, Nairobi',
-    registeredVoters: 2100,
-  },
-  {
-    code: 'NAI-LG-003',
-    name: 'Langata Barracks Hall',
-    county: 'Nairobi',
-    constituency: 'Langata',
-    ward: 'Karen',
-    latitude: -1.3425,
-    longitude: 36.7234,
-    address: 'Karen Road, Langata, Nairobi',
-    registeredVoters: 980,
-  },
-  {
-    code: 'MSA-MV-001',
-    name: 'Aga Khan Primary Mombasa',
-    county: 'Mombasa',
-    constituency: 'Mvita',
-    ward: 'Mji Wa Kale',
-    latitude: -4.0435,
-    longitude: 39.6682,
-    address: 'Nkrumah Road, Mombasa Island',
-    registeredVoters: 1560,
-  },
-  {
-    code: 'MSA-NY-002',
-    name: 'Nyali Beach Primary',
-    county: 'Mombasa',
-    constituency: 'Nyali',
-    ward: 'Frere Town',
-    latitude: -4.0244,
-    longitude: 39.7152,
-    address: 'Links Road, Nyali, Mombasa',
-    registeredVoters: 1890,
-  },
-  {
-    code: 'KSM-KS-001',
-    name: 'Kisumu Boys High School',
-    county: 'Kisumu',
-    constituency: 'Kisumu Central',
-    ward: 'Kondele',
-    latitude: -0.1022,
-    longitude: 34.7617,
-    address: 'Oginga Odinga Street, Kisumu',
-    registeredVoters: 1750,
-  },
-  {
-    code: 'NKR-NK-001',
-    name: 'Nakuru West Primary',
-    county: 'Nakuru',
-    constituency: 'Nakuru Town West',
-    ward: 'Barut',
-    latitude: -0.3031,
-    longitude: 36.0800,
-    address: 'Kenyatta Avenue, Nakuru',
-    registeredVoters: 1420,
-  },
-  {
-    code: 'ELD-WR-001',
-    name: 'Eldoret Catholic Church Hall',
-    county: 'Uasin Gishu',
-    constituency: 'Eldoret North',
-    ward: 'Huruma',
-    latitude: 0.5143,
-    longitude: 35.2698,
-    address: 'Uganda Road, Eldoret',
-    registeredVoters: 1680,
-  },
-  {
-    code: 'KIA-RUI-001',
-    name: 'Ruiru Township Primary',
-    county: 'Kiambu',
-    constituency: 'Ruiru',
-    ward: 'Gatongora',
-    latitude: -1.1491,
-    longitude: 36.9616,
-    address: 'Ruiru-Kiambu Road, Ruiru',
-    registeredVoters: 2200,
-  },
-  {
-    code: 'MRU-NTI-001',
-    name: 'Meru Technical Institute',
-    county: 'Meru',
-    constituency: 'North Imenti',
-    ward: 'Municipality',
-    latitude: 0.0500,
-    longitude: 37.6500,
-    address: 'Meru-Nanyuki Highway, Meru',
-    registeredVoters: 1350,
-  },
-];
+// IEBC data is imported from iebc-data.ts (290 domestic + 15 diaspora stations)
+// ALL_STATIONS is used directly in seedPollingStations below
 
 // Common Kenyan names for generating realistic test voters
 const FIRST_NAMES = [
@@ -279,14 +154,14 @@ function generateArgon2Hash(): string {
 // ============================================================================
 
 /**
- * Creates 10 polling stations across Kenya
+ * Creates 305 polling stations across Kenya (290 domestic + 15 diaspora)
  */
 async function seedPollingStations(): Promise<string[]> {
   console.log('🏫 Creating polling stations...');
-  
+
   const stationIds: string[] = [];
-  
-  for (const station of POLLING_STATIONS) {
+
+  for (const station of ALL_STATIONS) {
     const created = await prisma.pollingStation.create({
       data: {
         code: station.code,
@@ -297,17 +172,18 @@ async function seedPollingStations(): Promise<string[]> {
         latitude: station.latitude,
         longitude: station.longitude,
         address: station.address,
+        isDiaspora: station.isDiaspora,
+        country: station.country,
         registeredVoters: station.registeredVoters,
         isActive: true,
-        deviceCount: getRandomInt(2, 5),    // 2-5 voting devices
-        printerCount: getRandomInt(1, 2),   // 1-2 printers
+        deviceCount: getRandomInt(2, 5),
+        printerCount: getRandomInt(1, 2),
       },
     });
-    
+
     stationIds.push(created.id);
-    console.log(`   ✓ ${station.name} (${station.code})`);
   }
-  
+
   console.log(`✅ Created ${stationIds.length} polling stations\n`);
   return stationIds;
 }
@@ -532,10 +408,13 @@ async function seedAdminUser(stationIds: string[]): Promise<void> {
     argon2.hash(adminPassword, { type: argon2.argon2id }),
   ]);
 
-  await prisma.voter.create({
-    data: {
+  await prisma.voter.upsert({
+    where: { nationalId: '00000001' },
+    create: {
       nationalId: '00000001',
       role: UserRole.ADMIN,
+      email: 'admin@iebc.go.ke',
+      emailVerifiedAt: new Date(),
       sbtAddress: generateEthereumAddress(),
       sbtTokenId: 'ADMIN-1',
       sbtMintedAt: new Date(),
@@ -545,10 +424,387 @@ async function seedAdminUser(stationIds: string[]): Promise<void> {
       status: VoterStatus.REGISTERED,
       pollingStationId: stationIds[0],
     },
+    update: {
+      passwordHash,
+      normalPinHash,
+      distressPinHash,
+      email: 'admin@iebc.go.ke',
+      emailVerifiedAt: new Date(),
+      status: VoterStatus.REGISTERED,
+    },
   });
 
-  console.log('   ✓ Admin user created (National ID: 00000001, Password: Admin@1234, PIN: 1234)');
+  console.log('   ✓ Admin user seeded (National ID: 00000001, Password: Admin@1234, PIN: 1234)');
+  console.log('   ✓ OTP contact: admin@iebc.go.ke');
+
+  // Promote the seeded admin to COMMISSIONER role (creates IebcStaff record)
+  const adminVoter = await prisma.voter.findUnique({ where: { nationalId: '00000001' } });
+  if (adminVoter) {
+    await prisma.iebcStaff.upsert({
+      where:  { voterId: adminVoter.id },
+      create: {
+        voterId:           adminVoter.id,
+        staffRole:         StaffRole.COMMISSIONER,
+        jurisdictionLevel: JurisdictionLevel.NATIONAL,
+        jurisdictionValue: null,
+        isActive:          true,
+      },
+      update: {
+        staffRole:         StaffRole.COMMISSIONER,
+        jurisdictionLevel: JurisdictionLevel.NATIONAL,
+        isActive:          true,
+      },
+    });
+    console.log('   ✓ Admin promoted to COMMISSIONER (IebcStaff record created)');
+  }
+
   console.log('✅ Admin user seeded\n');
+}
+
+// ============================================================================
+// ELECTION SEED DATA
+// ============================================================================
+
+async function seedElections(): Promise<void> {
+  console.log('🗳️  Creating elections...');
+
+  // ── Kenya 2027 General Election ──────────────────────────────────────────
+  const kenya2027 = await prisma.election.create({
+    data: {
+      name: 'Kenya 2027 General Election',
+      description: 'The 2027 Kenyan General Election for all elective positions under the Constitution of Kenya 2010.',
+      type: ElectionType.GOVERNMENT,
+      status: ElectionStatus.ACTIVE,
+      startDate: new Date('2027-08-10T06:00:00Z'),
+      endDate: new Date('2027-08-10T17:00:00Z'),
+    },
+  });
+  console.log('   ✓ Kenya 2027 General Election');
+
+  // President (NATIONAL)
+  const presPosition = await prisma.position.create({
+    data: {
+      electionId: kenya2027.id,
+      title: 'President of the Republic of Kenya',
+      description: 'Head of State and Government. Elected by a majority of votes cast in a national election.',
+      scope: PositionScope.NATIONAL,
+      orderIndex: 0,
+    },
+  });
+  await prisma.candidate.createMany({
+    data: [
+      { positionId: presPosition.id, name: 'Amina Wanjiku Kariuki', party: 'Jubilee Party', ballotNumber: 1 },
+      { positionId: presPosition.id, name: 'Raila Achieng Odinga', party: 'Orange Democratic Movement', ballotNumber: 2 },
+      { positionId: presPosition.id, name: 'William Samoei Ruto', party: 'United Democratic Alliance', ballotNumber: 3 },
+      { positionId: presPosition.id, name: 'Martha Wangari Karua', party: 'Narc Kenya', ballotNumber: 4 },
+    ],
+  });
+
+  // Nairobi County — Governor & Senator
+  const naiGovPos = await prisma.position.create({
+    data: {
+      electionId: kenya2027.id,
+      title: 'Governor — Nairobi City County',
+      scope: PositionScope.COUNTY,
+      scopeValue: 'Nairobi',
+      orderIndex: 1,
+    },
+  });
+  await prisma.candidate.createMany({
+    data: [
+      { positionId: naiGovPos.id, name: 'Johnson Sakaja Mwangi', party: 'United Democratic Alliance', ballotNumber: 1 },
+      { positionId: naiGovPos.id, name: 'Polycarp Igathe Gachagua', party: 'Jubilee Party', ballotNumber: 2 },
+      { positionId: naiGovPos.id, name: 'Agnes Kagure Waweru', party: 'Independent', ballotNumber: 3 },
+    ],
+  });
+
+  const naiSenPos = await prisma.position.create({
+    data: {
+      electionId: kenya2027.id,
+      title: 'Senator — Nairobi City County',
+      scope: PositionScope.COUNTY,
+      scopeValue: 'Nairobi',
+      orderIndex: 2,
+    },
+  });
+  await prisma.candidate.createMany({
+    data: [
+      { positionId: naiSenPos.id, name: 'Edwin Sifuna Ayieko', party: 'Orange Democratic Movement', ballotNumber: 1 },
+      { positionId: naiSenPos.id, name: 'Esther Ngugi Passaris', party: 'Jubilee Party', ballotNumber: 2 },
+      { positionId: naiSenPos.id, name: 'Millicent Omanga Awuor', party: 'United Democratic Alliance', ballotNumber: 3 },
+    ],
+  });
+
+  // Mombasa County — Governor & Senator
+  const msaGovPos = await prisma.position.create({
+    data: {
+      electionId: kenya2027.id,
+      title: 'Governor — Mombasa County',
+      scope: PositionScope.COUNTY,
+      scopeValue: 'Mombasa',
+      orderIndex: 3,
+    },
+  });
+  await prisma.candidate.createMany({
+    data: [
+      { positionId: msaGovPos.id, name: 'Abdulswamad Nassir Sharrif', party: 'Orange Democratic Movement', ballotNumber: 1 },
+      { positionId: msaGovPos.id, name: 'Hassan Omar Hassan', party: 'Wiper Democratic Movement', ballotNumber: 2 },
+      { positionId: msaGovPos.id, name: 'Suleiman Shahbal Mbwana', party: 'Independent', ballotNumber: 3 },
+    ],
+  });
+
+  const msaSenPos = await prisma.position.create({
+    data: {
+      electionId: kenya2027.id,
+      title: 'Senator — Mombasa County',
+      scope: PositionScope.COUNTY,
+      scopeValue: 'Mombasa',
+      orderIndex: 4,
+    },
+  });
+  await prisma.candidate.createMany({
+    data: [
+      { positionId: msaSenPos.id, name: 'Mohamed Faki Mwinyihaji', party: 'Orange Democratic Movement', ballotNumber: 1 },
+      { positionId: msaSenPos.id, name: 'Fatuma Achani Ali', party: 'United Democratic Alliance', ballotNumber: 2 },
+    ],
+  });
+
+  // Kisumu County — Governor & Senator
+  const ksmGovPos = await prisma.position.create({
+    data: {
+      electionId: kenya2027.id,
+      title: 'Governor — Kisumu County',
+      scope: PositionScope.COUNTY,
+      scopeValue: 'Kisumu',
+      orderIndex: 5,
+    },
+  });
+  await prisma.candidate.createMany({
+    data: [
+      { positionId: ksmGovPos.id, name: 'Anyang\' Nyong\'o Peter', party: 'Orange Democratic Movement', ballotNumber: 1 },
+      { positionId: ksmGovPos.id, name: 'Fred Oluoch Outa', party: 'Jubilee Party', ballotNumber: 2 },
+      { positionId: ksmGovPos.id, name: 'Rose Auma Obama', party: 'Independent', ballotNumber: 3 },
+    ],
+  });
+
+  const ksmSenPos = await prisma.position.create({
+    data: {
+      electionId: kenya2027.id,
+      title: 'Senator — Kisumu County',
+      scope: PositionScope.COUNTY,
+      scopeValue: 'Kisumu',
+      orderIndex: 6,
+    },
+  });
+  await prisma.candidate.createMany({
+    data: [
+      { positionId: ksmSenPos.id, name: 'Tom Joseph Ojienda', party: 'Orange Democratic Movement', ballotNumber: 1 },
+      { positionId: ksmSenPos.id, name: 'Caroli Omondi', party: 'Independent', ballotNumber: 2 },
+    ],
+  });
+
+  // Constituency MPs (CONSTITUENCY-scoped)
+  const mpConstituencies = [
+    { title: 'Member of Parliament — Westlands Constituency', scopeValue: 'Westlands', orderIndex: 7,
+      candidates: [
+        { name: 'Tim Wanyonyi Wetangula', party: 'Orange Democratic Movement', ballotNumber: 1 },
+        { name: 'Danson Mugambi Mwirigi', party: 'United Democratic Alliance', ballotNumber: 2 },
+        { name: 'Jane Wanjiku Kirabi', party: 'Jubilee Party', ballotNumber: 3 },
+      ],
+    },
+    { title: 'Member of Parliament — Kibra Constituency', scopeValue: 'Kibra', orderIndex: 8,
+      candidates: [
+        { name: 'Imran Sultan Okoth', party: 'Orange Democratic Movement', ballotNumber: 1 },
+        { name: 'George Kaluma Opondo', party: 'Independent', ballotNumber: 2 },
+      ],
+    },
+    { title: 'Member of Parliament — Mvita Constituency', scopeValue: 'Mvita', orderIndex: 9,
+      candidates: [
+        { name: 'Abdulkhaleef Hussein Ali', party: 'Orange Democratic Movement', ballotNumber: 1 },
+        { name: 'Asha Mohamed Said', party: 'Jubilee Party', ballotNumber: 2 },
+        { name: 'Shehe Juma Funge', party: 'Independent', ballotNumber: 3 },
+      ],
+    },
+    { title: 'Member of Parliament — Kisumu Central Constituency', scopeValue: 'Kisumu Central', orderIndex: 10,
+      candidates: [
+        { name: 'Joshua Oron Odongo', party: 'Orange Democratic Movement', ballotNumber: 1 },
+        { name: 'Mark Otieno Ndege', party: 'United Democratic Alliance', ballotNumber: 2 },
+      ],
+    },
+  ];
+
+  for (const mpData of mpConstituencies) {
+    const mpPos = await prisma.position.create({
+      data: {
+        electionId: kenya2027.id,
+        title: mpData.title,
+        scope: PositionScope.CONSTITUENCY,
+        scopeValue: mpData.scopeValue,
+        orderIndex: mpData.orderIndex,
+      },
+    });
+    await prisma.candidate.createMany({ data: mpData.candidates.map(c => ({ ...c, positionId: mpPos.id })) });
+  }
+
+  // Ward MCAs (WARD-scoped) — sample wards
+  const mcaWards = [
+    { title: 'Member of County Assembly — Parklands/Highridge Ward', scopeValue: 'Parklands/Highridge', orderIndex: 11,
+      candidates: [
+        { name: 'Peter Gitau Kamau', party: 'United Democratic Alliance', ballotNumber: 1 },
+        { name: 'Grace Njeri Wambua', party: 'Jubilee Party', ballotNumber: 2 },
+      ],
+    },
+    { title: 'Member of County Assembly — Laini Saba Ward', scopeValue: 'Laini Saba', orderIndex: 12,
+      candidates: [
+        { name: 'Ali Hassan Joho Jr.', party: 'Orange Democratic Movement', ballotNumber: 1 },
+        { name: 'Fatuma Wanjiru Kariuki', party: 'Independent', ballotNumber: 2 },
+      ],
+    },
+    { title: 'Member of County Assembly — Kondele Ward', scopeValue: 'Kondele', orderIndex: 13,
+      candidates: [
+        { name: 'Otieno Juma Achieng', party: 'Orange Democratic Movement', ballotNumber: 1 },
+        { name: 'Beatrice Akinyi Ogola', party: 'United Democratic Alliance', ballotNumber: 2 },
+      ],
+    },
+    { title: 'Member of County Assembly — Mji Wa Kale Ward', scopeValue: 'Mji Wa Kale', orderIndex: 14,
+      candidates: [
+        { name: 'Omar Shariff Mwandishi', party: 'Orange Democratic Movement', ballotNumber: 1 },
+        { name: 'Rahma Abdi Salim', party: 'Jubilee Party', ballotNumber: 2 },
+      ],
+    },
+  ];
+
+  for (const mcaData of mcaWards) {
+    const mcaPos = await prisma.position.create({
+      data: {
+        electionId: kenya2027.id,
+        title: mcaData.title,
+        scope: PositionScope.WARD,
+        scopeValue: mcaData.scopeValue,
+        orderIndex: mcaData.orderIndex,
+      },
+    });
+    await prisma.candidate.createMany({ data: mcaData.candidates.map(c => ({ ...c, positionId: mcaPos.id })) });
+  }
+
+  console.log('   ✓ Kenya 2027 General Election — President, Governors, Senators, MPs, MCAs');
+
+  // ── University of Nairobi SRC Election ───────────────────────────────────
+  const uonSrc = await prisma.election.create({
+    data: {
+      name: 'University of Nairobi SRC Elections 2026',
+      description: 'Student Representative Council general elections for the 2026/2027 academic year.',
+      type: ElectionType.INSTITUTIONAL,
+      status: ElectionStatus.ACTIVE,
+      orgName: 'University of Nairobi',
+      startDate: new Date('2026-04-01T07:00:00Z'),
+      endDate: new Date('2026-04-01T18:00:00Z'),
+    },
+  });
+
+  const srcPositions = [
+    { title: 'SRC President', description: 'Overall student body leader', orderIndex: 0,
+      candidates: [
+        { name: 'Brian Otieno Oduor', party: 'Students First Alliance', ballotNumber: 1 },
+        { name: 'Wanjiku Njeri Mwangi', party: 'Progressive Students Front', ballotNumber: 2 },
+        { name: 'Kevin Kipchoge Bett', party: 'Independent', ballotNumber: 3 },
+      ],
+    },
+    { title: 'SRC Vice President', orderIndex: 1,
+      candidates: [
+        { name: 'Akinyi Adhiambo Ouma', party: 'Students First Alliance', ballotNumber: 1 },
+        { name: 'James Maina Gitonga', party: 'Progressive Students Front', ballotNumber: 2 },
+      ],
+    },
+    { title: 'Secretary General', orderIndex: 2,
+      candidates: [
+        { name: 'Mercy Wambui Kariuki', party: 'Students First Alliance', ballotNumber: 1 },
+        { name: 'Dennis Odhiambo Owino', party: 'Independent', ballotNumber: 2 },
+        { name: 'Faith Chebet Kosgei', party: 'Progressive Students Front', ballotNumber: 3 },
+      ],
+    },
+    { title: 'Finance Secretary', orderIndex: 3,
+      candidates: [
+        { name: 'Samuel Njoroge Karanja', party: 'Students First Alliance', ballotNumber: 1 },
+        { name: 'Anne Achieng Otieno', party: 'Progressive Students Front', ballotNumber: 2 },
+      ],
+    },
+    { title: 'Academics Secretary', orderIndex: 4,
+      candidates: [
+        { name: 'Ruth Wafula Simiyu', party: 'Independent', ballotNumber: 1 },
+        { name: 'Patrick Mutua Macharia', party: 'Students First Alliance', ballotNumber: 2 },
+      ],
+    },
+  ];
+
+  for (const posData of srcPositions) {
+    const pos = await prisma.position.create({
+      data: {
+        electionId: uonSrc.id,
+        title: posData.title,
+        description: posData.description ?? null,
+        scope: PositionScope.CUSTOM,
+        orderIndex: posData.orderIndex,
+      },
+    });
+    await prisma.candidate.createMany({ data: posData.candidates.map(c => ({ ...c, positionId: pos.id })) });
+  }
+  console.log('   ✓ University of Nairobi SRC Elections 2026');
+
+  // ── Safaricom PLC Board Election ─────────────────────────────────────────
+  const safaricomBoard = await prisma.election.create({
+    data: {
+      name: 'Safaricom PLC Board of Directors Election 2026',
+      description: 'Annual general meeting election for independent non-executive directors of Safaricom PLC.',
+      type: ElectionType.CORPORATE,
+      status: ElectionStatus.ACTIVE,
+      orgName: 'Safaricom PLC',
+      startDate: new Date('2026-05-15T09:00:00Z'),
+      endDate: new Date('2026-05-15T16:00:00Z'),
+    },
+  });
+
+  const boardPositions = [
+    { title: 'Chair — Board of Directors', orderIndex: 0,
+      candidates: [
+        { name: 'Dr. Bitange Ndemo', party: null, ballotNumber: 1 },
+        { name: 'Adil Khawaja', party: null, ballotNumber: 2 },
+      ],
+    },
+    { title: 'Independent Non-Executive Director (Slot A)', orderIndex: 1,
+      candidates: [
+        { name: 'Susan Mudhune', party: null, ballotNumber: 1 },
+        { name: 'Francis Muriu', party: null, ballotNumber: 2 },
+        { name: 'Esther Koimett', party: null, ballotNumber: 3 },
+      ],
+    },
+    { title: 'Independent Non-Executive Director (Slot B)', orderIndex: 2,
+      candidates: [
+        { name: 'Mohamed Joosub', party: null, ballotNumber: 1 },
+        { name: 'Sylvia Mulinge', party: null, ballotNumber: 2 },
+      ],
+    },
+    { title: 'Audit Committee Chair', orderIndex: 3,
+      candidates: [
+        { name: 'Paul Kagame Ndirangu', party: null, ballotNumber: 1 },
+        { name: 'Jane Karuku Sang', party: null, ballotNumber: 2 },
+      ],
+    },
+  ];
+
+  for (const posData of boardPositions) {
+    const pos = await prisma.position.create({
+      data: {
+        electionId: safaricomBoard.id,
+        title: posData.title,
+        scope: PositionScope.CUSTOM,
+        orderIndex: posData.orderIndex,
+      },
+    });
+    await prisma.candidate.createMany({ data: posData.candidates.map(c => ({ ...c, positionId: pos.id })) });
+  }
+  console.log('   ✓ Safaricom PLC Board of Directors Election 2026');
+  console.log('✅ Elections seeded\n');
 }
 
 // ============================================================================
@@ -563,11 +819,17 @@ async function main() {
   try {
     // Step 1: Clear existing data (in correct order for foreign keys)
     console.log('🧹 Clearing existing data...');
+    await prisma.resultDeclaration.deleteMany();
+    await prisma.iebcStaff.deleteMany();
+    await prisma.webAuthnCredential.deleteMany();
+    await prisma.otpCode.deleteMany();
     await prisma.manualReviewAppointment.deleteMany();
     await prisma.printQueue.deleteMany();
     await prisma.vote.deleteMany();
     await prisma.voter.deleteMany();
     await prisma.pollingStation.deleteMany();
+    // Election system (cascade handles positions/candidates/enrollments)
+    await prisma.election.deleteMany();
     console.log('✅ Database cleared\n');
     
     // Step 2: Seed data in order (respecting foreign key relationships)
@@ -576,6 +838,7 @@ async function main() {
     const voterIds = await seedVoters(stationIds);
     const voteIds = await seedVotes(stationIds);
     await seedPrintQueue(voteIds, stationIds);
+    await seedElections();
     
     // Step 3: Print summary statistics
     console.log('='.repeat(60));
@@ -587,12 +850,18 @@ async function main() {
       voters: await prisma.voter.count(),
       votes: await prisma.vote.count(),
       printQueue: await prisma.printQueue.count(),
+      elections: await prisma.election.count(),
+      positions: await prisma.position.count(),
+      candidates: await prisma.candidate.count(),
     };
-    
+
     console.log(`   Polling Stations: ${stats.pollingStations}`);
     console.log(`   Voters:           ${stats.voters}`);
     console.log(`   Votes:            ${stats.votes}`);
     console.log(`   Print Queue:      ${stats.printQueue}`);
+    console.log(`   Elections:        ${stats.elections}`);
+    console.log(`   Positions:        ${stats.positions}`);
+    console.log(`   Candidates:       ${stats.candidates}`);
     
     // Voter status breakdown
     const votersByStatus = await prisma.voter.groupBy({

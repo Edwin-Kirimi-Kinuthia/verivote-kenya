@@ -13,14 +13,17 @@ const router: Router = Router();
 // Returns a PublicKeyCredentialCreationOptionsJSON for the browser.
 // Rate-limited per voterId to prevent challenge-slot flooding.
 router.post('/register/options', webAuthnEnrollRateLimiter, async (req: Request, res: Response) => {
-  const parsed = z.object({ voterId: z.string().uuid() }).safeParse(req.body);
+  const parsed = z.object({
+    voterId: z.string().uuid(),
+    adminAssisted: z.boolean().optional().default(false),
+  }).safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ success: false, error: parsed.error.errors[0].message });
     return;
   }
 
   try {
-    const options = await webAuthnService.getRegistrationOptions(parsed.data.voterId);
+    const options = await webAuthnService.getRegistrationOptions(parsed.data.voterId, parsed.data.adminAssisted);
     res.json({ success: true, data: options });
   } catch (error) {
     if (error instanceof ServiceError) {
@@ -62,7 +65,7 @@ router.post('/register/verify', webAuthnEnrollRateLimiter, async (req: Request, 
 // Rate-limited per IP + nationalId to prevent enumeration and DoS.
 router.post('/authenticate/options', authRateLimiter, async (req: Request, res: Response) => {
   const parsed = z
-    .object({ nationalId: z.string().regex(/^\d{8}$/, 'National ID must be 8 digits') })
+    .object({ nationalId: z.string().regex(/^[A-Za-z0-9]{5,12}$/, 'National ID (5–9 digits) or Passport number (6–12 alphanumeric characters)') })
     .safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ success: false, error: parsed.error.errors[0].message });
@@ -86,7 +89,7 @@ router.post('/authenticate/options', authRateLimiter, async (req: Request, res: 
 router.post('/authenticate/verify', authRateLimiter, async (req: Request, res: Response) => {
   const parsed = z
     .object({
-      nationalId: z.string().regex(/^\d{8}$/, 'National ID must be 8 digits'),
+      nationalId: z.string().regex(/^[A-Za-z0-9]{5,12}$/, 'National ID (5–9 digits) or Passport number (6–12 alphanumeric characters)'),
       response: z.record(z.unknown()),
     })
     .safeParse(req.body);

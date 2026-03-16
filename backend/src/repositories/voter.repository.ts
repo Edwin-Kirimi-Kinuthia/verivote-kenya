@@ -120,6 +120,7 @@ export class VoterRepository extends BaseRepository<Voter, CreateVoterInput, Upd
     return prisma.voter.create({
       data: {
         nationalId: data.nationalId,
+        idDocumentType: data.idDocumentType as never,
         pollingStationId: data.pollingStationId,
         phoneNumber: data.phoneNumber,
         email: data.email,
@@ -163,11 +164,11 @@ export class VoterRepository extends BaseRepository<Voter, CreateVoterInput, Upd
     }) as Promise<Voter>;
   }
 
-  async recordVote(id: string, isRevote = false, voteId?: string): Promise<Voter> {
+  async recordVote(id: string, isRevote = false, voteId?: string, isDistress = false): Promise<Voter> {
     return prisma.voter.update({
       where: { id },
       data: {
-        status: isRevote ? 'REVOTED' : 'VOTED',
+        status: isDistress ? 'DISTRESS_FLAGGED' : (isRevote ? 'REVOTED' : 'VOTED'),
         voteCount: { increment: 1 },
         lastVotedAt: new Date(),
         ...(voteId !== undefined && { lastVoteId: voteId }),

@@ -43,6 +43,63 @@ export type AppointmentStatus =
 
 export type AppointmentPurpose = 'REGISTRATION' | 'PIN_RESET';
 
+// StaffRole and JurisdictionLevel are defined in auth.types.ts (canonical)
+import type { StaffRole, JurisdictionLevel } from './auth.types.js';
+export type { StaffRole, JurisdictionLevel };
+
+export type DeclarationStatus = 'DRAFT' | 'DECLARED' | 'CONTESTED' | 'ANNULLED';
+
+export interface IebcStaffRecord {
+  id: string;
+  voterId: string;
+  staffRole: StaffRole;
+  jurisdictionLevel: JurisdictionLevel;
+  jurisdictionValue: string | null;
+  pollingStationId: string | null;
+  isActive: boolean;
+  createdByStaffId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface IebcStaffWithVoter extends IebcStaffRecord {
+  voter: { id: string; nationalId: string; email: string | null; phoneNumber: string | null };
+}
+
+export interface ResultDeclarationRecord {
+  id: string;
+  electionId: string;
+  positionId: string;
+  staffId: string;
+  status: DeclarationStatus;
+  jurisdictionLevel: JurisdictionLevel;
+  jurisdictionValue: string | null;
+  tallySnapshot: string | null;
+  declaredAt: Date | null;
+  contestedAt: Date | null;
+  contestReason: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface CreateIebcStaffInput {
+  voterId: string;
+  staffRole: StaffRole;
+  jurisdictionLevel: JurisdictionLevel;
+  jurisdictionValue?: string;
+  pollingStationId?: string;
+  createdByStaffId?: string;
+}
+
+export interface CreateDeclarationInput {
+  electionId: string;
+  positionId: string;
+  staffId: string;
+  jurisdictionLevel: JurisdictionLevel;
+  jurisdictionValue?: string | null;
+  tallySnapshot?: string;
+}
+
 // ============================================================================
 // ENTITY TYPES
 // ============================================================================
@@ -138,6 +195,8 @@ export interface PollingStation {
   latitude: number | null;
   longitude: number | null;
   address: string | null;
+  isDiaspora: boolean;
+  country: string | null;
   registeredVoters: number;
   isActive: boolean;
   openingTime: Date | null;
@@ -196,6 +255,7 @@ export interface BookedAppointmentResult {
 
 export interface CreateVoterInput {
   nationalId: string;
+  idDocumentType?: string;
   pollingStationId?: string;
   phoneNumber?: string;
   email?: string;
@@ -248,6 +308,7 @@ export interface CreateVoteInput {
   pollingStationId: string;
   previousVoteId?: string;
   isDistressFlagged?: boolean;
+  electionId?: string;
 }
 
 export interface UpdateVoteInput {
@@ -266,6 +327,8 @@ export interface CreatePollingStationInput {
   latitude?: number;
   longitude?: number;
   address?: string;
+  isDiaspora?: boolean;
+  country?: string;
   registeredVoters?: number;
   deviceCount?: number;
   printerCount?: number;
@@ -349,6 +412,9 @@ export interface PollingStationQueryParams extends PaginationParams {
   constituency?: string;
   ward?: string;
   isActive?: boolean;
+  isDiaspora?: boolean;
+  country?: string;
+  q?: string;
 }
 
 export interface PrintQueueQueryParams extends PaginationParams {

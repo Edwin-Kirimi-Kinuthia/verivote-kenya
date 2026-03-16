@@ -1,4 +1,4 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3005";
 
 class ApiClient {
   private getToken(): string | null {
@@ -26,13 +26,32 @@ class ApiClient {
     });
 
     if (res.status === 401) {
-      if (typeof window !== "undefined") {
+      // Parse body first to distinguish JWT/auth failures from business-logic failures
+      // (wrong password, wrong PIN) that should NOT redirect — the caller handles those.
+      let errMsg = "Unauthorized";
+      let isAuthFailure = true;
+      try {
+        const body: { success?: boolean; error?: string } = await res.json();
+        errMsg = body.error || "Unauthorized";
+        const lower = errMsg.toLowerCase();
+        // JWT / auth-middleware errors contain these keywords; business errors don't
+        isAuthFailure =
+          !body.error ||
+          ["authorization", "authentication", "expired", "malformed", "signature", "token"].some(
+            (kw) => lower.includes(kw)
+          );
+      } catch {
+        /* no JSON body — treat as auth failure */
+      }
+
+      if (isAuthFailure && typeof window !== "undefined") {
         localStorage.removeItem("token");
         localStorage.removeItem("voter");
         const isVotePath = window.location.pathname.startsWith("/vote");
         window.location.href = isVotePath ? "/vote" : "/admin/login";
       }
-      throw new Error("Unauthorized");
+
+      throw new Error(errMsg);
     }
 
     const json = await res.json();
@@ -51,6 +70,13 @@ class ApiClient {
   async post<T>(path: string, body?: unknown): Promise<T> {
     return this.request<T>(path, {
       method: "POST",
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  }
+
+  async patch<T>(path: string, body?: unknown): Promise<T> {
+    return this.request<T>(path, {
+      method: "PATCH",
       body: body ? JSON.stringify(body) : undefined,
     });
   }

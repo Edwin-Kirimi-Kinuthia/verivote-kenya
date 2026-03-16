@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, useCallback, type FormEvent, Suspense } from "react";
+import { useEffect, useState, useCallback, useRef, type FormEvent, Suspense } from "react";
+import { startRegistration } from "@simplewebauthn/browser";
 import { useRouter, useSearchParams } from "next/navigation";
 import { api } from "@/lib/api-client";
 import { useAuth } from "@/contexts/auth-context";
@@ -16,9 +17,132 @@ import type {
   SlotDeletionResult,
   ApiResponse,
   ColumnDef,
+  KycStartResult,
   ApproveResult,
   SetupLinkResult,
 } from "@/lib/types";
+
+// ── Searchable station combobox ────────────────────────────────────────────
+
+function StationCombobox({
+  stations,
+  value,
+  onChange,
+  placeholder = "Select station…",
+  required,
+  className,
+}: {
+  stations: PollingStation[];
+  value: string;
+  onChange: (id: string) => void;
+  placeholder?: string;
+  required?: boolean;
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+        setQuery("");
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  const selected = stations.find((s) => s.id === value);
+
+  const filtered = query.trim()
+    ? stations.filter((s) => {
+        const q = query.toLowerCase();
+        return (
+          s.name.toLowerCase().includes(q) ||
+          s.code.toLowerCase().includes(q) ||
+          s.county.toLowerCase().includes(q) ||
+          s.constituency.toLowerCase().includes(q) ||
+          s.ward.toLowerCase().includes(q)
+        );
+      })
+    : stations;
+
+  return (
+    <div ref={ref} className={`relative ${className ?? ""}`}>
+      <button
+        type="button"
+        onClick={() => { setOpen((v) => !v); setQuery(""); }}
+        className="flex w-full items-center justify-between rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
+      >
+        <span className={selected ? "text-gray-900 truncate" : "text-gray-400"}>
+          {selected ? `${selected.code} — ${selected.name}` : placeholder}
+        </span>
+        <svg className={`ml-2 h-4 w-4 shrink-0 text-gray-400 transition-transform ${open ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      {/* Hidden native select for form required validation */}
+      {required && (
+        <select
+          required
+          value={value}
+          onChange={() => {}}
+          tabIndex={-1}
+          aria-hidden
+          className="absolute inset-0 opacity-0 pointer-events-none"
+        >
+          <option value="" />
+          {stations.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </select>
+      )}
+
+      {open && (
+        <div className="absolute left-0 top-full z-50 mt-1 w-full min-w-[260px] rounded-md border border-gray-200 bg-white shadow-lg">
+          <div className="border-b border-gray-100 p-2">
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search by name, code, county…"
+              autoFocus
+              className="w-full rounded border border-gray-200 px-2 py-1.5 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
+            />
+          </div>
+          <ul className="max-h-56 overflow-y-auto py-1">
+            {!required && (
+              <li
+                onMouseDown={() => { onChange(""); setOpen(false); setQuery(""); }}
+                className="cursor-pointer px-3 py-1.5 text-sm text-gray-400 hover:bg-gray-50"
+              >
+                — Clear selection —
+              </li>
+            )}
+            {filtered.length === 0 ? (
+              <li className="px-3 py-2 text-sm text-gray-400">No stations found</li>
+            ) : (
+              filtered.map((s) => (
+                <li
+                  key={s.id}
+                  onMouseDown={() => { onChange(s.id); setOpen(false); setQuery(""); }}
+                  className={`cursor-pointer px-3 py-2 text-sm hover:bg-blue-50 ${value === s.id ? "bg-blue-50 font-semibold text-blue-800" : "text-gray-800"}`}
+                >
+                  <div className="font-medium truncate">{s.code} — {s.name}</div>
+                  <div className="text-xs text-gray-400">{s.constituency}, {s.county}</div>
+                </li>
+              ))
+            )}
+          </ul>
+          <div className="border-t border-gray-100 px-3 py-1.5 text-xs text-gray-400">
+            {filtered.length} of {stations.length} stations
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 const APPOINTMENT_STATUS_STYLES: Record<string, { label: string; color: string; bg: string }> = {
   AVAILABLE: { label: "Available", color: "text-gray-800", bg: "bg-gray-100" },
@@ -90,27 +214,43 @@ function AppointmentsContent() {
   const [actionError, setActionError] = useState("");
   const [appointmentActionLoading, setAppointmentActionLoading] = useState(false);
 
-  // Post-approval fingerprint + setup-link flow
+  // Post-approval KYC → fingerprint → approve flow
   const [postApproval, setPostApproval] = useState<{
     voterId: string;
     nationalId: string;
-    step: "fingerprint" | "done";
+    appointmentId: string;
+    reviewerId: string;
+    notes?: string;
+    step: "kyc" | "fingerprint" | "done";
+    personaUrl?: string;
+    inquiryId: string;
     contact?: string;
   } | null>(null);
+  const [kycVerified, setKycVerified] = useState(false);
+  const [kycPolling, setKycPolling] = useState(false);
   const [fpLoading, setFpLoading] = useState(false);
+  const [fpDone, setFpDone] = useState(false);
   const [fpError, setFpError] = useState("");
-  const [fpEnrolled, setFpEnrolled] = useState(false);
-  const [linkLoading, setLinkLoading] = useState(false);
+  const [postError, setPostError] = useState("");
+  const [approveLoading, setApproveLoading] = useState(false);
+  const kycPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     api
       .get<{ success: boolean } & PaginatedResponse<PollingStation>>(
-        "/api/polling-stations?limit=100"
+        "/api/polling-stations/all?limit=1000"
       )
       .then((res) => {
         if (res.data) setStations(res.data);
       })
       .catch(() => {});
+  }, []);
+
+  // Clean up KYC polling interval on unmount
+  useEffect(() => {
+    return () => {
+      if (kycPollRef.current) clearInterval(kycPollRef.current);
+    };
   }, []);
 
   const loadAppointments = useCallback(async () => {
@@ -270,25 +410,32 @@ function AppointmentsContent() {
     setAppointmentActionLoading(true);
     setActionError("");
     try {
-      const res = await api.post<ApiResponse<ApproveResult>>(
-        `/api/appointments/${activeAction.appointmentId}/approve-voter`,
-        { reviewerId: voter?.id, notes: actionNotes || undefined }
+      const res = await api.post<ApiResponse<KycStartResult>>(
+        `/api/appointments/${activeAction.appointmentId}/start-kyc`
       );
       if (res.success && res.data) {
         setActiveAction(null);
-        setFpEnrolled(false);
+        setKycVerified(false);
+        setKycPolling(false);
+        setPostError("");
+        if (kycPollRef.current) clearInterval(kycPollRef.current);
+        setFpDone(false);
         setFpError("");
         setPostApproval({
           voterId: res.data.voterId,
           nationalId: res.data.nationalId,
-          step: "fingerprint",
+          appointmentId: activeAction.appointmentId,
+          reviewerId: voter?.id ?? "",
+          notes: actionNotes || undefined,
+          step: "kyc",
+          personaUrl: res.data.personaUrl,
+          inquiryId: res.data.inquiryId,
         });
-        loadAppointments();
       } else {
-        setActionError(res.error || "Approval failed");
+        setActionError(res.error || "Failed to start KYC");
       }
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Approval failed");
+      setActionError(err instanceof Error ? err.message : "Failed to start KYC");
     } finally {
       setAppointmentActionLoading(false);
     }
@@ -320,67 +467,107 @@ function AppointmentsContent() {
     }
   }
 
-  // ── Fingerprint enrollment + setup link ────────────────────────────────────
+  // ── KYC polling ────────────────────────────────────────────────────────────
+
+  function startKycPolling(pa: NonNullable<typeof postApproval>) {
+    if (kycPollRef.current) clearInterval(kycPollRef.current);
+    setKycPolling(true);
+    setPostError("");
+
+    kycPollRef.current = setInterval(async () => {
+      try {
+        const res = await api.get<ApiResponse<{ status: string; completed: boolean }>>(
+          `/api/appointments/${pa.appointmentId}/kyc-status?inquiryId=${pa.inquiryId}`
+        );
+        if (res.data?.completed) {
+          clearInterval(kycPollRef.current!);
+          kycPollRef.current = null;
+          setKycPolling(false);
+          setKycVerified(true);
+          setPostApproval((prev) => prev ? { ...prev, step: "fingerprint" } : null);
+        }
+      } catch {
+        // network hiccup — keep polling
+      }
+    }, 3000);
+  }
+
+  // ── Admin-assisted fingerprint enrollment (cross-platform → voter's phone) ─
 
   async function handleEnrollFingerprint() {
     if (!postApproval) return;
-    setFpError("");
     setFpLoading(true);
+    setFpError("");
     try {
-      const optRes = await api.post<ApiResponse<Record<string, unknown>>>(
+      // Step 1: Get registration options (adminAssisted=true → cross-platform → QR code on screen)
+      const optRes = await api.post<{ success: boolean; data: unknown }>(
         "/api/webauthn/register/options",
-        { voterId: postApproval.voterId }
+        { voterId: postApproval.voterId, adminAssisted: true }
       );
-      if (!optRes.success || !optRes.data)
-        throw new Error("Failed to get fingerprint options");
-      const { startRegistration } = await import("@simplewebauthn/browser");
+      if (!optRes.success || !optRes.data) {
+        setFpError("Failed to start fingerprint enrollment");
+        return;
+      }
+      // Step 2: Browser shows QR code — voter scans with their phone and approves
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const attResp = await startRegistration({ optionsJSON: optRes.data as any });
-      const verRes = await api.post<ApiResponse<{ verified: boolean }>>(
+      const credential = await startRegistration({ optionsJSON: optRes.data as any });
+      // Step 3: Verify credential with backend
+      const verRes = await api.post<{ success: boolean; data?: { credentialId: string } }>(
         "/api/webauthn/register/verify",
-        { voterId: postApproval.voterId, response: attResp }
+        { voterId: postApproval.voterId, response: credential }
       );
-      if (!verRes.success || !verRes.data?.verified)
-        throw new Error("Fingerprint verification failed");
-      setFpEnrolled(true);
+      if (!verRes.success) {
+        setFpError("Fingerprint registration failed — please try again");
+        return;
+      }
+      setFpDone(true);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Fingerprint enrollment failed";
-      setFpError(
-        msg.toLowerCase().includes("cancel") || msg.toLowerCase().includes("abort") || msg.toLowerCase().includes("user")
-          ? "Fingerprint scan was cancelled. Please ask the voter to try again."
-          : msg
-      );
+      const msg = err instanceof Error ? err.message : "Enrollment failed";
+      // User cancelled the QR / authenticator prompt
+      if (msg.includes("cancel") || msg.includes("abort") || msg.includes("NotAllowed")) {
+        setFpError("Cancelled — ask voter to scan the QR code with their phone and try again");
+      } else {
+        setFpError(msg);
+      }
     } finally {
       setFpLoading(false);
     }
   }
 
-  async function handleSendLink() {
+  // ── Approve voter + send PIN setup link ────────────────────────────────────
+
+  async function handleApproveAndSend() {
     if (!postApproval) return;
-    setFpError("");
-    setLinkLoading(true);
+    setPostError("");
+    setApproveLoading(true);
     try {
-      const res = await api.post<ApiResponse<SetupLinkResult>>(
+      // 1. Approve voter & mint SBT
+      const approveRes = await api.post<ApiResponse<ApproveResult>>(
+        `/api/appointments/${postApproval.appointmentId}/approve-voter`,
+        { reviewerId: postApproval.reviewerId, notes: postApproval.notes }
+      );
+      if (!approveRes.success) {
+        setPostError(approveRes.error || "Approval failed");
+        return;
+      }
+      // 2. Send PIN setup link (voter sets PINs + biometric on their own device)
+      const linkRes = await api.post<ApiResponse<SetupLinkResult>>(
         "/api/admin/send-setup-link",
         { voterId: postApproval.voterId }
       );
-      if (!res.success || !res.data) {
-        setFpError(res.error || "Failed to send setup link");
+      if (!linkRes.success || !linkRes.data) {
+        setPostError(linkRes.error || "Failed to send setup link");
         return;
       }
       setPostApproval((prev) =>
-        prev ? { ...prev, step: "done", contact: res.data!.contact } : null
+        prev ? { ...prev, step: "done", contact: linkRes.data!.contact } : null
       );
+      loadAppointments();
     } catch (err) {
-      setFpError(err instanceof Error ? err.message : "Failed to send setup link");
+      setPostError(err instanceof Error ? err.message : "Failed to complete approval");
     } finally {
-      setLinkLoading(false);
+      setApproveLoading(false);
     }
-  }
-
-  async function handleSkipFingerprint() {
-    setFpEnrolled(false);
-    await handleSendLink();
   }
 
   const columns: ColumnDef<Appointment>[] = [
@@ -531,19 +718,13 @@ function AppointmentsContent() {
                 <label className="mb-1 block text-xs font-medium text-gray-700">
                   Station
                 </label>
-                <select
-                  required
+                <StationCombobox
+                  stations={stations}
                   value={createStation}
-                  onChange={(e) => setCreateStation(e.target.value)}
-                  className={selectClass}
-                >
-                  <option value="">Select...</option>
-                  {stations.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.code} — {s.name}
-                    </option>
-                  ))}
-                </select>
+                  onChange={setCreateStation}
+                  placeholder="Select station…"
+                  required
+                />
               </div>
               <div>
                 <label className="mb-1 block text-xs font-medium text-gray-700">
@@ -677,19 +858,13 @@ function AppointmentsContent() {
               <label className="mb-1 block text-xs font-medium text-gray-700">
                 Station
               </label>
-              <select
-                required
+              <StationCombobox
+                stations={stations}
                 value={deleteStation}
-                onChange={(e) => setDeleteStation(e.target.value)}
-                className={selectClass}
-              >
-                <option value="">Select...</option>
-                {stations.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.code} — {s.name}
-                  </option>
-                ))}
-              </select>
+                onChange={setDeleteStation}
+                placeholder="Select station…"
+                required
+              />
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium text-gray-700">
@@ -727,84 +902,150 @@ function AppointmentsContent() {
           </form>
         </div>
 
-        {/* Post-approval: fingerprint enrollment */}
-        {postApproval && postApproval.step === "fingerprint" && (
-          <div className="rounded-lg border border-blue-200 bg-blue-50 p-5 space-y-4">
-            <div className="flex items-center gap-2">
-              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-green-600 text-white font-bold text-[10px]">✓</span>
-              <span className="text-sm font-medium text-green-700">Voter approved — SBT minted</span>
-              <span className="flex-1 border-t border-blue-200" />
-              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-600 text-white font-bold text-[10px]">2</span>
-              <span className="text-sm font-medium text-blue-700">Capture fingerprint</span>
-              <span className="flex-1 border-t border-blue-200" />
-              <span className="flex h-5 w-5 items-center justify-center rounded-full bg-gray-300 text-gray-600 font-bold text-[10px]">3</span>
-              <span className="text-sm text-gray-400">Send PIN link</span>
+        {/* Post-approval: KYC → fingerprint → approve flow */}
+        {postApproval && postApproval.step !== "done" && (
+          <div className="rounded-lg border border-purple-200 bg-purple-50 p-5 space-y-4">
+            {/* Step indicator: KYC → Fingerprint → Approve */}
+            <div className="flex items-center gap-2 flex-wrap text-[10px] font-bold">
+              <span className={`flex h-5 w-5 items-center justify-center rounded-full text-white ${kycVerified ? "bg-green-600" : "bg-purple-600"}`}>
+                {kycVerified ? "✓" : "1"}
+              </span>
+              <span className={`text-sm font-medium ${kycVerified ? "text-green-700" : "text-purple-700"}`}>
+                {kycVerified ? "KYC verified" : "Identity Verification (KYC)"}
+              </span>
+              <span className="border-t border-purple-200 w-6" />
+              <span className={`flex h-5 w-5 items-center justify-center rounded-full text-white ${fpDone ? "bg-green-600" : kycVerified ? "bg-purple-600" : "bg-gray-300 text-gray-600"}`}>
+                {fpDone ? "✓" : "2"}
+              </span>
+              <span className={`text-sm font-medium ${fpDone ? "text-green-700" : kycVerified ? "text-purple-700" : "text-gray-400"}`}>
+                {fpDone ? "Fingerprint enrolled" : "Fingerprint (voter's phone)"}
+              </span>
+              <span className="border-t border-purple-200 w-6" />
+              <span className={`flex h-5 w-5 items-center justify-center rounded-full text-white ${fpDone ? "bg-purple-600" : "bg-gray-300 text-gray-600"}`}>3</span>
+              <span className={`text-sm font-medium ${fpDone ? "text-purple-700" : "text-gray-400"}`}>Approve &amp; Send PIN link</span>
             </div>
-            <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-              <strong>IEBC Officer:</strong> Ask voter <strong>{postApproval.nationalId}</strong> to place
-              their finger on the biometric reader or use Windows Hello / Face ID on this device.
-            </div>
-            <div className="rounded-lg border border-gray-200 bg-white p-4 text-center space-y-3">
-              <div className={`mx-auto flex h-16 w-16 items-center justify-center rounded-full ${fpEnrolled ? "bg-green-100" : "bg-blue-50"}`}>
-                {fpEnrolled ? (
-                  <svg className="h-8 w-8 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                  </svg>
-                ) : (
-                  <svg className="h-8 w-8 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M7.864 4.243A7.5 7.5 0 0119.5 10.5c0 2.92-.556 5.709-1.568 8.268M5.742 6.364A7.465 7.465 0 004.5 10.5a7.464 7.464 0 01-1.15 3.993m1.989 3.559A11.209 11.209 0 008.25 10.5a3.75 3.75 0 117.5 0c0 .527-.021 1.049-.064 1.565M12 10.5a14.94 14.94 0 01-3.6 9.75m6.633-4.596a18.666 18.666 0 01-2.485 5.33" />
-                  </svg>
-                )}
+
+            {postError && (
+              <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">{postError}</div>
+            )}
+
+            {/* Step 1: KYC */}
+            {!kycVerified && (
+              <div className="space-y-3">
+                <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                  <strong>IEBC Officer:</strong> Hand the device to voter{" "}
+                  <strong>{postApproval.nationalId}</strong>. They will complete identity verification on
+                  this screen. The system will automatically detect when it is done.
+                </div>
+                <div className="rounded-lg border border-gray-200 bg-white p-4 space-y-3">
+                  {postApproval.personaUrl && (
+                    <a
+                      href={postApproval.personaUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={() => startKycPolling(postApproval)}
+                      className="flex w-full items-center justify-center gap-2 rounded-md bg-purple-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-purple-700"
+                    >
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                      </svg>
+                      Open KYC Verification
+                    </a>
+                  )}
+                  {kycPolling && (
+                    <div className="flex items-center justify-center gap-2 py-2 text-sm text-purple-700">
+                      <svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg>
+                      Waiting for voter to complete KYC…
+                    </div>
+                  )}
+                  {!kycPolling && (
+                    <p className="text-center text-xs text-gray-400">
+                      Open the KYC link above — the system will automatically detect completion.
+                    </p>
+                  )}
+                </div>
               </div>
-              {fpEnrolled ? (
-                <p className="text-sm font-semibold text-green-700">Fingerprint enrolled</p>
-              ) : (
-                <p className="text-sm text-gray-700">Ready to capture fingerprint</p>
-              )}
-              {fpError && (
-                <div className="rounded-md bg-red-50 p-2 text-xs text-red-700">{fpError}</div>
-              )}
-              {!fpEnrolled && (
+            )}
+
+            {/* Step 2: Fingerprint enrollment via voter's phone (cross-platform / QR code) */}
+            {kycVerified && !fpDone && (
+              <div className="rounded-lg border border-gray-200 bg-white p-4 space-y-3">
+                <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-xs text-blue-800">
+                  <strong>IEBC Officer:</strong> Click the button below. A QR code will appear on screen.
+                  Ask voter <strong>{postApproval.nationalId}</strong> to scan it with their own phone to
+                  enroll their fingerprint. <em>This ensures only the voter&apos;s biometric is registered —
+                  the officer&apos;s device cannot be used to impersonate them.</em>
+                </div>
+                {fpError && (
+                  <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">{fpError}</div>
+                )}
                 <button
                   type="button"
                   onClick={handleEnrollFingerprint}
                   disabled={fpLoading}
-                  className="w-full rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+                  className="flex w-full items-center justify-center gap-2 rounded-md bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
                 >
                   {fpLoading ? (
+                    <>
+                      <svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg>
+                      Waiting for voter&apos;s phone…
+                    </>
+                  ) : (
+                    <>
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 11c0-1.657-1.343-3-3-3S6 9.343 6 11m0 0v1a6 6 0 0012 0v-1m-6-3V5m0 0a2 2 0 100-4 2 2 0 000 4z" />
+                      </svg>
+                      Enroll Fingerprint via Voter&apos;s Phone (QR Code)
+                    </>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFpDone(true)}
+                  disabled={fpLoading}
+                  className="w-full text-center text-xs text-gray-400 hover:text-gray-600 disabled:opacity-50"
+                >
+                  Skip fingerprint enrollment (voter will enroll on their own device)
+                </button>
+              </div>
+            )}
+
+            {/* Step 3: Approve */}
+            {fpDone && (
+              <div className="rounded-lg border border-green-200 bg-white p-4 space-y-3">
+                <div className="flex items-center gap-2 text-green-700">
+                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span className="text-sm font-semibold">Identity verified — ready to approve</span>
+                </div>
+                <p className="text-xs text-gray-500">
+                  Clicking <strong>Approve</strong> will mint the voter&apos;s SBT on-chain and send them a
+                  secure link to set up their PINs on their own device.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleApproveAndSend}
+                  disabled={approveLoading}
+                  className="w-full rounded-md bg-green-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-green-800 disabled:opacity-50"
+                >
+                  {approveLoading ? (
                     <span className="flex items-center justify-center gap-2">
                       <svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                       </svg>
-                      Waiting for scan…
+                      Approving &amp; sending link…
                     </span>
-                  ) : "Scan Fingerprint"}
+                  ) : "Approve Registration & Send PIN Setup Link →"}
                 </button>
-              )}
-              {fpEnrolled && (
-                <button
-                  type="button"
-                  onClick={handleSendLink}
-                  disabled={linkLoading}
-                  className="w-full rounded-md bg-green-700 px-4 py-2 text-sm font-semibold text-white hover:bg-green-800 disabled:opacity-50"
-                >
-                  {linkLoading ? "Sending link…" : "Send PIN Setup Link →"}
-                </button>
-              )}
-            </div>
-            <p className="text-xs text-blue-600">
-              FIDO2/WebAuthn — only a cryptographic key is stored, no biometric data leaves this device.
-            </p>
-            {!fpEnrolled && (
-              <button
-                type="button"
-                onClick={handleSkipFingerprint}
-                disabled={linkLoading || fpLoading}
-                className="w-full text-center text-sm text-gray-400 hover:text-gray-600 disabled:opacity-50"
-              >
-                {linkLoading ? "Sending link…" : "Skip fingerprint — device not available"}
-              </button>
+              </div>
             )}
           </div>
         )}
@@ -816,11 +1057,15 @@ function AppointmentsContent() {
             <ul className="space-y-2 text-sm text-green-800">
               <li className="flex items-start gap-2">
                 <span className="text-green-600">✓</span>
-                <span>Identity verified — SBT minted on-chain</span>
+                <span>KYC identity verified via Persona</span>
               </li>
               <li className="flex items-start gap-2">
-                <span className="text-green-600">{fpEnrolled ? "✓" : "–"}</span>
-                <span>{fpEnrolled ? "Biometric credential enrolled" : "Fingerprint skipped — voter can enroll later"}</span>
+                <span className="text-green-600">✓</span>
+                <span>Fingerprint credential enrolled on voter&apos;s own phone (or skipped — voter can enroll later)</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-green-600">✓</span>
+                <span>Registration approved — SBT minted on-chain</span>
               </li>
               <li className="flex items-start gap-2">
                 <span className="text-green-600">✓</span>
@@ -828,7 +1073,7 @@ function AppointmentsContent() {
               </li>
             </ul>
             <p className="mt-3 text-xs text-green-600">
-              The voter will set their own PIN privately. Neither PIN is visible to officers.
+              The voter will set both PINs and optionally re-enroll their fingerprint on their own device via the link.
             </p>
             <button
               onClick={() => setPostApproval(null)}
@@ -877,7 +1122,7 @@ function AppointmentsContent() {
                   disabled={appointmentActionLoading}
                   className="rounded-md bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
                 >
-                  {appointmentActionLoading ? "Approving..." : "Confirm Approval"}
+                  {appointmentActionLoading ? "Starting KYC..." : "Start KYC Verification"}
                 </button>
               ) : (
                 <button
@@ -905,21 +1150,16 @@ function AppointmentsContent() {
             <h2 className="text-sm font-semibold text-gray-900">
               Scheduled Appointments
             </h2>
-            <select
+            <StationCombobox
+              stations={stations}
               value={filterStation}
-              onChange={(e) => {
-                setFilterStation(e.target.value);
+              onChange={(id) => {
+                setFilterStation(id);
                 router.push("/admin/appointments?page=1");
               }}
-              className="rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 focus:outline-none"
-            >
-              <option value="">All Stations</option>
-              {stations.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.code} — {s.name}
-                </option>
-              ))}
-            </select>
+              placeholder="All Stations"
+              className="w-64"
+            />
             <input
               type="date"
               value={filterDate}

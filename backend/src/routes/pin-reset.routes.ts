@@ -8,7 +8,7 @@ import { requireAuth, requireAdmin } from '../middleware/index.js';
 const router: Router = Router();
 
 const requestResetSchema = z.object({
-  nationalId: z.string().regex(/^\d{8}$/, 'National ID must be exactly 8 digits'),
+  nationalId: z.string().regex(/^[A-Za-z0-9]{5,12}$/, 'National ID (5–9 digits) or Passport number (6–12 alphanumeric characters)'),
 });
 
 const inPersonResetSchema = z.object({

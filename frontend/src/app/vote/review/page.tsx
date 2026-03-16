@@ -1,18 +1,42 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/auth-context";
 import { useTranslation } from "@/contexts/language-context";
 import { api } from "@/lib/api-client";
 import { ballotPositions, getCandidateById } from "@/lib/candidates";
-import type { BallotSelection, ApiResponse, VoteReceipt } from "@/lib/types";
+import type { BallotSelection, ApiResponse, VoteReceipt, DynamicBallot } from "@/lib/types";
+
+// Build a lookup: positionId -> { positionTitle, candidateId, candidateName, candidateParty }
+function buildReviewItems(
+  ballot: DynamicBallot,
+  selections: BallotSelection,
+): Array<{ positionId: string; positionTitle: string; candidateName: string; candidateParty: string | null }> {
+  return ballot.positions
+    .filter((p) => selections[p.positionId])
+    .map((p) => {
+      const candidateId = selections[p.positionId];
+      const candidate = p.candidates.find((c) => c.candidateId === candidateId);
+      return {
+        positionId: p.positionId,
+        positionTitle: p.title,
+        candidateName: candidate?.name ?? candidateId,
+        candidateParty: candidate?.party ?? null,
+      };
+    });
+}
+
+const MAX_PIN_ATTEMPTS = 3;
 
 export default function ReviewPage() {
   const router = useRouter();
-  const { token, isLoading } = useAuth();
+  const { token, isLoading, logout } = useAuth();
   const { t } = useTranslation();
   const [selections, setSelections] = useState<BallotSelection>({});
+  const [electionId, setElectionId] = useState<string | null>(null);
+  const [electionName, setElectionName] = useState<string | null>(null);
+  const [dynamicBallot, setDynamicBallot] = useState<DynamicBallot | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
@@ -20,6 +44,7 @@ export default function ReviewPage() {
   const [pin, setPin] = useState("");
   const [showPin, setShowPin] = useState(false);
   const [pinShakeKey, setPinShakeKey] = useState(0);
+  const [pinAttempts, setPinAttempts] = useState(0);
 
   useEffect(() => {
     if (!isLoading && !token) {
@@ -31,18 +56,44 @@ export default function ReviewPage() {
       router.replace("/vote/ballot");
       return;
     }
+    const savedElectionId = sessionStorage.getItem("ballot-election-id");
+    const savedElectionName = sessionStorage.getItem("ballot-election-name");
+    const savedBallotData = sessionStorage.getItem("ballot-data");
     try {
       const parsed = JSON.parse(saved);
-      const allSelected = ballotPositions.every((p) => parsed[p.id]);
-      if (!allSelected) {
-        router.replace("/vote/ballot");
-        return;
+      if (savedElectionId) {
+        // Dynamic ballot — just need at least one selection
+        if (Object.keys(parsed).length === 0) {
+          router.replace("/vote/ballot");
+          return;
+        }
+        setElectionId(savedElectionId);
+        setElectionName(savedElectionName);
+        if (savedBallotData) {
+          try { setDynamicBallot(JSON.parse(savedBallotData)); } catch { /* ignore */ }
+        }
+      } else {
+        // Legacy ballot — all positions must be selected
+        const allSelected = ballotPositions.every((p) => parsed[p.id]);
+        if (!allSelected) {
+          router.replace("/vote/ballot");
+          return;
+        }
       }
       setSelections(parsed);
     } catch {
       router.replace("/vote/ballot");
     }
   }, [isLoading, token, router]);
+
+  const forceLogout = useCallback(() => {
+    sessionStorage.removeItem("ballot-selections");
+    sessionStorage.removeItem("ballot-election-id");
+    sessionStorage.removeItem("ballot-election-name");
+    sessionStorage.removeItem("ballot-data");
+    logout();
+    router.replace("/vote");
+  }, [logout, router]);
 
   async function handleSubmit() {
     setError("");
@@ -51,21 +102,48 @@ export default function ReviewPage() {
     try {
       const res = await api.post<ApiResponse<VoteReceipt>>(
         "/api/votes/cast",
-        { selections, ...(pin ? { pin } : {}) }
+        {
+          selections,
+          ...(pin ? { pin } : {}),
+          ...(electionId ? { electionId } : {}),
+        }
       );
 
       if (!res.success || !res.data) {
-        setError(res.error || t("review.error"));
+        const attempts = pinAttempts + 1;
+        setPinAttempts(attempts);
         setPin("");
         setPinShakeKey((k) => k + 1);
+        if (attempts >= MAX_PIN_ATTEMPTS) {
+          setError("Too many incorrect PINs. You have been logged out for security.");
+          setTimeout(forceLogout, 2000);
+        } else {
+          setError(
+            `${res.error || t("review.error")} — ${MAX_PIN_ATTEMPTS - attempts} attempt${MAX_PIN_ATTEMPTS - attempts === 1 ? "" : "s"} remaining.`
+          );
+        }
         return;
       }
 
       sessionStorage.setItem("vote-receipt", JSON.stringify(res.data));
       sessionStorage.removeItem("ballot-selections");
+      sessionStorage.removeItem("ballot-election-id");
+      sessionStorage.removeItem("ballot-election-name");
+      sessionStorage.removeItem("ballot-data");
       router.push("/vote/receipt");
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("review.error"));
+      const attempts = pinAttempts + 1;
+      setPinAttempts(attempts);
+      setPin("");
+      setPinShakeKey((k) => k + 1);
+      if (attempts >= MAX_PIN_ATTEMPTS) {
+        setError("Too many incorrect PINs. You have been logged out for security.");
+        setTimeout(forceLogout, 2000);
+      } else {
+        setError(
+          `${err instanceof Error ? err.message : t("review.error")} — ${MAX_PIN_ATTEMPTS - attempts} attempt${MAX_PIN_ATTEMPTS - attempts === 1 ? "" : "s"} remaining.`
+        );
+      }
     } finally {
       setSubmitting(false);
     }
@@ -88,50 +166,98 @@ export default function ReviewPage() {
         <p className="mt-1 text-sm text-gray-500">{t("review.subtitle")}</p>
       </div>
 
+      {electionName && (
+        <p className="mb-4 rounded-lg bg-green-50 px-4 py-2 text-sm font-medium text-green-800">
+          {electionName}
+        </p>
+      )}
+
       <div className="space-y-4">
-        {ballotPositions.map((position) => {
-          const candidate = getCandidateById(selections[position.id]);
-          if (!candidate) return null;
-
-          const initials = candidate.name
-            .split(" ")
-            .map((n) => n[0])
-            .join("")
-            .toUpperCase();
-
-          return (
-            <div
-              key={position.id}
-              className="flex items-center justify-between rounded-lg border border-gray-200 bg-white p-4"
-            >
-              <div className="flex items-center gap-4">
-                <div
-                  className="flex h-12 w-12 items-center justify-center rounded-full text-sm font-bold text-white"
-                  style={{ backgroundColor: candidate.photoPlaceholder }}
-                >
-                  {initials}
-                </div>
-                <div>
-                  <p className="text-xs font-medium text-gray-500 uppercase">
-                    {t(position.titleKey)}
-                  </p>
-                  <p className="text-base font-semibold text-gray-900">
-                    {candidate.name}
-                  </p>
-                  <p className="text-sm text-gray-500">
-                    {candidate.party} ({candidate.partyAbbreviation})
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => router.push("/vote/ballot")}
-                className="text-sm font-medium text-green-700 hover:text-green-800"
+        {electionId ? (
+          // Dynamic ballot — look up names from persisted ballot data
+          (dynamicBallot ? buildReviewItems(dynamicBallot, selections) : []).map((item) => {
+            const initials = item.candidateName
+              .split(" ")
+              .map((n) => n[0])
+              .join("")
+              .toUpperCase()
+              .slice(0, 3);
+            return (
+              <div
+                key={item.positionId}
+                className="flex items-center justify-between rounded-lg border border-gray-200 bg-white p-4"
               >
-                {t("review.change")}
-              </button>
-            </div>
-          );
-        })}
+                <div className="flex items-center gap-4">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-green-700 text-sm font-bold text-white">
+                    {initials}
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium uppercase text-gray-500">
+                      {item.positionTitle}
+                    </p>
+                    <p className="text-base font-semibold text-gray-900">
+                      {item.candidateName}
+                    </p>
+                    {item.candidateParty && (
+                      <p className="text-sm text-gray-500">{item.candidateParty}</p>
+                    )}
+                  </div>
+                </div>
+                <button
+                  onClick={() => router.back()}
+                  className="text-sm font-medium text-green-700 hover:text-green-800"
+                >
+                  {t("review.change")}
+                </button>
+              </div>
+            );
+          })
+        ) : (
+          // Legacy static ballot
+          ballotPositions.map((position) => {
+            const candidate = getCandidateById(selections[position.id]);
+            if (!candidate) return null;
+
+            const initials = candidate.name
+              .split(" ")
+              .map((n) => n[0])
+              .join("")
+              .toUpperCase();
+
+            return (
+              <div
+                key={position.id}
+                className="flex items-center justify-between rounded-lg border border-gray-200 bg-white p-4"
+              >
+                <div className="flex items-center gap-4">
+                  <div
+                    className="flex h-12 w-12 items-center justify-center rounded-full text-sm font-bold text-white"
+                    style={{ backgroundColor: candidate.photoPlaceholder }}
+                  >
+                    {initials}
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-gray-500 uppercase">
+                      {t(position.titleKey)}
+                    </p>
+                    <p className="text-base font-semibold text-gray-900">
+                      {candidate.name}
+                    </p>
+                    <p className="text-sm text-gray-500">
+                      {candidate.party} ({candidate.partyAbbreviation})
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => router.push("/vote/ballot")}
+                  className="text-sm font-medium text-green-700 hover:text-green-800"
+                >
+                  {t("review.change")}
+                </button>
+              </div>
+            );
+          })
+        )}
       </div>
 
       <div className="mt-6 rounded-lg border border-amber-200 bg-amber-50 p-4">
@@ -208,7 +334,7 @@ export default function ReviewPage() {
           {submitting ? t("review.submitting") : t("review.submit")}
         </button>
         <button
-          onClick={() => router.push("/vote/ballot")}
+          onClick={() => router.back()}
           disabled={submitting}
           className="w-full rounded-lg border border-gray-300 bg-white px-6 py-3 text-base font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
         >

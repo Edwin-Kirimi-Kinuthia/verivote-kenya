@@ -19,7 +19,7 @@ const createScheduleSchema = z.object({
 });
 
 const bookSlotSchema = z.object({
-  nationalId: z.string().regex(/^\d{8}$/, 'National ID must be exactly 8 digits'),
+  nationalId: z.string().regex(/^[A-Za-z0-9]{5,12}$/, 'National ID (5–9 digits) or Passport number (6–12 alphanumeric characters)'),
   purpose: z.enum(['REGISTRATION', 'PIN_RESET']).optional(),
 });
 
@@ -86,6 +86,41 @@ router.get('/scheduled', requireAuth, requireAdmin, async (req: Request, res: Re
     res.status(500).json({
       success: false,
       error: error instanceof Error ? error.message : 'Failed to fetch appointments',
+    });
+  }
+});
+
+// GET /api/appointments/:id/kyc-status?inquiryId=xxx - Poll Persona for KYC completion
+router.get('/:id/kyc-status', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const { inquiryId } = req.query;
+  if (!inquiryId || typeof inquiryId !== 'string') {
+    res.status(400).json({ success: false, error: 'inquiryId is required' });
+    return;
+  }
+  try {
+    const result = await appointmentService.checkKycStatus(inquiryId);
+    res.json({ success: true, data: result });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to check KYC status',
+    });
+  }
+});
+
+// POST /api/appointments/:id/start-kyc - Launch Persona KYC on officer's device before approval
+router.post('/:id/start-kyc', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const result = await appointmentService.startKycForAppointment(req.params.id);
+    res.json({ success: true, data: result });
+  } catch (error) {
+    if (error instanceof ServiceError) {
+      res.status(error.statusCode).json({ success: false, error: error.message });
+      return;
+    }
+    res.status(500).json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to start KYC',
     });
   }
 });

@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from 'crypto';
+import { createHash, randomBytes, createCipheriv, createDecipheriv } from 'crypto';
 import { getGroup } from 'threshold-elgamal';
 
 // 2048-bit FFDHE group (RFC 7919) via threshold-elgamal
@@ -36,14 +36,6 @@ function modInverse(a: bigint, mod: bigint): bigint {
   const { gcd, x } = extGcd(((a % mod) + mod) % mod, mod);
   if (gcd !== 1n) throw new Error('Modular inverse does not exist');
   return ((x % mod) + mod) % mod;
-}
-
-// --- Envelope format ---
-
-interface ElGamalEnvelope {
-  v: number;
-  c1: string;
-  c2: string;
 }
 
 // --- Encryption Service ---
@@ -92,70 +84,81 @@ class EncryptionService {
   }
 
   /**
-   * Encrypt vote selections using standard ElGamal.
-   * selections -> sorted JSON -> BigInt -> (c1, c2) -> JSON envelope string
+   * Derive a 32-byte AES-256 key from the ElGamal private key using SHA-256.
+   * This ties the symmetric key to the same root of trust as the asymmetric key.
+   */
+  private deriveAesKey(): Buffer {
+    const privateKeyHex = this.privateKey!.toString(16).padStart(512, '0');
+    return createHash('sha256').update(privateKeyHex).digest();
+  }
+
+  /**
+   * Encrypt vote selections using AES-256-GCM.
+   * Handles arbitrary-size ballots (including 6+ UUID-keyed positions).
+   * Output format version 2 — backward-compatible with v1 ElGamal decryption.
    */
   encryptVote(selections: Record<string, string>): string {
     this.ensureInitialized();
 
     const sorted = JSON.stringify(selections, Object.keys(selections).sort());
-    const messageBytes = Buffer.from(sorted, 'utf-8');
-    const m = BigInt('0x' + messageBytes.toString('hex'));
-
-    if (m === 0n) {
+    if (!sorted || sorted === '{}') {
       throw new Error('Vote data cannot be empty');
     }
-    if (m >= p) {
-      throw new Error('Vote data too large for encryption parameters');
-    }
 
-    // Random nonce r in [2, p-2]
-    const rBytes = randomBytes(256);
-    let r = BigInt('0x' + rBytes.toString('hex')) % (p - 3n) + 2n;
+    const aesKey = this.deriveAesKey();
+    const iv = randomBytes(12); // 96-bit IV for GCM
+    const cipher = createCipheriv('aes-256-gcm', aesKey, iv);
+    const encrypted = Buffer.concat([
+      cipher.update(sorted, 'utf-8'),
+      cipher.final(),
+    ]);
+    const tag = cipher.getAuthTag();
 
-    // Standard ElGamal: c1 = g^r mod p, c2 = m * h^r mod p
-    const c1 = modPow(g, r, p);
-    const c2 = (m * modPow(this.publicKey!, r, p)) % p;
-
-    // Zero out r (best-effort in JS)
-    r = 0n;
-
-    const envelope: ElGamalEnvelope = {
-      v: 1,
-      c1: c1.toString(16),
-      c2: c2.toString(16),
-    };
-
-    return JSON.stringify(envelope);
+    return JSON.stringify({
+      v: 2,
+      iv: iv.toString('hex'),
+      tag: tag.toString('hex'),
+      data: encrypted.toString('hex'),
+    });
   }
 
   /**
    * Decrypt ciphertext envelope back to original selections.
-   * Used for tallying by authorized key holders.
+   * Supports both v1 (ElGamal — legacy small ballots) and v2 (AES-256-GCM).
    */
   decryptVote(serializedCiphertext: string): Record<string, string> {
     this.ensureInitialized();
 
-    const envelope: ElGamalEnvelope = JSON.parse(serializedCiphertext);
+    const envelope = JSON.parse(serializedCiphertext) as { v: number; [key: string]: unknown };
 
-    if (envelope.v !== 1) {
-      throw new Error(`Unsupported ciphertext version: ${envelope.v}`);
+    if (envelope.v === 2) {
+      const aesKey = this.deriveAesKey();
+      const iv = Buffer.from(envelope.iv as string, 'hex');
+      const tag = Buffer.from(envelope.tag as string, 'hex');
+      const data = Buffer.from(envelope.data as string, 'hex');
+
+      const decipher = createDecipheriv('aes-256-gcm', aesKey, iv);
+      decipher.setAuthTag(tag);
+      const decrypted = Buffer.concat([decipher.update(data), decipher.final()]);
+      return JSON.parse(decrypted.toString('utf-8')) as Record<string, string>;
     }
 
-    const c1 = BigInt('0x' + envelope.c1);
-    const c2 = BigInt('0x' + envelope.c2);
+    if (envelope.v === 1) {
+      // Legacy ElGamal decryption (small ballots with short string keys)
+      const c1 = BigInt('0x' + (envelope.c1 as string));
+      const c2 = BigInt('0x' + (envelope.c2 as string));
 
-    // Decrypt: m = c2 * (c1^x)^(-1) mod p
-    const s = modPow(c1, this.privateKey!, p);
-    const sInv = modInverse(s, p);
-    const m = (c2 * sInv) % p;
+      const s = modPow(c1, this.privateKey!, p);
+      const sInv = modInverse(s, p);
+      const m = (c2 * sInv) % p;
 
-    // Convert BigInt back to UTF-8
-    let hex = m.toString(16);
-    if (hex.length % 2 !== 0) hex = '0' + hex;
-    const decoded = Buffer.from(hex, 'hex').toString('utf-8');
+      let hex = m.toString(16);
+      if (hex.length % 2 !== 0) hex = '0' + hex;
+      const decoded = Buffer.from(hex, 'hex').toString('utf-8');
+      return JSON.parse(decoded) as Record<string, string>;
+    }
 
-    return JSON.parse(decoded) as Record<string, string>;
+    throw new Error(`Unsupported ciphertext version: ${envelope.v}`);
   }
 
   /**

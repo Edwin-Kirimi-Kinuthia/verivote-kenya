@@ -27,23 +27,30 @@ export class PersonaService {
       };
     }
 
-    const response = await fetch(`${this.baseUrl}/inquiries`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${this.apiKey}`,
-        'Content-Type': 'application/json',
-        'Persona-Version': '2023-01-05',
-        'Key-Inflection': 'camel',
-      },
-      body: JSON.stringify({
-        data: {
-          attributes: {
-            inquiryTemplateId: this.templateId,
-            referenceId,
-          },
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}/inquiries`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+          'Persona-Version': '2023-01-05',
+          'Key-Inflection': 'camel',
         },
-      }),
-    });
+        body: JSON.stringify({
+          data: {
+            attributes: {
+              inquiryTemplateId: this.templateId,
+              referenceId,
+            },
+          },
+        }),
+      });
+    } catch (networkErr) {
+      const cause = (networkErr as NodeJS.ErrnoException).cause as NodeJS.ErrnoException | undefined;
+      const code = cause?.code ?? (networkErr as NodeJS.ErrnoException).code ?? 'UNKNOWN';
+      throw new Error(`Cannot reach Persona API (${code}). Check internet connectivity or set PERSONA_MOCK=true for local development.`);
+    }
 
     if (!response.ok) {
       const body = await response.text();

@@ -41,6 +41,14 @@ import aiRoutes from './routes/ai.routes.js';
 import tallyRoutes from './routes/tally.routes.js';
 import mixnetRoutes from './routes/mixnet.routes.js';
 import ceremonyRoutes from './routes/ceremony.routes.js';
+import electionRoutes from './routes/election.routes.js';
+import adminAuthRoutes from './routes/admin-auth.routes.js';
+import electionMgmtRoutes from './routes/election-mgmt.routes.js';
+import ballotRoutes from './routes/ballot.routes.js';
+import pollingStationRoutes from './routes/polling-station.routes.js';
+import staffRoutes from './routes/staff.routes.js';
+import declarationRoutes from './routes/declaration.routes.js';
+import geoRoutes from './routes/geo.routes.js';
 
 // ============================================
 // SENTRY — initialise before anything else
@@ -322,38 +330,11 @@ app.get('/api/stats/explorer', publicStatsRateLimiter, async (_req: Request, res
   }
 });
 
-app.get('/api/polling-stations', async (req: Request, res: Response) => {
-  try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 20;
-    const county = req.query.county as string | undefined;
-
-    const result = await pollingStationRepository.findMany({
-      page,
-      limit,
-      county,
-      isActive: true,
-    });
-
-    res.json({
-      success: true,
-      ...result,
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error instanceof Error ? error.message : 'Failed to fetch stations',
-    });
-  }
-});
-
+// /api/counties — legacy alias kept for backward compatibility
 app.get('/api/counties', async (_req: Request, res: Response) => {
   try {
     const counties = await pollingStationRepository.getCounties();
-    res.json({
-      success: true,
-      data: counties,
-    });
+    res.json({ success: true, data: counties });
   } catch (error) {
     res.status(500).json({
       success: false,
@@ -398,6 +379,14 @@ app.use('/api/ai', aiRoutes);
 app.use('/api/tally', tallyRoutes);
 app.use('/api/mixnet', mixnetRoutes);
 app.use('/api/ceremony', ceremonyRoutes);
+app.use('/api/election', electionRoutes);
+app.use('/api/admin-auth', adminAuthRoutes);
+app.use('/api/elections', electionMgmtRoutes);
+app.use('/api/ballot', ballotRoutes);
+app.use('/api/polling-stations', pollingStationRoutes);
+app.use('/api/staff', staffRoutes);
+app.use('/api/declarations', declarationRoutes);
+app.use('/api/geo', geoRoutes);
 
 // ============================================
 // ERROR HANDLING MIDDLEWARE

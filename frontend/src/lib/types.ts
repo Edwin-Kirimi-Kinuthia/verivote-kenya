@@ -30,7 +30,17 @@ export interface PollingStation {
   county: string;
   constituency: string;
   ward: string;
+  latitude: number | null;
+  longitude: number | null;
+  address: string | null;
+  isDiaspora: boolean;
+  country: string | null;
+  registeredVoters: number;
   isActive: boolean;
+}
+
+export interface NearbyStation extends PollingStation {
+  distanceKm: number;
 }
 
 export interface PaginatedResponse<T> {
@@ -85,9 +95,6 @@ export interface RegisterResult {
 export interface AdminRegisterResult {
   voterId: string;
   nationalId: string;
-  walletAddress: string;
-  sbtTokenId: string;
-  txHash: string;
 }
 
 export interface SetupLinkResult {
@@ -101,6 +108,48 @@ export interface RegisterLiveResult {
   personaUrl: string;
 }
 
+export type StaffRole =
+  | "COMMISSIONER" | "NATIONAL_RO" | "COUNTY_RO"
+  | "CONSTITUENCY_RO" | "PRESIDING_OFFICER" | "ICT_ADMIN" | "OBSERVER";
+
+export type JurisdictionLevel =
+  | "NATIONAL" | "COUNTY" | "CONSTITUENCY" | "WARD" | "POLLING_STATION";
+
+export type DeclarationStatus = "DRAFT" | "DECLARED" | "CONTESTED" | "ANNULLED";
+
+export interface IebcStaffMember {
+  id: string;
+  voterId: string;
+  staffRole: StaffRole;
+  jurisdictionLevel: JurisdictionLevel;
+  jurisdictionValue: string | null;
+  pollingStationId: string | null;
+  isActive: boolean;
+  createdByStaffId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  voter?: { id: string; nationalId: string; email?: string | null; phoneNumber?: string | null };
+}
+
+export interface ResultDeclaration {
+  id: string;
+  electionId: string;
+  positionId: string;
+  staffId: string;
+  status: DeclarationStatus;
+  jurisdictionLevel: JurisdictionLevel;
+  jurisdictionValue: string | null;
+  tallySnapshot: string | null;
+  declaredAt: string | null;
+  contestedAt: string | null;
+  contestReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+  election?: { id: string; name: string; status: string };
+  position?: { id: string; title: string; scope: string; scopeValue: string | null };
+  staff?: { voter: { nationalId: string } };
+}
+
 export interface AuthData {
   token: string;
   expiresIn: string;
@@ -109,6 +158,10 @@ export interface AuthData {
     nationalId: string;
     status: VoterStatus;
     role: string;
+    staffId?: string;
+    staffRole?: StaffRole;
+    jurisdictionLevel?: JurisdictionLevel;
+    jurisdictionValue?: string | null;
   };
 }
 
@@ -169,6 +222,14 @@ export interface SlotDeletionResult {
   deletedCount: number;
 }
 
+export interface KycStartResult {
+  appointmentId: string;
+  voterId: string;
+  nationalId: string;
+  inquiryId: string;
+  personaUrl: string;
+}
+
 export interface ApproveResult {
   voterId: string;
   nationalId: string;
@@ -203,6 +264,54 @@ export interface PinResetResult {
   verificationNotes?: string;
   verificationType: string;
   linkSent?: { contact: string; channel: 'SMS' | 'EMAIL' };
+}
+
+// ============================================================================
+// DYNAMIC ELECTION TYPES (API-returned shapes)
+// ============================================================================
+
+export type ElectionType = 'GOVERNMENT' | 'INSTITUTIONAL' | 'CORPORATE' | 'CUSTOM';
+export type ElectionStatus = 'DRAFT' | 'NOMINATIONS' | 'ACTIVE' | 'CLOSED' | 'TALLIED' | 'ARCHIVED';
+export type PositionScope = 'NATIONAL' | 'COUNTY' | 'CONSTITUENCY' | 'WARD' | 'CUSTOM';
+
+// Matches ActiveElectionSummary from ballot.service.ts
+export interface ElectionSummary {
+  electionId: string;
+  name: string;
+  type: string;
+  orgName: string | null;
+  startDate: string | null;
+  endDate: string | null;
+  positionCount: number;
+}
+
+// Matches BallotCandidate from ballot.service.ts
+export interface DynamicCandidate {
+  candidateId: string;
+  name: string;
+  party: string | null;
+  ballotNumber: number | null;
+  photoUrl: string | null;
+}
+
+// Matches BallotPosition from ballot.service.ts
+export interface DynamicPosition {
+  positionId: string;
+  title: string;
+  description: string | null;
+  scope: PositionScope;
+  scopeValue?: string | null;
+  maxVotesPerVoter: number;
+  orderIndex: number;
+  candidates: DynamicCandidate[];
+}
+
+// Matches VoterBallot from ballot.service.ts
+export interface DynamicBallot {
+  electionId: string;
+  electionName: string;
+  electionType: string;
+  positions: DynamicPosition[];
 }
 
 // ============================================================================
