@@ -17,7 +17,7 @@ import { prisma } from '../database/client.js';
 import { requireAuth, requireAdmin, requireStaffRole } from '../middleware/auth.middleware.js';
 import type { AuthenticatedRequest } from '../types/auth.types.js';
 
-const router = Router();
+const router: Router = Router();
 
 // ── Validation schemas ─────────────────────────────────────────────────────────
 

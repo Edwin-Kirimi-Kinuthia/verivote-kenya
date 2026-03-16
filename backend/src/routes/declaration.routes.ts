@@ -17,7 +17,7 @@ import {
 import { ServiceError } from '../services/voter.service.js';
 import type { AuthenticatedRequest } from '../types/auth.types.js';
 
-const router = Router();
+const router: Router = Router();
 router.use(requireAuth, requireAdmin);
 
 // GET /api/declarations

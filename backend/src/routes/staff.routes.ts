@@ -19,7 +19,7 @@ import { ServiceError } from '../services/voter.service.js';
 import { prisma } from '../database/client.js';
 import type { AuthenticatedRequest } from '../types/auth.types.js';
 
-const router = Router();
+const router: Router = Router();
 router.use(requireAuth, requireAdmin);
 
 const staffSchema = z.object({
