@@ -157,7 +157,8 @@ export async function getVoterBallot(voterId: string, electionId: string): Promi
   });
   if (!voter) throw new ServiceError('Voter not found', 404);
 
-  const election = await prisma.election.findUnique({
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const election = await (prisma.election as any).findUnique({
     where:   { id: electionId },
     include: {
       positions: {
@@ -169,7 +170,8 @@ export async function getVoterBallot(voterId: string, electionId: string): Promi
           },
         },
       },
-      enrollments: { where: { voterId } },
+      enrollments:   { where: { voterId } },
+      jurisdictions: true,
     },
   });
   if (!election) throw new ServiceError('Election not found', 404);
@@ -187,20 +189,88 @@ export async function getVoterBallot(voterId: string, electionId: string): Promi
   const ward         = voter.pollingStation?.ward         ?? '';
   const isEnrolled   = election.enrollments.length > 0;
 
-  // Diaspora voters at embassy stations see only NATIONAL-scoped positions
-  // (they cannot vote for Governor, MP, etc. for a specific geographic area)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const isDiaspora = (voter.pollingStation as any)?.isDiaspora === true;
 
-  const eligiblePositions: BallotPosition[] = election.positions
-    .filter(pos => {
+  // ── Jurisdiction-tree ballot (new path) ─────────────────────────────────────
+  // If the election has a jurisdiction tree AND at least one position is linked to
+  // a jurisdiction node, use tree-traversal logic to build the ballot.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const treePositions = (election.positions as any[]).filter((p: any) => p.jurisdictionId != null);
+
+  if (treePositions.length > 0 && election.jurisdictions.length > 0) {
+    // Build parent map for ancestor walk
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const nodeMap = new Map((election.jurisdictions as any[]).map((n: any) => [n.id, n]));
+
+    // Find which jurisdiction nodes match the voter's location by name
+    // (case-insensitive match against county, constituency, or ward)
+    const voterAreas = new Set([
+      county.toLowerCase(),
+      constituency.toLowerCase(),
+      ward.toLowerCase(),
+    ]);
+
+    // Collect all ancestor IDs for the matching leaf nodes
+    const eligibleNodeIds = new Set<string>();
+
+    for (const node of election.jurisdictions) {
+      if (voterAreas.has(node.name.toLowerCase())) {
+        // Add this node and all its ancestors
+        let current: typeof node | undefined = node;
+        while (current) {
+          eligibleNodeIds.add(current.id);
+          current = current.parentId ? nodeMap.get(current.parentId) : undefined;
+        }
+      }
+    }
+
+    // Root-level nodes (depth 0) are always included — they represent the top of
+    // the election (e.g. "Kenya") and hold national-level positions.
+    for (const node of election.jurisdictions) {
+      if (node.depth === 0) eligibleNodeIds.add(node.id);
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const eligiblePositions: BallotPosition[] = treePositions
+      .filter((pos: any) => eligibleNodeIds.has(pos.jurisdictionId as string))
+      .map((pos: any) => ({
+        positionId:       pos.id,
+        title:            pos.title,
+        description:      pos.description,
+        scope:            pos.scope,
+        maxVotesPerVoter: pos.maxVotesPerVoter,
+        orderIndex:       pos.orderIndex,
+        candidates:       (pos.candidates as any[]).map((c: any) => ({
+          candidateId:  c.id,
+          name:         c.name,
+          party:        c.party,
+          description:  c.description,
+          photoUrl:     c.photoUrl,
+          ballotNumber: c.ballotNumber,
+        })),
+      }))
+      .filter((pos: any) => pos.candidates.length > 0);
+
+    return {
+      electionId:   election.id,
+      electionName: election.name,
+      electionType: election.type,
+      positions:    eligiblePositions,
+    };
+  }
+
+  // ── Legacy scope/scopeValue ballot (original path) ──────────────────────────
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const eligiblePositions: BallotPosition[] = (election.positions as any[])
+    .filter((pos: any) => {
       if (isDiaspora && election.type === 'GOVERNMENT') {
         return pos.scope === 'NATIONAL';
       }
       if (pos.scope === 'CUSTOM') return isEnrolled;
       return isEligiblePosition(pos.scope, pos.scopeValue, county, constituency, ward);
     })
-    .map(pos => {
+    .map((pos: any) => {
       const localCandidates = filterCandidatesForVoter(
         pos.scope, pos.scopeValue, pos.candidates, county, constituency, ward,
       );
@@ -211,7 +281,7 @@ export async function getVoterBallot(voterId: string, electionId: string): Promi
         scope:            pos.scope,
         maxVotesPerVoter: pos.maxVotesPerVoter,
         orderIndex:       pos.orderIndex,
-        candidates:       localCandidates.map(c => ({
+        candidates:       localCandidates.map((c: any) => ({
           candidateId:  c.id,
           name:         c.name,
           party:        c.party,
@@ -222,7 +292,7 @@ export async function getVoterBallot(voterId: string, electionId: string): Promi
       };
     })
     // Drop template positions that have no candidates for this voter's area
-    .filter(pos => pos.candidates.length > 0);
+    .filter((pos: any) => pos.candidates.length > 0);
 
   return {
     electionId:   election.id,

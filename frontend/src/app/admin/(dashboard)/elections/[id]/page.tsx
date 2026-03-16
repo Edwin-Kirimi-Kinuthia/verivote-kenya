@@ -88,7 +88,19 @@ function getStatusActions(status: ElectionStatus): StatusAction[] {
   }
 }
 
-type Tab = "overview" | "ballot";
+// ── Jurisdiction tree types ────────────────────────────────────────────────────
+
+interface JurisdictionNode {
+  id:         string;
+  parentId:   string | null;
+  name:       string;
+  depth:      number;
+  orderIndex: number;
+  _count:     { children: number; positions: number };
+  positions:  PositionDetail[];
+}
+
+type Tab = "overview" | "ballot" | "jurisdictions";
 
 export default function ElectionDetailPage({
   params,
@@ -101,6 +113,19 @@ export default function ElectionDetailPage({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [tab, setTab] = useState<Tab>("overview");
+
+  // Jurisdiction tree state
+  const [jurisdictions, setJurisdictions] = useState<JurisdictionNode[]>([]);
+  const [jurisLoading, setJurisLoading] = useState(false);
+  const [addingJuris, setAddingJuris] = useState(false);
+  const [jurisForm, setJurisForm] = useState({ name: "", parentId: "" });
+  const [jurisSaving, setJurisSaving] = useState(false);
+  const [jurisError, setJurisError] = useState("");
+  // Add position to jurisdiction
+  const [addingPosToJuris, setAddingPosToJuris] = useState<string | null>(null);
+  const [jurisPosForm, setJurisPosForm] = useState({ title: "", description: "", scope: "NATIONAL" as PositionScope, maxVotesPerVoter: 1 });
+  const [jurisPosSaving, setJurisPosSaving] = useState(false);
+  const [jurisPosError, setJurisPosError] = useState("");
 
   // Status transition
   const [advancingStatus, setAdvancingStatus] = useState(false);
@@ -136,6 +161,10 @@ export default function ElectionDetailPage({
 
   useEffect(() => { fetchElection(); }, [id]);
 
+  useEffect(() => {
+    if (tab === "jurisdictions") fetchJurisdictions();
+  }, [tab, id]);
+
   // Load counties for GOVERNMENT election geo dropdowns
   useEffect(() => {
     api.get<{ success: boolean; data: string[] }>("/api/geo/counties")
@@ -163,6 +192,69 @@ export default function ElectionDetailPage({
       .catch(() => {});
     setPosGeoWard("");
   }, [posGeoConstituency]);
+
+  async function fetchJurisdictions() {
+    setJurisLoading(true);
+    try {
+      const res = await api.get<ApiResponse<JurisdictionNode[]>>(`/api/elections/${id}/jurisdictions`);
+      if (res.success && res.data) setJurisdictions(res.data);
+    } catch (e) {
+      setJurisError(e instanceof Error ? e.message : "Failed to load jurisdictions");
+    } finally {
+      setJurisLoading(false);
+    }
+  }
+
+  async function handleAddJurisdiction(e: React.FormEvent) {
+    e.preventDefault();
+    setJurisError("");
+    setJurisSaving(true);
+    try {
+      await api.post(`/api/elections/${id}/jurisdictions`, {
+        name:     jurisForm.name.trim(),
+        parentId: jurisForm.parentId || undefined,
+      });
+      setAddingJuris(false);
+      setJurisForm({ name: "", parentId: "" });
+      await fetchJurisdictions();
+    } catch (e) {
+      setJurisError(e instanceof Error ? e.message : "Failed to add jurisdiction");
+    } finally {
+      setJurisSaving(false);
+    }
+  }
+
+  async function handleDeleteJurisdiction(nodeId: string, name: string) {
+    if (!confirm(`Delete jurisdiction "${name}"? This also removes all positions inside it.`)) return;
+    try {
+      await api.delete(`/api/elections/jurisdictions/${nodeId}`);
+      await fetchJurisdictions();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to delete jurisdiction");
+    }
+  }
+
+  async function handleAddPositionToJuris(e: React.FormEvent) {
+    e.preventDefault();
+    if (!addingPosToJuris) return;
+    setJurisPosError("");
+    setJurisPosSaving(true);
+    try {
+      await api.post(`/api/elections/${id}/jurisdictions/${addingPosToJuris}/positions`, {
+        title:            jurisPosForm.title,
+        description:      jurisPosForm.description || undefined,
+        scope:            jurisPosForm.scope,
+        maxVotesPerVoter: jurisPosForm.maxVotesPerVoter,
+      });
+      setAddingPosToJuris(null);
+      setJurisPosForm({ title: "", description: "", scope: "NATIONAL", maxVotesPerVoter: 1 });
+      await fetchJurisdictions();
+    } catch (e) {
+      setJurisPosError(e instanceof Error ? e.message : "Failed to add position");
+    } finally {
+      setJurisPosSaving(false);
+    }
+  }
 
   async function fetchElection() {
     setLoading(true);
@@ -358,7 +450,7 @@ export default function ElectionDetailPage({
 
       {/* ── Tabs ────────────────────────────────────────────────────────────── */}
       <div className="mb-6 flex gap-1 rounded-xl border border-gray-200 bg-gray-100 p-1">
-        {(["overview", "ballot"] as Tab[]).map((t) => (
+        {(["overview", "ballot", "jurisdictions"] as Tab[]).map((t) => (
           <button
             key={t}
             type="button"
@@ -367,7 +459,7 @@ export default function ElectionDetailPage({
               tab === t ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"
             }`}
           >
-            {t === "ballot" ? "Ballot Setup" : "Overview"}
+            {t === "ballot" ? "Ballot Setup" : t === "jurisdictions" ? "Jurisdictions" : "Overview"}
           </button>
         ))}
       </div>
@@ -440,6 +532,212 @@ export default function ElectionDetailPage({
             <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">
               This election is {election.status.toLowerCase()} — positions and candidates are locked.
             </p>
+          )}
+        </div>
+      )}
+
+      {/* ── Jurisdictions Tab ────────────────────────────────────────────────── */}
+      {tab === "jurisdictions" && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-gray-500">
+                Build the election&apos;s geographic or organisational hierarchy. Each node can hold
+                positions and candidates. Voters are matched to a leaf node by their polling station&apos;s
+                county, constituency, or ward name; they see positions on that node and all its ancestors.
+              </p>
+            </div>
+            {canEdit && (
+              <button
+                type="button"
+                onClick={() => setAddingJuris((v) => !v)}
+                className="ml-4 flex shrink-0 items-center gap-2 rounded-lg bg-green-700 px-4 py-2 text-sm font-semibold text-white hover:bg-green-800"
+              >
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                </svg>
+                Add Node
+              </button>
+            )}
+          </div>
+
+          {jurisError && <p className="rounded-lg bg-red-50 px-4 py-2 text-sm text-red-700">{jurisError}</p>}
+
+          {/* Add jurisdiction form */}
+          {addingJuris && (
+            <form onSubmit={handleAddJurisdiction} className="rounded-xl border-2 border-green-200 bg-green-50 p-5 space-y-4">
+              <h3 className="font-semibold text-gray-900">New Jurisdiction Node</h3>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-gray-700">Name *</label>
+                  <input
+                    required
+                    value={jurisForm.name}
+                    onChange={(e) => setJurisForm((f) => ({ ...f, name: e.target.value }))}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-green-700 focus:outline-none focus:ring-1 focus:ring-green-700"
+                    placeholder="e.g. Kenya, Nairobi County, Westlands"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-gray-700">Parent Node</label>
+                  <select
+                    value={jurisForm.parentId}
+                    onChange={(e) => setJurisForm((f) => ({ ...f, parentId: e.target.value }))}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-green-700 focus:outline-none focus:ring-1 focus:ring-green-700"
+                  >
+                    <option value="">— Root (no parent)</option>
+                    {jurisdictions.map((n) => (
+                      <option key={n.id} value={n.id}>
+                        {"  ".repeat(n.depth)}{n.depth > 0 ? "↳ " : ""}{n.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div className="flex gap-3">
+                <button type="submit" disabled={jurisSaving} className="rounded-lg bg-green-700 px-4 py-2 text-sm font-semibold text-white hover:bg-green-800 disabled:opacity-50">
+                  {jurisSaving ? "Saving…" : "Save Node"}
+                </button>
+                <button type="button" onClick={() => { setAddingJuris(false); setJurisError(""); }} className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium hover:bg-gray-50">
+                  Cancel
+                </button>
+              </div>
+            </form>
+          )}
+
+          {/* Tree display */}
+          {jurisLoading ? (
+            <div className="flex justify-center py-8">
+              <div className="h-6 w-6 animate-spin rounded-full border-4 border-green-700 border-t-transparent" />
+            </div>
+          ) : jurisdictions.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-gray-300 bg-white p-10 text-center text-gray-500">
+              No jurisdiction nodes yet. Add a root node to start.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {jurisdictions.map((node) => (
+                <div
+                  key={node.id}
+                  style={{ marginLeft: `${node.depth * 24}px` }}
+                  className="rounded-xl border border-gray-200 bg-white shadow-sm"
+                >
+                  <div className="flex items-center justify-between px-5 py-3 bg-gray-50 rounded-t-xl border-b border-gray-100">
+                    <div>
+                      <span className="font-semibold text-gray-900">
+                        {node.depth > 0 && <span className="mr-1 text-gray-400">↳</span>}
+                        {node.name}
+                      </span>
+                      <span className="ml-3 text-xs text-gray-400">
+                        depth {node.depth} · {node._count.children} child{node._count.children !== 1 ? "ren" : ""} · {node._count.positions} position{node._count.positions !== 1 ? "s" : ""}
+                      </span>
+                    </div>
+                    {canEdit && (
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAddingPosToJuris(addingPosToJuris === node.id ? null : node.id);
+                            setJurisPosForm({ title: "", description: "", scope: "NATIONAL", maxVotesPerVoter: 1 });
+                            setJurisPosError("");
+                          }}
+                          className="rounded-md px-3 py-1.5 text-xs font-medium text-green-700 hover:bg-green-50"
+                        >
+                          + Position
+                        </button>
+                        {node._count.children === 0 && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteJurisdiction(node.id, node.name)}
+                            className="rounded-md px-2 py-1.5 text-xs font-medium text-red-500 hover:bg-red-50"
+                          >
+                            Delete
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Add position to this node */}
+                  {addingPosToJuris === node.id && (
+                    <form onSubmit={handleAddPositionToJuris} className="border-b border-gray-200 bg-green-50 px-5 py-4 space-y-3">
+                      <p className="text-xs font-semibold text-green-800">New Position in &quot;{node.name}&quot;</p>
+                      {jurisPosError && <p className="text-sm text-red-600">{jurisPosError}</p>}
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div>
+                          <label className="mb-1 block text-xs font-semibold text-gray-700">Title *</label>
+                          <input
+                            required
+                            value={jurisPosForm.title}
+                            onChange={(e) => setJurisPosForm((f) => ({ ...f, title: e.target.value }))}
+                            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-green-700 focus:outline-none focus:ring-1 focus:ring-green-700"
+                            placeholder="e.g. Governor"
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-xs font-semibold text-gray-700">Scope</label>
+                          <select
+                            value={jurisPosForm.scope}
+                            onChange={(e) => setJurisPosForm((f) => ({ ...f, scope: e.target.value as PositionScope }))}
+                            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-green-700 focus:outline-none focus:ring-1 focus:ring-green-700"
+                          >
+                            <option value="NATIONAL">National</option>
+                            <option value="COUNTY">County</option>
+                            <option value="CONSTITUENCY">Constituency</option>
+                            <option value="WARD">Ward</option>
+                            <option value="CUSTOM">Custom</option>
+                          </select>
+                        </div>
+                        <div className="sm:col-span-2">
+                          <label className="mb-1 block text-xs font-semibold text-gray-700">Description</label>
+                          <textarea
+                            rows={2}
+                            value={jurisPosForm.description}
+                            onChange={(e) => setJurisPosForm((f) => ({ ...f, description: e.target.value }))}
+                            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-green-700 focus:outline-none focus:ring-1 focus:ring-green-700"
+                            placeholder="Optional"
+                          />
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button type="submit" disabled={jurisPosSaving} className="rounded-lg bg-green-700 px-4 py-2 text-sm font-semibold text-white hover:bg-green-800 disabled:opacity-50">
+                          {jurisPosSaving ? "Saving…" : "Save Position"}
+                        </button>
+                        <button type="button" onClick={() => { setAddingPosToJuris(null); setJurisPosError(""); }} className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium hover:bg-gray-50">
+                          Cancel
+                        </button>
+                      </div>
+                    </form>
+                  )}
+
+                  {/* Positions under this node */}
+                  {node.positions.length > 0 && (
+                    <ul className="divide-y divide-gray-100 px-5 py-2">
+                      {node.positions.map((pos) => (
+                        <li key={pos.id} className="flex items-center justify-between py-2 text-sm">
+                          <div>
+                            <span className="font-medium text-gray-900">{pos.title}</span>
+                            <span className="ml-2 inline-flex items-center rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">
+                              {SCOPE_LABELS[pos.scope]}
+                            </span>
+                            <span className="ml-2 text-gray-400">{pos.candidates.length} candidates</span>
+                          </div>
+                          {canEdit && (
+                            <button
+                              type="button"
+                              onClick={() => handleDeletePosition(pos.id, pos.title)}
+                              className="rounded-md px-2 py-1 text-xs font-medium text-red-500 hover:bg-red-50"
+                            >
+                              Delete
+                            </button>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              ))}
+            </div>
           )}
         </div>
       )}

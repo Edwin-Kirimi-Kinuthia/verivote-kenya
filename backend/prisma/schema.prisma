@@ -162,6 +162,7 @@ model Election {
   votes        Vote[]
   enrollments  ElectionEnrollment[]
   declarations ResultDeclaration[]
+  jurisdictions ElectionJurisdiction[]
 
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt      @map("updated_at")
@@ -171,12 +172,48 @@ model Election {
   @@map("elections")
 }
 
+// ── ElectionJurisdiction ──────────────────────────────────────────────────────
+// Self-referential tree: each node represents one level of the election's
+// geographic or organisational hierarchy.  The root node (parentId = null)
+// represents the top-level jurisdiction (e.g. "Kenya" or "Nairobi County").
+// Nodes at any depth can hold Positions and Candidates.
+
+model ElectionJurisdiction {
+  id         String   @id @default(uuid()) @db.Uuid
+  electionId String   @map("election_id") @db.Uuid
+  election   Election @relation(fields: [electionId], references: [id], onDelete: Cascade)
+
+  // Self-referential tree
+  parentId String?               @map("parent_id") @db.Uuid
+  parent   ElectionJurisdiction? @relation("JurisdictionTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children ElectionJurisdiction[] @relation("JurisdictionTree")
+
+  name       String @db.VarChar(255)
+  depth      Int    @default(0)
+  orderIndex Int    @default(0) @map("order_index")
+
+  positions Position[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt      @map("updated_at")
+
+  @@index([electionId])
+  @@index([parentId])
+  @@index([electionId, name])
+  @@map("election_jurisdictions")
+}
+
 // ── Position ──────────────────────────────────────────────────────────────────
 
 model Position {
   id         String        @id @default(uuid()) @db.Uuid
   electionId String        @map("election_id") @db.Uuid
   election   Election      @relation(fields: [electionId], references: [id], onDelete: Cascade)
+
+  // Optional link to a jurisdiction tree node.
+  // When set, this position belongs to that node and all its ancestors in the tree.
+  jurisdictionId String?               @map("jurisdiction_id") @db.Uuid
+  jurisdiction   ElectionJurisdiction? @relation(fields: [jurisdictionId], references: [id], onDelete: Cascade)
 
   title            String        @db.VarChar(255)
   description      String?       @db.Text
@@ -193,6 +230,7 @@ model Position {
   updatedAt  DateTime @updatedAt      @map("updated_at")
 
   @@index([electionId])
+  @@index([jurisdictionId])
   @@index([scope, scopeValue])
   @@map("positions")
 }

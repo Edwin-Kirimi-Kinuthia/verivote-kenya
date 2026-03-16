@@ -131,6 +131,55 @@ router.delete('/candidates/:candId', async (req: Request, res: Response) => {
   catch (e) { handleError(e, res); }
 });
 
+// ── Jurisdiction tree ─────────────────────────────────────────────────────────
+
+const jurisdictionSchema = z.object({
+  name:       z.string().min(1).max(255),
+  parentId:   z.string().uuid().optional(),
+  orderIndex: z.number().int().min(0).optional(),
+});
+
+// GET /api/elections/:id/jurisdictions — full flat list
+router.get('/:id/jurisdictions', async (req: Request, res: Response) => {
+  try { res.json({ success: true, data: await svc.listJurisdictions(req.params.id) }); }
+  catch (e) { handleError(e, res); }
+});
+
+// POST /api/elections/:id/jurisdictions — create a node
+router.post('/:id/jurisdictions', async (req: Request, res: Response) => {
+  const parsed = jurisdictionSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ success: false, error: parsed.error.errors[0].message }); return; }
+  try { res.status(201).json({ success: true, data: await svc.createJurisdiction(req.params.id, parsed.data) }); }
+  catch (e) { handleError(e, res); }
+});
+
+// PATCH /api/elections/jurisdictions/:jid — update a node
+router.patch('/jurisdictions/:jid', async (req: Request, res: Response) => {
+  const parsed = z.object({ name: z.string().min(1).max(255).optional(), orderIndex: z.number().int().min(0).optional() }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ success: false, error: parsed.error.errors[0].message }); return; }
+  try { res.json({ success: true, data: await svc.updateJurisdiction(req.params.jid, parsed.data) }); }
+  catch (e) { handleError(e, res); }
+});
+
+// DELETE /api/elections/jurisdictions/:jid — delete a leaf node
+router.delete('/jurisdictions/:jid', async (req: Request, res: Response) => {
+  try { await svc.deleteJurisdiction(req.params.jid); res.json({ success: true }); }
+  catch (e) { handleError(e, res); }
+});
+
+// POST /api/elections/:id/jurisdictions/:jid/positions — create position in jurisdiction
+router.post('/:id/jurisdictions/:jid/positions', async (req: Request, res: Response) => {
+  const parsed = positionSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ success: false, error: parsed.error.errors[0].message }); return; }
+  try {
+    res.status(201).json({
+      success: true,
+      data: await svc.createPositionInJurisdiction(req.params.id, req.params.jid, parsed.data),
+    });
+  }
+  catch (e) { handleError(e, res); }
+});
+
 // ── Enrollments ───────────────────────────────────────────────────────────────
 
 router.post('/:id/enrollments', async (req: Request, res: Response) => {
