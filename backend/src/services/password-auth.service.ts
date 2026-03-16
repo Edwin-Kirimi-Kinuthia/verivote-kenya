@@ -88,10 +88,6 @@ export class PasswordAuthService {
   // ── Private helpers ────────────────────────────────────────────────────────
 
   private async findByIdentifier(identifier: string): Promise<Voter | null> {
-    // nationalId: exactly 8 digits
-    if (/^\d{8}$/.test(identifier)) {
-      return voterRepository.findByNationalId(identifier);
-    }
     // phone: +254XXXXXXXXX
     if (/^\+254\d{9}$/.test(identifier)) {
       return voterRepository.findByPhone(identifier);
@@ -99,6 +95,10 @@ export class PasswordAuthService {
     // anything with @ — treat as email
     if (identifier.includes('@')) {
       return voterRepository.findByEmail(identifier);
+    }
+    // nationalId: 5–12 alphanumeric characters (national ID or passport)
+    if (/^[A-Za-z0-9]{5,12}$/.test(identifier)) {
+      return voterRepository.findByNationalId(identifier);
     }
     return null;
   }

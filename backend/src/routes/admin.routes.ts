@@ -4,6 +4,8 @@ import { adminService } from '../services/admin.service.js';
 import { ServiceError } from '../services/voter.service.js';
 import { requireAuth, requireAdmin, adminRateLimiter } from '../middleware/index.js';
 import type { AuthenticatedRequest } from '../types/auth.types.js';
+import { personaService } from '../services/persona.service.js';
+import { voterRepository } from '../repositories/index.js';
 
 const router: Router = Router();
 
@@ -11,11 +13,14 @@ const router: Router = Router();
 router.use(adminRateLimiter);
 router.use(requireAuth, requireAdmin);
 
+const ID_DOCUMENT_TYPES = ['NATIONAL_ID', 'PASSPORT'] as const;
+
 const registerVoterSchema = z.object({
-  nationalId: z.string().regex(/^\d{8}$/, 'National ID must be exactly 8 digits'),
+  nationalId: z.string().min(1).max(20),
+  idDocumentType: z.enum(ID_DOCUMENT_TYPES).default('NATIONAL_ID'),
   pollingStationId: z.string().uuid('Invalid polling station ID'),
   preferredContact: z.enum(['SMS', 'EMAIL']),
-  phoneNumber: z.string().regex(/^\+\d{7,15}$/, 'Phone must be E.164 format, e.g. +254712345678').optional(),
+  phoneNumber: z.string().regex(/^\+254\d{9,10}$|^\+(?!254)\d{8,15}$/, 'For Kenya (+254): 9–10 digits. Other countries: 8–15 digits. E.g. +254712345678').optional(),
   email: z.string().email('Invalid email address').optional(),
 }).superRefine((data, ctx) => {
   if (data.preferredContact === 'SMS' && !data.phoneNumber) {
@@ -234,6 +239,59 @@ router.delete('/officials/:voterId', async (req: Request, res: Response) => {
       success: false,
       error: error instanceof Error ? error.message : 'Failed to remove official',
     });
+  }
+});
+
+// POST /api/admin/start-kyc/:voterId — Start a Persona KYC inquiry for a voter pending manual review
+router.post('/start-kyc/:voterId', async (req: Request, res: Response) => {
+  try {
+    const voter = await voterRepository.findById(req.params.voterId);
+    if (!voter) {
+      res.status(404).json({ success: false, error: 'Voter not found' });
+      return;
+    }
+    if (!['PENDING_MANUAL_REVIEW', 'PENDING_VERIFICATION'].includes(voter.status)) {
+      res.status(400).json({ success: false, error: 'Voter is not pending manual review' });
+      return;
+    }
+    const { inquiryId, url } = await personaService.createInquiry(voter.nationalId, voter.id);
+    res.json({
+      success: true,
+      data: {
+        voterId: voter.id,
+        nationalId: voter.nationalId,
+        inquiryId,
+        personaUrl: url,
+      },
+    });
+  } catch (error) {
+    if (error instanceof ServiceError) {
+      res.status(error.statusCode).json({ success: false, error: error.message });
+      return;
+    }
+    res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'Failed to start KYC' });
+  }
+});
+
+// GET /api/admin/kyc-status?inquiryId=xxx — Poll Persona for KYC completion
+router.get('/kyc-status', async (req: Request, res: Response) => {
+  const { inquiryId } = req.query;
+  if (!inquiryId || typeof inquiryId !== 'string') {
+    res.status(400).json({ success: false, error: 'inquiryId is required' });
+    return;
+  }
+  try {
+    const { status } = await personaService.getInquiry(inquiryId);
+    res.json({
+      success: true,
+      data: {
+        inquiryId,
+        status,
+        completed: ['completed', 'approved'].includes(status),
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'Failed to check KYC status' });
   }
 });
 

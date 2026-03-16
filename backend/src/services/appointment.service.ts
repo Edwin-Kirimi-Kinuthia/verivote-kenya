@@ -1,6 +1,7 @@
 import { appointmentRepository, voterRepository, pollingStationRepository } from '../repositories/index.js';
 import { ServiceError } from './voter.service.js';
 import { adminService } from './admin.service.js';
+import { personaService } from './persona.service.js';
 
 export class AppointmentService {
   /**
@@ -295,6 +296,50 @@ export class AppointmentService {
 
     // Reject the voter
     return adminService.rejectVoter(appointment.voterId, reviewerId, reason);
+  }
+
+  /**
+   * Poll Persona for the completion status of a KYC inquiry.
+   */
+  async checkKycStatus(inquiryId: string) {
+    const { status } = await personaService.getInquiry(inquiryId);
+    return {
+      inquiryId,
+      status,
+      completed: ['completed', 'approved'].includes(status),
+    };
+  }
+
+  /**
+   * Start KYC verification on the officer's device for the voter linked to an appointment.
+   * Returns the Persona inquiry URL to be opened on the officer's device.
+   */
+  async startKycForAppointment(appointmentId: string) {
+    const appointment = await appointmentRepository.findById(appointmentId);
+    if (!appointment) {
+      throw new ServiceError('Appointment not found', 404);
+    }
+    if (appointment.status !== 'BOOKED') {
+      throw new ServiceError('Only booked appointments can start KYC', 400);
+    }
+    if (!appointment.voterId) {
+      throw new ServiceError('No voter is linked to this appointment', 400);
+    }
+
+    const voter = await voterRepository.findById(appointment.voterId);
+    if (!voter) {
+      throw new ServiceError('Voter not found', 404);
+    }
+
+    const { inquiryId, url } = await personaService.createInquiry(voter.nationalId, voter.id);
+
+    return {
+      appointmentId,
+      voterId: voter.id,
+      nationalId: voter.nationalId,
+      inquiryId,
+      personaUrl: url,
+    };
   }
 
   /**

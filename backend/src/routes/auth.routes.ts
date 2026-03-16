@@ -51,12 +51,12 @@ const setPasswordSchema = z.object({
 });
 
 const otpRequestSchema = z.object({
-  nationalId: z.string().regex(/^\d{8}$/, 'National ID must be 8 digits'),
+  nationalId: z.string().regex(/^[A-Za-z0-9]{5,12}$/, 'National ID (5–9 digits) or Passport number (6–12 alphanumeric characters)'),
   purpose: z.enum(['LOGIN', 'CONTACT_VERIFY', 'CREDENTIAL_RESET']).default('LOGIN'),
 });
 
 const otpVerifySchema = z.object({
-  nationalId: z.string().regex(/^\d{8}$/, 'National ID must be 8 digits'),
+  nationalId: z.string().regex(/^[A-Za-z0-9]{5,12}$/, 'National ID (5–9 digits) or Passport number (6–12 alphanumeric characters)'),
   code: z.string().regex(/^\d{6}$/, 'OTP must be exactly 6 digits'),
   purpose: z.enum(['LOGIN', 'CONTACT_VERIFY', 'CREDENTIAL_RESET']).default('LOGIN'),
 });

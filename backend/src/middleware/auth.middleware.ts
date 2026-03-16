@@ -1,6 +1,6 @@
 import type { Request, Response, NextFunction } from 'express';
 import { authService } from '../services/auth.service.js';
-import type { AuthenticatedRequest } from '../types/auth.types.js';
+import type { AuthenticatedRequest, StaffRole } from '../types/auth.types.js';
 
 export function requireAuth(req: Request, res: Response, next: NextFunction): void {
   const header = req.headers.authorization;
@@ -65,6 +65,32 @@ export function requireSelf(req: Request, res: Response, next: NextFunction): vo
   }
 
   next();
+}
+
+/**
+ * Requires the authenticated user to have one of the specified IEBC staff roles.
+ * Must be used AFTER requireAuth + requireAdmin.
+ */
+export function requireStaffRole(...allowedRoles: StaffRole[]) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const authReq = req as AuthenticatedRequest;
+    const staffRole = authReq.voter?.staffRole;
+    if (!staffRole) {
+      res.status(403).json({
+        success: false,
+        error: 'IEBC staff role required. Please contact your administrator.',
+      });
+      return;
+    }
+    if (!allowedRoles.includes(staffRole)) {
+      res.status(403).json({
+        success: false,
+        error: `This action requires one of: ${allowedRoles.join(', ')}. Your role: ${staffRole}`,
+      });
+      return;
+    }
+    next();
+  };
 }
 
 /**

@@ -94,7 +94,7 @@ export class PrintQueueRepository extends BaseRepository<
       prisma.printQueue.count({ where }),
     ]);
 
-    return this.buildPaginatedResponse(data as PrintQueueWithDetails[], total, page, limit);
+    return this.buildPaginatedResponse(data as unknown as PrintQueueWithDetails[], total, page, limit);
   }
 
   async create(data: CreatePrintQueueInput): Promise<PrintQueue> {

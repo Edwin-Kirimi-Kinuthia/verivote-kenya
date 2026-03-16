@@ -36,11 +36,14 @@ export class WebAuthnService {
 
   // ── REGISTRATION ──────────────────────────────────────────────────────────
 
-  async getRegistrationOptions(voterId: string) {
+  async getRegistrationOptions(voterId: string, adminAssisted = false) {
     const voter = await voterRepository.findById(voterId);
     if (!voter) throw new ServiceError('Voter not found', 404);
 
-    if (!['REGISTERED', 'VOTED', 'REVOTED', 'DISTRESS_FLAGGED'].includes(voter.status)) {
+    const allowedStatuses = ['REGISTERED', 'VOTED', 'REVOTED', 'DISTRESS_FLAGGED'];
+    // Admin-assisted enrollment happens before approval (voter is still PENDING_MANUAL_REVIEW)
+    if (adminAssisted) allowedStatuses.push('PENDING_MANUAL_REVIEW', 'PENDING_VERIFICATION');
+    if (!allowedStatuses.includes(voter.status)) {
       throw new ServiceError('Only verified voters can enroll a credential', 403);
     }
 
@@ -58,7 +61,10 @@ export class WebAuthnService {
       authenticatorSelection: {
         residentKey: 'preferred',
         userVerification: 'required',
-        authenticatorAttachment: 'platform', // fingerprint / Face ID on the voter's device
+        // adminAssisted=true → 'cross-platform' forces voter's own phone via FIDO2 QR hybrid
+        // transport, so the officer's Windows Hello/passkey cannot be used to impersonate the voter.
+        // adminAssisted=false (voter's own device on /setup-pin) → 'platform' uses device biometrics.
+        authenticatorAttachment: adminAssisted ? 'cross-platform' : 'platform',
       },
       excludeCredentials: existing.map(c => ({
         id: c.credentialId,

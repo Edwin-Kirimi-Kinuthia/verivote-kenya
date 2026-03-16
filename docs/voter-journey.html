@@ -1,0 +1,1149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VeriVote Kenya — Voter Journey & System Architecture</title>
+<style>
+  :root {
+    --green:       #166534;
+    --green-light: #dcfce7;
+    --green-mid:   #16a34a;
+    --amber:       #92400e;
+    --amber-light: #fef3c7;
+    --red:         #991b1b;
+    --red-light:   #fee2e2;
+    --blue:        #1e40af;
+    --blue-light:  #dbeafe;
+    --purple:      #5b21b6;
+    --purple-light:#ede9fe;
+    --gray:        #374151;
+    --gray-light:  #f9fafb;
+    --border:      #e5e7eb;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 16px;
+    line-height: 1.75;
+    color: #111827;
+    background: #fff;
+    padding: 0 16px 80px;
+    max-width: 760px;
+    margin: 0 auto;
+  }
+
+  /* ── Navigation ── */
+  nav {
+    position: sticky;
+    top: 0;
+    background: var(--green);
+    color: #fff;
+    padding: 10px 16px;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    z-index: 100;
+    margin: 0 -16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  nav span { opacity: 0.65; font-weight: 400; }
+
+  /* ── Cover ── */
+  .cover {
+    text-align: center;
+    padding: 48px 0 36px;
+    border-bottom: 3px solid var(--green);
+    margin-bottom: 36px;
+  }
+  .cover .flag { font-size: 36px; margin-bottom: 12px; }
+  .cover h1 {
+    font-size: 26px;
+    font-weight: 900;
+    color: var(--green);
+    line-height: 1.2;
+    margin-bottom: 8px;
+  }
+  .cover .sub { font-size: 14px; color: #6b7280; }
+  .cover .badge {
+    display: inline-block;
+    margin-top: 14px;
+    background: var(--green-light);
+    color: var(--green);
+    font-size: 12px;
+    font-weight: 700;
+    padding: 4px 14px;
+    border-radius: 999px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  /* ── Section headers ── */
+  h2 {
+    font-size: 20px;
+    font-weight: 800;
+    color: var(--green);
+    margin: 48px 0 8px;
+    padding-top: 8px;
+    border-top: 3px solid var(--green);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  h2 .phase-num {
+    flex-shrink: 0;
+    width: 32px;
+    height: 32px;
+    background: var(--green);
+    color: #fff;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    font-weight: 800;
+  }
+  h2 .type-tag {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 4px;
+    vertical-align: middle;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-left: 6px;
+  }
+  .tag-govt     { background: #dcfce7; color: #166534; }
+  .tag-inst     { background: #dbeafe; color: #1e40af; }
+  .tag-corp     { background: #ede9fe; color: #5b21b6; }
+  .tag-crypto   { background: #fef9c3; color: #854d0e; }
+  .tag-security { background: #fee2e2; color: #991b1b; }
+
+  h3 {
+    font-size: 17px;
+    font-weight: 700;
+    color: #1f2937;
+    margin: 28px 0 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  h3 .step-num {
+    flex-shrink: 0;
+    width: 26px;
+    height: 26px;
+    background: #e5e7eb;
+    color: #374151;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 800;
+  }
+  h4 {
+    font-size: 14px;
+    font-weight: 700;
+    color: #374151;
+    margin: 18px 0 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  p { margin-bottom: 12px; }
+  ul, ol { padding-left: 22px; margin-bottom: 12px; }
+  li { margin-bottom: 6px; }
+  strong { color: #111; }
+
+  /* ── Callout boxes ── */
+  .analogy {
+    background: #fefce8;
+    border-left: 4px solid #ca8a04;
+    border-radius: 0 8px 8px 0;
+    padding: 14px 16px;
+    margin: 16px 0;
+    font-size: 15px;
+  }
+  .analogy strong {
+    color: #854d0e;
+    display: block;
+    margin-bottom: 4px;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .tech-note {
+    background: var(--green-light);
+    border-left: 4px solid var(--green);
+    border-radius: 0 8px 8px 0;
+    padding: 14px 16px;
+    margin: 16px 0;
+    font-size: 15px;
+  }
+  .tech-note strong {
+    color: var(--green);
+    display: block;
+    margin-bottom: 4px;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .security-note {
+    background: var(--red-light);
+    border-left: 4px solid #dc2626;
+    border-radius: 0 8px 8px 0;
+    padding: 14px 16px;
+    margin: 16px 0;
+    font-size: 15px;
+  }
+  .security-note strong {
+    color: var(--red);
+    display: block;
+    margin-bottom: 4px;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .diff-note {
+    background: var(--blue-light);
+    border-left: 4px solid #2563eb;
+    border-radius: 0 8px 8px 0;
+    padding: 14px 16px;
+    margin: 16px 0;
+    font-size: 15px;
+  }
+  .diff-note strong {
+    color: var(--blue);
+    display: block;
+    margin-bottom: 4px;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .corp-note {
+    background: var(--purple-light);
+    border-left: 4px solid #7c3aed;
+    border-radius: 0 8px 8px 0;
+    padding: 14px 16px;
+    margin: 16px 0;
+    font-size: 15px;
+  }
+  .corp-note strong {
+    color: var(--purple);
+    display: block;
+    margin-bottom: 4px;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  /* ── Code / math blocks ── */
+  pre {
+    background: #1e293b;
+    color: #e2e8f0;
+    border-radius: 8px;
+    padding: 16px;
+    font-size: 13px;
+    line-height: 1.7;
+    overflow-x: auto;
+    margin: 12px 0;
+    white-space: pre;
+  }
+  code { font-family: 'Menlo', 'Consolas', 'Courier New', monospace; }
+  p code, li code {
+    background: #f1f5f9;
+    color: #0f172a;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 13px;
+  }
+
+  /* ── Tables ── */
+  table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 14px; }
+  th { background: var(--green); color: #fff; padding: 10px 12px; text-align: left; font-weight: 600; }
+  td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tr:nth-child(even) td { background: var(--gray-light); }
+
+  /* ── Journey flow diagram ── */
+  .flow {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    margin: 20px 0;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .flow-step {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+    background: #fff;
+  }
+  .flow-step:last-child { border-bottom: none; }
+  .flow-step:nth-child(even) { background: var(--gray-light); }
+  .flow-num {
+    flex-shrink: 0;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 800;
+    color: #fff;
+    margin-top: 2px;
+  }
+  .num-green  { background: var(--green); }
+  .num-blue   { background: #2563eb; }
+  .num-purple { background: #7c3aed; }
+  .num-amber  { background: #d97706; }
+  .num-red    { background: #dc2626; }
+
+  .flow-content { flex: 1; }
+  .flow-title { font-weight: 700; font-size: 15px; color: #111; }
+  .flow-desc  { font-size: 14px; color: #4b5563; margin-top: 2px; }
+
+  /* ── Phase separator banners ── */
+  .phase-banner {
+    background: #1f2937;
+    color: #fff;
+    padding: 10px 16px;
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin: 28px 0 0;
+    border-radius: 6px 6px 0 0;
+  }
+
+  /* ── Divider ── */
+  .divider {
+    border: none;
+    border-top: 1px dashed #d1d5db;
+    margin: 32px 0;
+  }
+
+  /* ── Election type header cards ── */
+  .election-card {
+    border-radius: 10px;
+    padding: 18px 20px;
+    margin: 24px 0 0;
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+  }
+  .election-card.govt   { background: #f0fdf4; border: 2px solid #86efac; }
+  .election-card.inst   { background: #eff6ff; border: 2px solid #93c5fd; }
+  .election-card.corp   { background: #f5f3ff; border: 2px solid #c4b5fd; }
+  .election-card .ec-icon { font-size: 32px; line-height: 1; margin-top: 4px; }
+  .election-card .ec-title { font-size: 18px; font-weight: 800; margin-bottom: 4px; }
+  .election-card .ec-sub   { font-size: 13px; color: #6b7280; line-height: 1.5; }
+  .election-card.govt  .ec-title { color: var(--green); }
+  .election-card.inst  .ec-title { color: var(--blue); }
+  .election-card.corp  .ec-title { color: var(--purple); }
+
+  /* ── Crypto formula cards ── */
+  .formula-card {
+    background: #0f172a;
+    border-radius: 10px;
+    padding: 20px;
+    margin: 16px 0;
+  }
+  .formula-card .fc-title {
+    color: #86efac;
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 12px;
+    font-family: 'Menlo', monospace;
+  }
+  .formula-card pre {
+    background: transparent;
+    color: #e2e8f0;
+    padding: 0;
+    margin: 0;
+    font-size: 14px;
+  }
+
+  /* ── Summary table ── */
+  .summary-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 12px;
+    margin: 20px 0;
+  }
+  .sg-card {
+    border-radius: 8px;
+    padding: 14px;
+    font-size: 13px;
+  }
+  .sg-card.govt   { background: #f0fdf4; border: 1px solid #86efac; }
+  .sg-card.inst   { background: #eff6ff; border: 1px solid #93c5fd; }
+  .sg-card.corp   { background: #f5f3ff; border: 1px solid #c4b5fd; }
+  .sg-card .sg-title { font-weight: 700; font-size: 14px; margin-bottom: 8px; }
+  .sg-card.govt .sg-title { color: var(--green); }
+  .sg-card.inst .sg-title { color: var(--blue); }
+  .sg-card.corp .sg-title { color: var(--purple); }
+  .sg-card ul { padding-left: 16px; margin: 0; }
+  .sg-card li { margin-bottom: 4px; color: #374151; }
+
+  /* ── Footer ── */
+  footer {
+    margin-top: 60px;
+    padding-top: 20px;
+    border-top: 2px solid var(--green);
+    text-align: center;
+    font-size: 13px;
+    color: #9ca3af;
+  }
+  footer strong { color: var(--green); }
+</style>
+</head>
+<body>
+
+<nav>🗳️ VeriVote Kenya <span>— Voter Journey & System Architecture</span></nav>
+
+<!-- ══ COVER ══════════════════════════════════════════════════════════════════ -->
+<div class="cover">
+  <div class="flag">🇰🇪</div>
+  <h1>VeriVote Kenya<br>Voter Journey & System Architecture</h1>
+  <div class="sub">From registration to result announcement — across all election types</div>
+  <div class="badge">Complete Technical Reference</div>
+</div>
+
+<!-- ══ OVERVIEW ══════════════════════════════════════════════════════════════ -->
+<h2>Overview — Three Election Types</h2>
+
+<p>VeriVote Kenya is not a single-purpose system. It is a sovereign cryptographic voting platform capable of running three fundamentally different categories of election, each with its own registration model, declaration hierarchy, and access control — all sharing the same encrypted vote counting engine.</p>
+
+<div class="summary-grid">
+  <div class="sg-card govt">
+    <div class="sg-title">🏛️ Government</div>
+    <ul>
+      <li>IEBC-administered</li>
+      <li>National ID + KYC</li>
+      <li>Geographic jurisdiction</li>
+      <li>9 Commissioners declare</li>
+      <li>Constitutional timelines</li>
+    </ul>
+  </div>
+  <div class="sg-card inst">
+    <div class="sg-title">🎓 Institutional</div>
+    <ul>
+      <li>Organisation-administered</li>
+      <li>Member roster registration</li>
+      <li>Role-based access</li>
+      <li>Council/RO declares</li>
+      <li>Custom election cycles</li>
+    </ul>
+  </div>
+  <div class="sg-card corp">
+    <div class="sg-title">🏢 Corporate</div>
+    <ul>
+      <li>Company-administered</li>
+      <li>Shareholder register</li>
+      <li>Weighted voting</li>
+      <li>Company Secretary declares</li>
+      <li>AGM/EGM schedules</li>
+    </ul>
+  </div>
+</div>
+
+<p>All three types use the same <strong>ElGamal homomorphic encryption</strong>, the same <strong>re-encryption mixnet</strong>, and the same <strong>Shamir's Secret Sharing key ceremony</strong> for vote counting. The difference lies in who registers, how they authenticate, and who has the authority to declare results.</p>
+
+<hr class="divider">
+
+<!-- ══ GOVERNMENT JOURNEY ═══════════════════════════════════════════════════ -->
+<h2><span class="phase-num">A</span> Government Election Journey <span class="type-tag tag-govt">IEBC · Kenya General Election</span></h2>
+
+<div class="election-card govt">
+  <div class="ec-icon">🏛️</div>
+  <div>
+    <div class="ec-title">Kenya General Election 2027</div>
+    <div class="ec-sub">Example: Wanjiku Kamau, registered voter, Westlands Constituency, Nairobi County.<br>
+    She will vote for: President, Governor, Senator, Women Rep, MP (Westlands), MCA (Parklands/Highridge ward).</div>
+  </div>
+</div>
+
+<!-- Phase 1: Registration -->
+<div class="phase-banner">Phase 1 — Voter Registration</div>
+<div class="flow">
+  <div class="flow-step">
+    <div class="flow-num num-green">1</div>
+    <div class="flow-content">
+      <div class="flow-title">Identity Verification (KYC via Persona)</div>
+      <div class="flow-desc">Wanjiku visits a polling station or registers online. She submits her <strong>National ID number 24681357</strong>. The system forwards this to Persona — a live identity verification service that cross-checks her ID, takes a photo, and runs a liveness test (she must blink on camera). This takes about 90 seconds.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num num-green">2</div>
+    <div class="flow-content">
+      <div class="flow-title">Wallet Creation + Soul-Bound Token (SBT) Minting</div>
+      <div class="flow-desc">Once Persona approves, the system generates a blockchain wallet address for Wanjiku and mints a <strong>Soul-Bound Token</strong> — a non-transferable NFT recorded permanently on the chain. Her <code>sbtTokenId</code>, <code>sbtAddress</code>, and blockchain transaction hash are stored in the database.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num num-green">3</div>
+    <div class="flow-content">
+      <div class="flow-title">Normal PIN Setup</div>
+      <div class="flow-desc">Wanjiku chooses a 4-digit voting PIN (e.g. <strong>7842</strong>) — like her bank ATM PIN, but for voting. The system hashes it with <strong>argon2id</strong> (a deliberately slow algorithm designed to make brute-force cracking impractical) and stores only the hash. The actual digits are never stored anywhere.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num num-red">4</div>
+    <div class="flow-content">
+      <div class="flow-title">Distress PIN Delivery</div>
+      <div class="flow-desc">The server generates a <em>different</em> 4-digit PIN — the <strong>Distress PIN</strong> — and sends it privately to Wanjiku's phone via SMS. This PIN is never shown on-screen. Only Wanjiku and the SMS have it. It is also stored as an argon2id hash only.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num num-amber">5</div>
+    <div class="flow-content">
+      <div class="flow-title">Optional: WebAuthn Biometric Enrolment</div>
+      <div class="flow-desc">Wanjiku can optionally register her fingerprint or Face ID on her smartphone. The device's secure chip signs a challenge from the server — her biometric never leaves her phone. Future logins can use fingerprint instead of PIN.</div>
+    </div>
+  </div>
+</div>
+
+<div class="analogy">
+  <strong>Analogy — The Voter Registration Card That Cannot Be Stolen</strong>
+  The Soul-Bound Token is like a voter registration card tattooed to Wanjiku's identity. In the physical world, someone could steal her card and impersonate her. With the SBT, it is mathematically bound to her wallet — transferring it to another address is impossible by design. The blockchain independently proves she is a legitimate registered voter even if the entire VeriVote database were deleted.
+</div>
+
+<div class="security-note">
+  <strong>The Distress PIN — Silent Duress Alerting</strong>
+  If someone forces Wanjiku at gunpoint to vote for a particular candidate, she enters her Distress PIN instead of her normal PIN. Her vote is cast normally — the attacker sees it succeed and walks away. Behind the scenes, the vote is silently flagged <code>isDistressFlagged = true</code>, IEBC security is alerted, and the vote can be reviewed or nullified. The attacker never knows. This mirrors the duress codes used in high-security bank vaults.
+</div>
+
+<!-- Phase 2: Voting -->
+<div class="phase-banner">Phase 2 — Election Day Voting</div>
+<div class="flow">
+  <div class="flow-step">
+    <div class="flow-num num-green">6</div>
+    <div class="flow-content">
+      <div class="flow-title">Authentication → JWT Issued</div>
+      <div class="flow-desc">On election day, Wanjiku visits <strong>verivote.ke/vote</strong> on any device. She enters her National ID and PIN. The server runs argon2id on her submitted PIN and compares the hash — if it matches, a <strong>JSON Web Token (JWT)</strong> is issued. This token is valid for 24 hours and is signed with the server's secret key so it cannot be forged.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num num-green">7</div>
+    <div class="flow-content">
+      <div class="flow-title">Jurisdiction-Filtered Ballot Loaded</div>
+      <div class="flow-desc">The system looks up Wanjiku's <code>pollingStationId</code> → <code>ward</code> → <code>constituency</code> → <code>county</code> and returns only the races relevant to her: Presidential (national), Gubernatorial (Nairobi), Senator (Nairobi), Women Rep (Nairobi), MP (Westlands), MCA (Parklands/Highridge). A voter in Kisumu sees different candidates entirely.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num num-green">8</div>
+    <div class="flow-content">
+      <div class="flow-title">Vote Encryption (ElGamal) — Before Leaving the Browser</div>
+      <div class="flow-desc">Wanjiku selects her candidates and clicks "Submit." <strong>Before the data is sent</strong>, each vote selection is encrypted using the election's public key. The server never sees plaintext votes. It receives only ciphertexts — mathematical objects that look like random numbers.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num num-green">9</div>
+    <div class="flow-content">
+      <div class="flow-title">PIN Verified + Vote Stored + Blockchain Anchored</div>
+      <div class="flow-desc">The server: (1) verifies the PIN hash, (2) confirms Wanjiku's SBT is valid on-chain, (3) checks she hasn't already voted, (4) stores the ciphertext in the <code>votes</code> table, (5) submits the vote's SHA-256 hash to the Ethereum chain. The blockchain transaction produces a <code>txHash</code> — a public, immutable record.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num num-amber">10</div>
+    <div class="flow-content">
+      <div class="flow-title">Vote Receipt Issued</div>
+      <div class="flow-desc">Wanjiku receives a <strong>16-character serial number</strong>, e.g. <code>VV-2027-XK9M2L</code>. She can later visit <strong>/verify/VV-2027-XK9M2L</strong> to confirm her vote was received, the hash is valid, and the blockchain confirms it — all without revealing which candidates she chose.</div>
+    </div>
+  </div>
+</div>
+
+<div class="analogy">
+  <strong>Analogy — The JWT as a Concert Wristband</strong>
+  When Wanjiku enters her PIN, the system is like a concert gate — it verifies her identity once, thoroughly, and then gives her a wristband (the JWT). For the rest of the day she shows the wristband at every door, not her ID. The wristband has an expiry time and a cryptographic signature. A fake wristband — even a perfect physical copy — is immediately detected because it lacks the correct signature.
+</div>
+
+<div class="tech-note">
+  <strong>How ElGamal Encryption Works</strong>
+  The election has a public key <code>g^x mod p</code> where <code>x</code> is the private key locked away until the counting ceremony. To encrypt a vote for Candidate A (encoded as 1):
+  <br><br>
+  Ciphertext = <strong>(g^r, g¹ · (g^x)^r)</strong> where <code>r</code> is a fresh random number per vote.
+  <br><br>
+  Even two identical votes for the same candidate look completely different because <code>r</code> is different each time. An observer cannot tell who voted for whom — not even by comparing ciphertexts.
+</div>
+
+<!-- Phase 3: Counting -->
+<div class="phase-banner">Phase 3 — The Counting Ceremony</div>
+<div class="flow">
+  <div class="flow-step">
+    <div class="flow-num num-amber">11</div>
+    <div class="flow-content">
+      <div class="flow-title">Re-Encryption Mixnet (3 Nodes)</div>
+      <div class="flow-desc">All encrypted votes pass through a <strong>3-node re-encryption mixnet</strong>. Each node takes the batch, wraps every vote in a fresh layer of encryption (changing its appearance completely), shuffles the order randomly, and passes it to the next node. The output is a randomly ordered batch with no link to the input order.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num num-amber">12</div>
+    <div class="flow-content">
+      <div class="flow-title">Homomorphic Aggregation</div>
+      <div class="flow-desc">The 1,000+ anonymised ciphertexts are <strong>mathematically multiplied together</strong> while still encrypted. Due to ElGamal's homomorphic property, multiplying ciphertexts is equivalent to adding the underlying votes. This collapses millions of ciphertexts down to <strong>one ciphertext per candidate</strong>, containing the total votes for that candidate — still encrypted.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num num-red">13</div>
+    <div class="flow-content">
+      <div class="flow-title">Shamir's Secret Sharing — Key Split</div>
+      <div class="flow-desc">The ElGamal private key <code>x</code> is split into <strong>3 shares</strong> using a degree-2 polynomial. Commissioner Amos gets Share 1, Commissioner Beatrice gets Share 2, Commissioner Chege gets Share 3. No single commissioner — nor any two of them — can reconstruct the key alone. All three shares are needed.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num num-red">14</div>
+    <div class="flow-content">
+      <div class="flow-title">Physical Share Entry by All 3 Commissioners</div>
+      <div class="flow-desc">Each commissioner physically types their hex share code into the system. The portal shows a <strong>Pedersen commitment</strong> next to each share code — a public fingerprint that confirms the share is genuine without revealing its value. Observers can verify commitments without seeing the secret.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num num-red">15</div>
+    <div class="flow-content">
+      <div class="flow-title">Lagrange Reconstruction + Tamper Check</div>
+      <div class="flow-desc">Once all 3 shares are entered, the system reconstructs the private key using closed-form Lagrange interpolation: <code>x = 3·f(1) − 3·f(2) + f(3) (mod p)</code>. Before using the key, it verifies: <code>g^x_reconstructed = publicKey</code>. If this check fails, at least one share is corrupted — the ceremony halts immediately.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num num-red">16</div>
+    <div class="flow-content">
+      <div class="flow-title">Decryption + Baby-Step Giant-Step (BSGS)</div>
+      <div class="flow-desc">The aggregated ciphertext for each candidate is decrypted. The result is <code>g^total</code> — not <code>total</code> directly. The system uses <strong>BSGS</strong> to recover the actual vote count: instead of checking all possibilities up to N, it precomputes √N values and finds the answer in √N lookups — 1,000× faster than brute force for 1,000,000 votes.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num num-green">17</div>
+    <div class="flow-content">
+      <div class="flow-title">Integrity Hash Published</div>
+      <div class="flow-desc">A final <strong>SHA-256 integrity hash</strong> is computed over the mixnet commitment and the tally hash: <code>SHA-256(mixnetCommitment | tallyHash)</code>. This hash is published publicly. Tampering with any part of the process — even a single bit — produces a completely different hash, immediately detectable by any observer.</div>
+    </div>
+  </div>
+</div>
+
+<div class="analogy">
+  <strong>Analogy — The Mixnet as Three Postal Trustees</strong>
+  Imagine 1,000 sealed envelopes arrive at a sorting centre. Before counting, three independent trustees each take the pile, re-seal every envelope in a fresh outer envelope (re-encryption), shuffle the pile randomly, and hand it to the next trustee. After all three trustees are done, nobody — including the trustees working together — can match any output envelope to its original sender. The votes are anonymised by position, not just by encryption.
+</div>
+
+<div class="analogy">
+  <strong>Analogy — Homomorphic Encryption as a Magic Adding Machine</strong>
+  Imagine a machine that can add numbers together while they're inside locked boxes. You feed in 1,000 locked boxes, and it outputs a single locked box containing their sum — without opening any box. After aggregation, there is one encrypted box per candidate. Only during the key ceremony is that final box opened to reveal the total. Not a single individual vote was decrypted at any point.
+</div>
+
+<div class="analogy">
+  <strong>Analogy — Shamir's Secret Sharing as Nuclear Launch Codes</strong>
+  In nuclear deterrence, no single person can launch a missile. Multiple officers must simultaneously insert their keys. Shamir's Secret Sharing applies this to the election private key. Commissioner Amos, Beatrice, and Chege each hold one piece. Amos and Beatrice together cannot decrypt anything — they are still one share short. Only when all three enter their codes does the system reconstruct the decryption key.
+</div>
+
+<!-- Phase 4: Declaration -->
+<div class="phase-banner">Phase 4 — Results Declaration</div>
+<div class="flow">
+  <div class="flow-step">
+    <div class="flow-num num-green">18</div>
+    <div class="flow-content">
+      <div class="flow-title">Jurisdiction-Scoped Declarations</div>
+      <div class="flow-desc">Results are declared by different officials depending on the position scope. Each declaration is a formal legal act recorded in the system with a timestamp.</div>
+    </div>
+  </div>
+</div>
+
+<table>
+  <tr><th>Position</th><th>Declared By</th><th>Jurisdiction Level</th><th>Real-world Example</th></tr>
+  <tr><td>President</td><td>IEBC Chair (of 9 Commissioners)</td><td>NATIONAL</td><td>Declared at Bomas of Kenya, nationally broadcast</td></tr>
+  <tr><td>Governor</td><td>County Returning Officer</td><td>COUNTY</td><td>Declared at Nairobi County Tallying Centre</td></tr>
+  <tr><td>Senator</td><td>County Returning Officer</td><td>COUNTY</td><td>Same centre as Governor, same night</td></tr>
+  <tr><td>Women Rep</td><td>County Returning Officer</td><td>COUNTY</td><td>Declared at county level tallying centre</td></tr>
+  <tr><td>MP</td><td>Constituency Returning Officer</td><td>CONSTITUENCY</td><td>Declared at Westlands Constituency Tallying Centre</td></tr>
+  <tr><td>MCA</td><td>Ward Returning Officer</td><td>WARD</td><td>Declared at Parklands ward tallying station</td></tr>
+</table>
+
+<p>Each declaration moves through: <strong>DRAFT → DECLARED</strong>. An IEBC Commissioner can challenge any declaration (<strong>CONTESTED</strong>). Contested results trigger a review and can be <strong>ANNULLED</strong>. The VeriVote system mirrors Kenya's Elections Act requirements exactly.</p>
+
+<div class="tech-note">
+  <strong>Blockchain Audit Trail — The Glass Ballot Box</strong>
+  In Kenya's physical elections, ballot boxes are transparent so voters, candidates, and agents can all observe. VeriVote is the digital equivalent: every vote has a blockchain transaction hash, every mixnet node publishes a commitment, every tally has a hash, and an integrity hash ties all phases together. Anyone — anywhere in the world — can verify the election was conducted honestly without being able to identify any individual voter.
+</div>
+
+<hr class="divider">
+
+<!-- ══ INSTITUTIONAL JOURNEY ═════════════════════════════════════════════════ -->
+<h2><span class="phase-num">B</span> Institutional Election Journey <span class="type-tag tag-inst">Law Society of Kenya · Council Elections</span></h2>
+
+<div class="election-card inst">
+  <div class="ec-icon">🎓</div>
+  <div>
+    <div class="ec-title">Law Society of Kenya — Council Elections 2027</div>
+    <div class="ec-sub">Example: Advocate Brian Otieno, Nairobi Branch member, voting for LSK Council representatives.<br>
+    Positions: National Council (all members vote) · Nairobi Branch Chair · Nairobi Branch Council (up to 5 selections).</div>
+  </div>
+</div>
+
+<div class="diff-note">
+  <strong>Key Difference from Government Elections</strong>
+  In a government election, the public registers themselves through KYC. In an institutional election, the organisation already knows its members — they are advocates on the Roll of Advocates, or university students enrolled in the registry, or SACCO members on the membership roll. <strong>There is no Persona KYC.</strong> The institution's administrator registers members directly into VeriVote using existing records.
+</div>
+
+<!-- Phase 1 -->
+<div class="phase-banner">Phase 1 — Member Registration (Admin-Managed)</div>
+<div class="flow">
+  <div class="flow-step">
+    <div class="flow-num num-blue">1</div>
+    <div class="flow-content">
+      <div class="flow-title">LSK Creates the Election</div>
+      <div class="flow-desc">The LSK ICT Admin logs into the VeriVote admin portal, creates a new election of type <code>INSTITUTIONAL</code>, sets the election name "LSK Council Elections 2027", adds positions (National Council, Nairobi Branch Chair, Nairobi Branch Council), and assigns candidates to each position.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num num-blue">2</div>
+    <div class="flow-content">
+      <div class="flow-title">Bulk Member Import</div>
+      <div class="flow-desc">The ICT Admin imports the current Roll of Advocates from LSK's membership database. Each advocate is registered with their <strong>Advocate Admission Number</strong> (used instead of National ID) as their unique identifier. No Persona KYC — LSK already verified their identity when they were admitted to the bar.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num num-blue">3</div>
+    <div class="flow-content">
+      <div class="flow-title">Credentials Sent to Members</div>
+      <div class="flow-desc">Each registered advocate receives an email with their login credentials and a link to set their voting PIN. Because there is no KYC step, the setup is faster: <strong>Advocate Number → PIN setup → done</strong>. No biometric photo, no document scan.</div>
+    </div>
+  </div>
+</div>
+
+<!-- Phase 2 -->
+<div class="phase-banner">Phase 2 — Voting (Identical Cryptography)</div>
+<div class="flow">
+  <div class="flow-step">
+    <div class="flow-num num-blue">4</div>
+    <div class="flow-content">
+      <div class="flow-title">Brian Authenticates</div>
+      <div class="flow-desc">Brian visits the LSK election portal, enters his Advocate Number and PIN. A JWT is issued. His ballot is loaded — filtered to show positions relevant to Nairobi Branch members (he sees Nairobi Branch Chair and Council in addition to the national positions). A member from Coast Branch would see different regional positions.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num num-blue">5</div>
+    <div class="flow-content">
+      <div class="flow-title">Vote Encrypted, Stored, Anchored</div>
+      <div class="flow-desc">Identical to the government flow: Brian's selections are ElGamal-encrypted in the browser before submission. The server verifies his PIN, stores the ciphertext, and records the blockchain transaction hash. His serial number receipt works the same way.</div>
+    </div>
+  </div>
+</div>
+
+<div class="analogy">
+  <strong>Analogy — The Difference Between Public and Private Registration</strong>
+  A government election is like a national census — anyone who is a citizen qualifies, and they prove it by showing their ID at a verification office. An institutional election is like a members-only club AGM — you don't need to prove you're a citizen, you need to prove you're a member. The club already has the membership roll. VeriVote accepts both models: when the institution provides the roll, no external KYC is needed.
+</div>
+
+<!-- Phase 3 -->
+<div class="phase-banner">Phase 3 — Counting (Same Ceremony, Different Commissioners)</div>
+<div class="flow">
+  <div class="flow-step">
+    <div class="flow-num num-blue">6</div>
+    <div class="flow-content">
+      <div class="flow-title">LSK Assigns Its Own Commissioners</div>
+      <div class="flow-desc">For the key ceremony, LSK designates three senior advocates as "commissioners" in the VeriVote staff system. They each receive an SSS share when the ceremony starts. The <strong>cryptographic ceremony is identical</strong> to a government election — three share-holders, Lagrange reconstruction, homomorphic tally, BSGS. The only difference is who the humans are.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num num-blue">7</div>
+    <div class="flow-content">
+      <div class="flow-title">Results Declared by LSK Returning Officer</div>
+      <div class="flow-desc">The LSK CEO (or appointed Returning Officer) formally declares each result in the system. For national positions: National RO declares. For Nairobi Branch: Nairobi Branch RO declares. The declaration hierarchy mirrors LSK's constitution, not IEBC's jurisdiction map.</div>
+    </div>
+  </div>
+</div>
+
+<hr class="divider">
+
+<!-- ══ CORPORATE JOURNEY ══════════════════════════════════════════════════════ -->
+<h2><span class="phase-num">C</span> Corporate Election Journey <span class="type-tag tag-corp">Safaricom PLC · Annual General Meeting</span></h2>
+
+<div class="election-card corp">
+  <div class="ec-icon">🏢</div>
+  <div>
+    <div class="ec-title">Safaricom PLC — Annual General Meeting 2027</div>
+    <div class="ec-sub">Example: Investor Amina Hassan, holding 150,000 Safaricom shares, voting on board appointments and resolutions.<br>
+    Resolutions: Director appointments (3 seats) · Auditor reappointment · Dividend approval · Share buyback programme.</div>
+  </div>
+</div>
+
+<div class="corp-note">
+  <strong>Corporate Election — What Is Different</strong>
+  Corporate elections have two features not present in government or institutional elections:<br><br>
+  <strong>1. Weighted voting:</strong> Amina's 150,000 shares give her 150,000 votes. A small retail investor with 100 shares gets 100 votes. This is "one share, one vote" rather than "one person, one vote."<br><br>
+  <strong>2. Resolution-based ballot:</strong> Instead of choosing between candidates, shareholders vote FOR or AGAINST specific resolutions. The "candidates" are the resolutions themselves.
+</div>
+
+<!-- Phase 1 -->
+<div class="phase-banner">Phase 1 — Shareholder Registration</div>
+<div class="flow">
+  <div class="flow-step">
+    <div class="flow-num num-purple">1</div>
+    <div class="flow-content">
+      <div class="flow-title">Company Secretary Creates the AGM</div>
+      <div class="flow-desc">Safaricom's Company Secretary creates a new election of type <code>CORPORATE</code> in VeriVote. She adds the AGM resolutions as "positions" and the options (FOR / AGAINST / ABSTAIN) as "candidates" for each resolution. She sets the voting window to match the AGM date and time.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num num-purple">2</div>
+    <div class="flow-content">
+      <div class="flow-title">Shareholder Register Import</div>
+      <div class="flow-desc">The Share Register (maintained by the Central Depository and Settlement Corporation — CDSC) is imported. Each shareholder is registered with their <strong>CDS Account Number</strong> and their shareholding as at the record date. Amina's account shows 150,000 shares.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num num-purple">3</div>
+    <div class="flow-content">
+      <div class="flow-title">Vote Weight Encoded at Registration</div>
+      <div class="flow-desc">When Amina is registered, her voting weight (150,000) is stored against her account. When she votes FOR a resolution, her vote is encoded as <strong>150,000</strong> instead of 1. The ElGamal encryption and homomorphic aggregation handle weighted votes identically to unweighted votes — the arithmetic works the same whether the numbers are small or large.</div>
+    </div>
+  </div>
+</div>
+
+<!-- Phase 2 -->
+<div class="phase-banner">Phase 2 — AGM Day Voting</div>
+<div class="flow">
+  <div class="flow-step">
+    <div class="flow-num num-purple">4</div>
+    <div class="flow-content">
+      <div class="flow-title">Amina Authenticates via Email Link</div>
+      <div class="flow-desc">Amina receives a secure login link at her registered email. She clicks it, sets a voting PIN, and is presented with her personalised ballot. Each resolution is listed: "Appointment of Mr X as Director — FOR / AGAINST / ABSTAIN." Her ballot header shows: <em>"You are voting as holder of 150,000 ordinary shares."</em></div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num num-purple">5</div>
+    <div class="flow-content">
+      <div class="flow-title">Weighted Vote Encrypted and Submitted</div>
+      <div class="flow-desc">When Amina votes FOR Resolution 1, the system encodes her vote as <code>g^150000</code> in the ElGamal ciphertext. For a retail investor with 100 shares, it would be <code>g^100</code>. After homomorphic aggregation across all shareholders, the total FOR vote on Resolution 1 is <code>g^(sum_of_all_weights_who_voted_FOR)</code> — the weighted total, still encrypted.</div>
+    </div>
+  </div>
+</div>
+
+<div class="analogy">
+  <strong>Analogy — The Difference Between One-Person-One-Vote and Shareholder Voting</strong>
+  In a government election, every citizen's vote is equal — like one token per person at a town hall. In a corporate AGM, it is more like a partnership decision where each partner's influence is proportional to their stake. A partner who owns 40% of the firm should have 40% of the votes on major decisions. Amina's 150,000 shares in Safaricom give her exactly 150,000 tokens. The encrypted tally counts the weighted tokens, not just the number of people who said yes.
+</div>
+
+<!-- Phase 3 -->
+<div class="phase-banner">Phase 3 — AGM Counting Ceremony</div>
+<div class="flow">
+  <div class="flow-step">
+    <div class="flow-num num-purple">6</div>
+    <div class="flow-content">
+      <div class="flow-title">Three Key-Holders: Company Secretary + Two Independent Directors</div>
+      <div class="flow-desc">For corporate governance, the three SSS share-holders are typically: the Company Secretary, an Independent Non-Executive Director, and the External Auditor (e.g. KPMG partner). This mirrors the physical AGM process where the Company Secretary, a Director, and the Auditor jointly sign off on results.</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num num-purple">7</div>
+    <div class="flow-content">
+      <div class="flow-title">BSGS Recovers Weighted Totals</div>
+      <div class="flow-desc">The BSGS algorithm recovers the actual FOR / AGAINST / ABSTAIN totals per resolution, in share-weighted form. Resolution 1 result: "FOR: 1,247,893,000 shares (73.2%) / AGAINST: 441,200,000 (25.9%) / ABSTAIN: 14,000,000 (0.9%) — <strong>RESOLUTION PASSED</strong>."</div>
+    </div>
+  </div>
+  <div class="flow-step">
+    <div class="flow-num num-purple">8</div>
+    <div class="flow-content">
+      <div class="flow-title">Company Secretary Formally Declares via VeriVote</div>
+      <div class="flow-desc">The Company Secretary formally declares each resolution in the VeriVote declarations module. The declaration includes a tally snapshot (the weighted results) and a timestamp. Passed resolutions are immediately effective. NSE and CMA filings can be generated directly from the declaration record.</div>
+    </div>
+  </div>
+</div>
+
+<hr class="divider">
+
+<!-- ══ CRYPTOGRAPHIC DEEP DIVES ═══════════════════════════════════════════════ -->
+<h2><span class="phase-num">D</span> Cryptographic Deep Dives <span class="type-tag tag-crypto">Technical Reference</span></h2>
+
+<h3><span class="step-num">①</span> ElGamal Homomorphic Encryption</h3>
+
+<p>VeriVote uses <strong>Exponential ElGamal</strong> over a 2048-bit FFDHE group. The system has a fixed public key <code>g^x mod p</code> where <code>x</code> is the private key only revealed during the ceremony.</p>
+
+<div class="formula-card">
+  <div class="fc-title">// Encrypting a vote for Candidate A (value = 1)</div>
+  <pre>r = random()             // fresh random blinding factor, per vote
+c1 = g^r mod p           // "envelope seal" — proves who locked it
+c2 = g^vote · (g^x)^r    // "vote inside" — locked with public key
+
+Ciphertext = (c1, c2)    // what the server receives and stores</pre>
+</div>
+
+<div class="formula-card">
+  <div class="fc-title">// Homomorphic property — adding ciphertexts adds underlying votes</div>
+  <pre>Enc(1) × Enc(1) = Enc(2)   // two votes for same candidate = ciphertext for 2
+Enc(1) × Enc(0) = Enc(1)   // one vote + one abstain = ciphertext for 1
+
+After aggregating all N votes:
+  Enc(total_A) = Enc(v₁) × Enc(v₂) × ... × Enc(vₙ)   // one multiplication per vote</pre>
+</div>
+
+<h3><span class="step-num">②</span> Shamir's Secret Sharing (3-of-3)</h3>
+
+<p>The private key <code>x</code> is split using a degree-2 polynomial evaluated at three points:</p>
+
+<div class="formula-card">
+  <div class="fc-title">// Key splitting — happens at ceremony start</div>
+  <pre>f(t) = x + a₁·t + a₂·t²     // degree-2 polynomial, x is the secret
+
+Share 1 (Amos):    f(1) = x + a₁ + a₂
+Share 2 (Beatrice): f(2) = x + 2a₁ + 4a₂
+Share 3 (Chege):   f(3) = x + 3a₁ + 9a₂
+
+a₁, a₂ are random — unknown to all commissioners</pre>
+</div>
+
+<div class="formula-card">
+  <div class="fc-title">// Key reconstruction — Lagrange interpolation (closed-form for 3-of-3)</div>
+  <pre>x = 3·f(1) - 3·f(2) + f(3)  (mod p)
+
+Proof:
+  3(x + a₁ + a₂) - 3(x + 2a₁ + 4a₂) + (x + 3a₁ + 9a₂)
+= 3x + 3a₁ + 3a₂ - 3x - 6a₁ - 12a₂ + x + 3a₁ + 9a₂
+= x  ✓    (all a-terms cancel)</pre>
+</div>
+
+<div class="formula-card">
+  <div class="fc-title">// Tamper verification — before using the reconstructed key</div>
+  <pre>if g^x_reconstructed ≠ publicKey:
+    HALT — "One or more shares are invalid. Ceremony aborted."
+
+Only if g^x_reconstructed === publicKey does decryption proceed.</pre>
+</div>
+
+<h3><span class="step-num">③</span> Baby-Step Giant-Step (BSGS) Discrete Log</h3>
+
+<p>After decryption, the result is <code>g^total</code>. Recovering <code>total</code> from this is the discrete logarithm problem. BSGS solves it in <strong>O(√N)</strong> time and space instead of O(N):</p>
+
+<div class="formula-card">
+  <div class="fc-title">// BSGS — recovering vote total from g^total</div>
+  <pre>Let m = ceil(√N)   // e.g. m = 1000 for up to 1,000,000 votes
+
+Baby step:  precompute table T = { g^j : j = 0..m }   // 1000 entries
+
+Giant step: for k = 0..m:
+    check if (g^total / g^(k·m)) is in T
+    if yes: total = k·m + j             // found in at most 2000 lookups
+
+vs brute force: would check 1,000,000 values one by one</pre>
+</div>
+
+<h3><span class="step-num">④</span> Re-Encryption Mixnet (Jakobsson-Juels)</h3>
+
+<div class="formula-card">
+  <div class="fc-title">// Re-encryption — changing a ciphertext's appearance without changing its value</div>
+  <pre>Original:     (c1, c2) = (g^r, g^vote · (g^x)^r)
+
+Re-encrypted: (c1·g^r', c2·(g^x)^r')   // add fresh random r' per ciphertext
+            = (g^(r+r'), g^vote · (g^x)^(r+r'))
+
+Same vote, completely different ciphertext — impossible to link input to output.</pre>
+</div>
+
+<p>Three nodes each run this independently, shuffling the batch after re-encryption. Node commitments (SHA-256 hashes of each transformation) are published, allowing offline verification that no votes were added or removed — only reordered and re-blinded.</p>
+
+<hr class="divider">
+
+<!-- ══ SECURITY FEATURES ══════════════════════════════════════════════════════ -->
+<h2><span class="phase-num">E</span> Security Architecture <span class="type-tag tag-security">Defence Layers</span></h2>
+
+<table>
+  <tr><th>Threat</th><th>Attack Vector</th><th>VeriVote Defence</th></tr>
+  <tr>
+    <td><strong>Vote buying / coercion</strong></td>
+    <td>Attacker watches voter submit vote</td>
+    <td>Distress PIN — silent flag, vote appears normal to coercer</td>
+  </tr>
+  <tr>
+    <td><strong>Vote stuffing</strong></td>
+    <td>Submitting votes for non-existent or ineligible voters</td>
+    <td>Soul-Bound Token check on-chain before vote accepted; one SBT per identity</td>
+  </tr>
+  <tr>
+    <td><strong>Double voting</strong></td>
+    <td>Same voter submits multiple times</td>
+    <td>Voter status check (<code>VOTED</code> flag) + SBT uniqueness constraint</td>
+  </tr>
+  <tr>
+    <td><strong>Database tampering</strong></td>
+    <td>Corrupt the votes table</td>
+    <td>Every vote has a blockchain txHash — independent immutable record</td>
+  </tr>
+  <tr>
+    <td><strong>Result manipulation</strong></td>
+    <td>Change tally after decryption</td>
+    <td>Integrity hash ties mixnet + tally — any change detectable</td>
+  </tr>
+  <tr>
+    <td><strong>Single point of key compromise</strong></td>
+    <td>One insider steals the private key</td>
+    <td>SSS — key never exists in one place; 3 commissioners required simultaneously</td>
+  </tr>
+  <tr>
+    <td><strong>Voter privacy breach</strong></td>
+    <td>Correlate votes to voters by submission order</td>
+    <td>3-node mixnet destroys order correlation before counting</td>
+  </tr>
+  <tr>
+    <td><strong>Foreign API interception</strong></td>
+    <td>Data exfiltration via cloud dependencies</td>
+    <td>Fully sovereign — all cryptographic operations on-premise, zero foreign API calls during counting</td>
+  </tr>
+  <tr>
+    <td><strong>Brute-force PIN attack</strong></td>
+    <td>Try all 10,000 PIN combinations</td>
+    <td>argon2id hashing (high cost) + rate limiting (5 attempts) + account lockout</td>
+  </tr>
+  <tr>
+    <td><strong>Token forgery</strong></td>
+    <td>Create a fake JWT to access protected routes</td>
+    <td>JWT signed with HS256 server secret; signature verified on every request</td>
+  </tr>
+</table>
+
+<hr class="divider">
+
+<!-- ══ JOURNEY COMPARISON ═════════════════════════════════════════════════════ -->
+<h2><span class="phase-num">F</span> Side-by-Side Journey Comparison</h2>
+
+<table>
+  <tr>
+    <th>Stage</th>
+    <th>🏛️ Government (IEBC)</th>
+    <th>🎓 Institutional (LSK)</th>
+    <th>🏢 Corporate (Safaricom AGM)</th>
+  </tr>
+  <tr>
+    <td><strong>Identity proof</strong></td>
+    <td>National ID + live KYC (Persona)</td>
+    <td>Advocate Number (pre-verified by LSK)</td>
+    <td>CDS Account Number (pre-verified by CDSC)</td>
+  </tr>
+  <tr>
+    <td><strong>Registration</strong></td>
+    <td>Self-service + polling station officer</td>
+    <td>Admin bulk-import from membership roll</td>
+    <td>Admin import from CDSC share register</td>
+  </tr>
+  <tr>
+    <td><strong>On-chain token</strong></td>
+    <td>Soul-Bound Token minted per voter</td>
+    <td>Optional — configurable per organisation</td>
+    <td>Not required — shareholder record is authoritative</td>
+  </tr>
+  <tr>
+    <td><strong>Vote weight</strong></td>
+    <td>1 person = 1 vote</td>
+    <td>1 member = 1 vote</td>
+    <td>1 share = 1 vote (weighted)</td>
+  </tr>
+  <tr>
+    <td><strong>Ballot scope</strong></td>
+    <td>Geographic jurisdiction (ward/constituency/county)</td>
+    <td>Membership category (branch, national)</td>
+    <td>All shareholders vote on all resolutions</td>
+  </tr>
+  <tr>
+    <td><strong>Encryption</strong></td>
+    <td colspan="3" style="text-align:center; background:#f0fdf4; color:#166534; font-weight:700;">Identical — Exponential ElGamal over 2048-bit FFDHE group</td>
+  </tr>
+  <tr>
+    <td><strong>Mixnet</strong></td>
+    <td colspan="3" style="text-align:center; background:#f0fdf4; color:#166534; font-weight:700;">Identical — 3-node Jakobsson-Juels re-encryption + Fisher-Yates shuffle</td>
+  </tr>
+  <tr>
+    <td><strong>Key ceremony</strong></td>
+    <td colspan="3" style="text-align:center; background:#f0fdf4; color:#166534; font-weight:700;">Identical — Shamir's Secret Sharing (3-of-3) + Lagrange reconstruction</td>
+  </tr>
+  <tr>
+    <td><strong>Key holders</strong></td>
+    <td>3 IEBC Commissioners</td>
+    <td>3 senior advocates / LSK council members</td>
+    <td>Company Secretary + Ind. Director + Auditor</td>
+  </tr>
+  <tr>
+    <td><strong>Declaration authority</strong></td>
+    <td>IEBC jurisdictional hierarchy (IEBC Chair → County RO → Constituency RO)</td>
+    <td>LSK Returning Officers by branch</td>
+    <td>Company Secretary (for all resolutions)</td>
+  </tr>
+  <tr>
+    <td><strong>Audit trail</strong></td>
+    <td colspan="3" style="text-align:center; background:#f0fdf4; color:#166534; font-weight:700;">Identical — blockchain txHash + integrity hash + voter receipt serial number</td>
+  </tr>
+</table>
+
+<hr class="divider">
+
+<!-- ══ FULL JOURNEY DIAGRAM ═══════════════════════════════════════════════════ -->
+<h2><span class="phase-num">G</span> Complete Journey — One View</h2>
+
+<pre style="font-size:12px; line-height:1.9;">
+CITIZEN / MEMBER / SHAREHOLDER
+  │
+  ├─── REGISTRATION ──────────────────────────────────────────────────────────
+  │     Govt:  National ID → KYC (Persona) → SBT minted → PIN + Distress PIN
+  │     Inst:  Membership number → Admin import → PIN setup
+  │     Corp:  CDS account → Share register import → Vote weight assigned → PIN
+  │
+  ├─── AUTHENTICATION ─────────────────────────────────────────────────────────
+  │     Enter ID + PIN  →  argon2id hash verified  →  JWT issued (24h)
+  │     Optional: WebAuthn fingerprint (same JWT issued, staff fields included)
+  │
+  ├─── BALLOT ─────────────────────────────────────────────────────────────────
+  │     Positions filtered by: jurisdiction (govt) | branch (inst) | all (corp)
+  │     Selections made in browser
+  │
+  ├─── VOTE ENCRYPTION ────────────────────────────────────────────────────────
+  │     ElGamal: Ciphertext = (g^r, g^vote · (g^x)^r)   [in browser, not server]
+  │     PIN verified server-side  →  Ciphertext stored  →  txHash on blockchain
+  │     Receipt: serial number issued to voter
+  │
+  └─── COUNTING CEREMONY ──────────────────────────────────────────────────────
+        │
+        ├─ Phase A: Re-encryption Mixnet
+        │    Node 1: re-encrypt all + shuffle  →  commitment₁
+        │    Node 2: re-encrypt all + shuffle  →  commitment₂
+        │    Node 3: re-encrypt all + shuffle  →  commitment₃
+        │    Output: anonymised batch, no link to original voters
+        │
+        ├─ Phase B: Homomorphic Aggregation
+        │    Enc(v₁) × Enc(v₂) × ... × Enc(vₙ)  =  Enc(total_per_candidate)
+        │    1,000+ ciphertexts  →  1 ciphertext per candidate
+        │
+        ├─ Phase C: Key Ceremony (SSS)
+        │    x split into (f(1), f(2), f(3))  using degree-2 polynomial
+        │    3 commissioners enter shares  →  Lagrange reconstruction
+        │    Verify: g^x_reconstructed = publicKey  (tamper check)
+        │
+        ├─ Phase D: Decryption + BSGS
+        │    Decrypt aggregate  →  g^total per candidate
+        │    BSGS in O(√N)     →  actual vote count recovered
+        │
+        └─ Phase E: Integrity + Declaration
+             SHA-256(mixnet_commitment | tally_hash)  published
+             Returning Officers declare results by jurisdiction
+             DRAFT  →  DECLARED  →  [CONTESTED  →  ANNULLED]
+</pre>
+
+<footer>
+  <strong>VeriVote Kenya</strong> · Sovereign Cryptographic Voting Platform<br>
+  All operations on-premise · Zero foreign API calls during counting · Open audit trail
+</footer>
+
+</body>
+</html>

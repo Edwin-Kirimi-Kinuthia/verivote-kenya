@@ -17,13 +17,9 @@ export class VoterService {
       preferredContact?: 'SMS' | 'EMAIL';
       fingerprintHash?: string;
       password?: string;
+      idDocumentType?: string;
     }
   ) {
-    // Validate national ID format (8 digits, Kenyan format)
-    if (!/^\d{8}$/.test(nationalId)) {
-      throw new ServiceError('National ID must be exactly 8 digits', 400);
-    }
-
     // Check if a record already exists for this national ID
     const existing = await voterRepository.findByNationalId(nationalId);
     if (existing) {
@@ -54,6 +50,7 @@ export class VoterService {
         if (contactInfo.password) {
           updates.passwordHash = await argon2.hash(contactInfo.password, { type: argon2.argon2id });
         }
+        if (contactInfo.idDocumentType) updates.idDocumentType = contactInfo.idDocumentType;
       }
       await voterRepository.update(existing.id, updates);
 
@@ -117,9 +114,20 @@ export class VoterService {
       };
     }
 
-    // Verification passed — mint SBT, generate PINs
+    // Verification passed — mint SBT (non-fatal: registration succeeds even when Hardhat is offline)
     const wallet = ethers.Wallet.createRandom();
-    const { tokenId, txHash } = await blockchainService.mintSBT(wallet.address, voter.nationalId);
+    let tokenId = `pending-sbt-${Date.now()}`;
+    let txHash   = '0x' + '0'.repeat(64);
+    try {
+      const sbtResult = await blockchainService.mintSBT(wallet.address, voter.nationalId);
+      tokenId = sbtResult.tokenId;
+      txHash  = sbtResult.txHash;
+    } catch (blockchainErr) {
+      logger.warn('SBT mint failed — blockchain unavailable, proceeding with pending token', {
+        voterId: voter.id,
+        error:   blockchainErr instanceof Error ? blockchainErr.message : String(blockchainErr),
+      });
+    }
 
     await voterRepository.registerWithSbt(voter.id, wallet.address, tokenId);
 
@@ -185,7 +193,7 @@ export class VoterService {
    * The distress PIN is delivered via SMS/email so the voter knows it, but an
    * attacker watching the setup screen cannot identify which PIN triggers the alert.
    */
-  async setVoterPin(voterId: string, pin: string) {
+  async setVoterPin(voterId: string, pin: string, distressPinInput?: string) {
     // Validate format: exactly 4 digits
     if (!/^\d{4}$/.test(pin)) {
       throw new ServiceError('PIN must be exactly 4 digits', 400);
@@ -213,21 +221,42 @@ export class VoterService {
     // Hash the normal PIN
     const normalPinHash = await argon2.hash(pin, { type: argon2.argon2id });
 
-    // Generate a distress PIN that:
-    //  • differs from the normal PIN in at least 2 digit positions
-    //  • is not all-same or sequential
+    // Resolve distress PIN — either user-provided or auto-generated
     let distressPin: string;
-    let attempts = 0;
-    do {
-      distressPin = Array.from({ length: 4 }, () => randomInt(0, 10)).join('');
-      const diffPositions = distressPin.split('').filter((d, i) => d !== pin[i]).length;
-      const dDigits = distressPin.split('').map(Number);
-      const dAllSame = /^(\d)\1{3}$/.test(distressPin);
+    if (distressPinInput) {
+      // Validate user-provided distress PIN
+      if (!/^\d{4}$/.test(distressPinInput)) {
+        throw new ServiceError('Distress PIN must be exactly 4 digits', 400);
+      }
+      if (/^(\d)\1{3}$/.test(distressPinInput)) {
+        throw new ServiceError('Distress PIN cannot be all the same digit (e.g. 1111)', 400);
+      }
+      const dDigits = distressPinInput.split('').map(Number);
       const dAsc = dDigits.every((d, i) => i === 0 || d === dDigits[i - 1]! + 1);
       const dDesc = dDigits.every((d, i) => i === 0 || d === dDigits[i - 1]! - 1);
-      if (diffPositions >= 2 && !dAllSame && !dAsc && !dDesc) break;
-      attempts++;
-    } while (attempts < 100);
+      if (dAsc || dDesc) {
+        throw new ServiceError('Distress PIN cannot be a sequential number (e.g. 1234)', 400);
+      }
+      const diffPositions = distressPinInput.split('').filter((d, i) => d !== pin[i]).length;
+      if (diffPositions < 2) {
+        throw new ServiceError('Distress PIN must differ from your normal PIN in at least 2 digit positions', 400);
+      }
+      distressPin = distressPinInput;
+    } else {
+      // Auto-generate a distress PIN that differs in ≥2 positions and is not trivial
+      let attempts = 0;
+      distressPin = '';
+      do {
+        distressPin = Array.from({ length: 4 }, () => randomInt(0, 10)).join('');
+        const diffPositions = distressPin.split('').filter((d, i) => d !== pin[i]).length;
+        const dDigits = distressPin.split('').map(Number);
+        const dAllSame = /^(\d)\1{3}$/.test(distressPin);
+        const dAsc = dDigits.every((d, i) => i === 0 || d === dDigits[i - 1]! + 1);
+        const dDesc = dDigits.every((d, i) => i === 0 || d === dDigits[i - 1]! - 1);
+        if (diffPositions >= 2 && !dAllSame && !dAsc && !dDesc) break;
+        attempts++;
+      } while (attempts < 100);
+    }
 
     const distressPinHash = await argon2.hash(distressPin, { type: argon2.argon2id });
 
@@ -238,8 +267,8 @@ export class VoterService {
       pinSetAt: new Date(),
     });
 
-    // Deliver the distress PIN to the voter (they already know their normal PIN)
-    if (voter.preferredContact && (voter.phoneNumber || voter.email)) {
+    // If distress PIN was auto-generated, deliver it to the voter via their registered contact
+    if (!distressPinInput && voter.preferredContact && (voter.phoneNumber || voter.email)) {
       await notificationService.sendDistressPin({
         channel: voter.preferredContact as 'SMS' | 'EMAIL',
         recipient: voter.preferredContact === 'SMS' ? voter.phoneNumber! : voter.email!,
@@ -247,16 +276,17 @@ export class VoterService {
         distressPin,
         context: 'REGISTRATION',
       });
-    } else {
-      // No contact info: log that delivery was skipped (PIN is NOT logged in plaintext)
+    } else if (!distressPinInput) {
       logger.warn('Distress PIN could not be delivered — voter has no registered contact', { voterId });
     }
 
     return {
       voterId,
       pinSet: true,
-      distressPinDelivered: !!(voter.preferredContact),
-      message: 'Your voting PIN has been set. Your distress PIN has been sent to your registered contact.',
+      userSetDistressPin: !!distressPinInput,
+      message: distressPinInput
+        ? 'Your voting PIN and distress PIN have been set successfully.'
+        : 'Your voting PIN has been set. Your distress PIN has been sent to your registered contact.',
     };
   }
 

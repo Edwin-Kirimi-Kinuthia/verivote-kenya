@@ -84,6 +84,163 @@ enum PreferredContact {
   EMAIL
 }
 
+// ── Election system enums ─────────────────────────────────────────────────────
+
+enum ElectionType {
+  GOVERNMENT    // National/county/constituency/ward elections
+  INSTITUTIONAL // University, NGO, association
+  CORPORATE     // Board elections, shareholder vote
+  CUSTOM        // Free-form, no geographic scoping
+}
+
+enum ElectionStatus {
+  DRAFT        // Being configured — not visible to voters
+  NOMINATIONS  // Candidates being accepted
+  ACTIVE       // Voting open
+  CLOSED       // Voting window ended, tally not yet run
+  TALLIED      // Ceremony completed, results available
+  ARCHIVED     // Permanently closed
+}
+
+enum PositionScope {
+  NATIONAL        // All voters eligible (e.g. President)
+  COUNTY          // Voters whose polling station county === scopeValue
+  CONSTITUENCY    // Voters whose polling station constituency === scopeValue
+  WARD            // Voters whose polling station ward === scopeValue
+  CUSTOM          // Eligibility determined by ElectionEnrollment table
+}
+
+/// Identity document type for voter registration
+/// Kenya's Elections Act: only National ID and Passport holders are eligible to vote
+enum IdDocumentType {
+  NATIONAL_ID  // Kenyan National ID (numeric, 5–9 digits)
+  PASSPORT     // Kenyan or foreign passport (alphanumeric, 6–12 chars)
+}
+
+/// IEBC staff role determining portal access level
+enum StaffRole {
+  COMMISSIONER       // One of the 9 IEBC Commissioners (full access + ceremony)
+  NATIONAL_RO        // National Returning Officer (coordinates national results)
+  COUNTY_RO          // County Returning Officer (declares county-level results)
+  CONSTITUENCY_RO    // Constituency Returning Officer (declares MP results)
+  PRESIDING_OFFICER  // Station Presiding Officer (voter management at station)
+  ICT_ADMIN          // ICT systems administrator (technical access, no election data)
+  OBSERVER           // Read-only observer (results + audit reports only)
+}
+
+/// Administrative level of a staff member's jurisdiction
+enum JurisdictionLevel {
+  NATIONAL
+  COUNTY
+  CONSTITUENCY
+  WARD
+  POLLING_STATION
+}
+
+/// Lifecycle status of a formal result declaration
+enum DeclarationStatus {
+  DRAFT      // Saved but not yet formally declared
+  DECLARED   // Formally declared — results are official
+  CONTESTED  // Under petition or legal challenge
+  ANNULLED   // Nullified by court order
+}
+
+// ── Election ──────────────────────────────────────────────────────────────────
+
+model Election {
+  id          String         @id @default(uuid()) @db.Uuid
+  name        String         @db.VarChar(255)
+  description String?        @db.Text
+  type        ElectionType
+  status      ElectionStatus @default(DRAFT)
+  orgName     String?        @map("org_name") @db.VarChar(255)
+  startDate   DateTime?      @map("start_date")
+  endDate     DateTime?      @map("end_date")
+  tallyResultJson String?    @map("tally_result_json") @db.Text
+
+  positions    Position[]
+  votes        Vote[]
+  enrollments  ElectionEnrollment[]
+  declarations ResultDeclaration[]
+
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt      @map("updated_at")
+
+  @@index([status])
+  @@index([type])
+  @@map("elections")
+}
+
+// ── Position ──────────────────────────────────────────────────────────────────
+
+model Position {
+  id         String        @id @default(uuid()) @db.Uuid
+  electionId String        @map("election_id") @db.Uuid
+  election   Election      @relation(fields: [electionId], references: [id], onDelete: Cascade)
+
+  title            String        @db.VarChar(255)
+  description      String?       @db.Text
+  scope            PositionScope
+  // COUNTY: "Nairobi" | CONSTITUENCY: "Westlands" | WARD: "Parklands/Highridge" | CUSTOM: null
+  scopeValue       String?       @map("scope_value") @db.VarChar(255)
+  maxVotesPerVoter Int           @default(1) @map("max_votes_per_voter")
+  orderIndex       Int           @default(0) @map("order_index")
+
+  candidates   Candidate[]
+  declarations ResultDeclaration[]
+
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt      @map("updated_at")
+
+  @@index([electionId])
+  @@index([scope, scopeValue])
+  @@map("positions")
+}
+
+// ── Candidate ─────────────────────────────────────────────────────────────────
+
+model Candidate {
+  id         String   @id @default(uuid()) @db.Uuid
+  positionId String   @map("position_id") @db.Uuid
+  position   Position @relation(fields: [positionId], references: [id], onDelete: Cascade)
+
+  name         String  @db.VarChar(255)
+  party        String? @db.VarChar(255)
+  description  String? @db.Text
+  photoUrl     String? @map("photo_url") @db.VarChar(500)
+  ballotNumber Int?    @map("ballot_number")
+  isActive     Boolean @default(true) @map("is_active")
+
+  /// Geographic area this candidate represents (county / constituency / ward name).
+  /// Used when the parent position is a template (position.scopeValue is null).
+  /// The ballot service filters by candidate.scopeValue === voter's matching area.
+  scopeValue String? @map("scope_value") @db.VarChar(255)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt      @map("updated_at")
+
+  @@index([positionId])
+  @@index([positionId, scopeValue])
+  @@map("candidates")
+}
+
+// ── ElectionEnrollment ────────────────────────────────────────────────────────
+// Explicit membership for INSTITUTIONAL and CORPORATE elections.
+
+model ElectionEnrollment {
+  id         String   @id @default(uuid()) @db.Uuid
+  electionId String   @map("election_id") @db.Uuid
+  election   Election @relation(fields: [electionId], references: [id], onDelete: Cascade)
+  voterId    String   @map("voter_id") @db.Uuid
+
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@unique([electionId, voterId])
+  @@index([electionId])
+  @@index([voterId])
+  @@map("election_enrollments")
+}
+
 // ============================================================================
 // VOTER MODEL
 // ============================================================================
@@ -108,9 +265,12 @@ model Voter {
   // IDENTITY FIELDS
   // --------------------------------------------------------------------------
 
-  // National ID - unique identifier for each Kenyan voter
-  // @db.VarChar(20) = max 20 characters in PostgreSQL
+  // Identity document number — unique per voter regardless of document type
+  // @db.VarChar(20) supports IDs, passports, and military/alien IDs
   nationalId        String       @unique @map("national_id") @db.VarChar(20)
+
+  // Type of identity document used for registration
+  idDocumentType    IdDocumentType @default(NATIONAL_ID) @map("id_document_type")
   
   // Ethereum wallet address where the voter's SBT is stored
   // Format: 0x followed by 40 hex characters (total 42 chars)
@@ -238,12 +398,13 @@ model Voter {
   // @relation() defines the foreign key relationship
   pollingStationId  String?      @map("polling_station_id") @db.Uuid
   pollingStation    PollingStation? @relation(fields: [pollingStationId], references: [id])
+  iebcStaff         IebcStaff?
 
   // --------------------------------------------------------------------------
   // TIMESTAMPS
   // --------------------------------------------------------------------------
   // Prisma automatically manages these
-  
+
   createdAt         DateTime     @default(now()) @map("created_at")
   updatedAt         DateTime     @updatedAt @map("updated_at")
 
@@ -251,13 +412,13 @@ model Voter {
   // INDEXES
   // --------------------------------------------------------------------------
   // Indexes speed up queries on frequently searched columns
-  
+
   @@index([nationalId])       // Fast lookup by national ID
   @@index([sbtAddress])       // Fast lookup by blockchain address
   @@index([pollingStationId]) // Fast lookup by polling station
   @@index([status])           // Fast filtering by status
   @@index([role])             // Fast filtering by role
-  
+
   // Rename the table in PostgreSQL to 'voters' (plural, lowercase)
   @@map("voters")
 }
@@ -394,6 +555,10 @@ model Vote {
   // RELATIONSHIPS
   // --------------------------------------------------------------------------
   
+  // Which election this vote belongs to (null for legacy votes)
+  electionId          String?      @map("election_id") @db.Uuid
+  election            Election?    @relation(fields: [electionId], references: [id])
+
   // Which polling station this vote was cast at
   // Note: We link to station, NOT to voter (for anonymity!)
   pollingStationId    String       @map("polling_station_id") @db.Uuid
@@ -423,6 +588,7 @@ model Vote {
   // --------------------------------------------------------------------------
   @@index([serialNumber])       // Fast receipt verification
   @@index([pollingStationId])   // Fast station-based queries
+  @@index([electionId])         // Fast election-based queries
   @@index([status])             // Fast status filtering
   @@index([timestamp])          // Fast time-based queries
   @@index([blockchainTxHash])   // Fast blockchain lookup
@@ -471,12 +637,22 @@ model PollingStation {
   address         String?   @db.Text
 
   // --------------------------------------------------------------------------
+  // DIASPORA FIELDS
+  // --------------------------------------------------------------------------
+
+  // True for Kenyan embassy / high-commission voting stations abroad
+  isDiaspora      Boolean   @default(false) @map("is_diaspora")
+
+  // Country where a diaspora station is located (null for domestic stations)
+  country         String?   @db.VarChar(100)
+
+  // --------------------------------------------------------------------------
   // CAPACITY & STATUS
   // --------------------------------------------------------------------------
-  
+
   // How many voters are registered at this station
   registeredVoters Int      @default(0) @map("registered_voters")
-  
+
   // Is this station currently active?
   isActive        Boolean   @default(true) @map("is_active")
   
@@ -509,6 +685,7 @@ model PollingStation {
   votes           Vote[]
   printQueue      PrintQueue[]
   manualReviewAppointments ManualReviewAppointment[]
+  iebcStaff       IebcStaff[]
 
   // --------------------------------------------------------------------------
   // INDEXES
@@ -520,6 +697,85 @@ model PollingStation {
   @@index([isActive])
 
   @@map("polling_stations")
+}
+
+// ── IebcStaff ─────────────────────────────────────────────────────────────────
+// Links an ADMIN-role voter to their IEBC staff role and jurisdiction.
+// A staff member authenticates through the Voter flow (password + OTP),
+// then their IebcStaff record determines what they can access in the portal.
+
+model IebcStaff {
+  id                String            @id @default(uuid()) @db.Uuid
+
+  // The voter account used to authenticate (1-to-1)
+  voterId           String            @unique @map("voter_id") @db.Uuid
+  voter             Voter             @relation(fields: [voterId], references: [id])
+
+  staffRole         StaffRole         @map("staff_role")
+  jurisdictionLevel JurisdictionLevel @map("jurisdiction_level")
+  // County name, constituency name, ward name, station code — null for NATIONAL
+  jurisdictionValue String?           @map("jurisdiction_value") @db.VarChar(255)
+
+  // For PRESIDING_OFFICER: direct link to their polling station
+  pollingStationId  String?           @map("polling_station_id") @db.Uuid
+  pollingStation    PollingStation?   @relation(fields: [pollingStationId], references: [id])
+
+  isActive          Boolean           @default(true) @map("is_active")
+
+  // Audit trail: who created this staff record
+  createdByStaffId  String?           @map("created_by_staff_id") @db.Uuid
+  createdByStaff    IebcStaff?        @relation("StaffHierarchy", fields: [createdByStaffId], references: [id])
+  staffCreated      IebcStaff[]       @relation("StaffHierarchy")
+
+  declarations      ResultDeclaration[]
+
+  createdAt         DateTime          @default(now()) @map("created_at")
+  updatedAt         DateTime          @updatedAt      @map("updated_at")
+
+  @@index([staffRole])
+  @@index([jurisdictionLevel, jurisdictionValue])
+  @@map("iebc_staff")
+}
+
+// ── ResultDeclaration ─────────────────────────────────────────────────────────
+// Records the formal act of a Returning Officer officially declaring results
+// for a specific position in a specific election.
+
+model ResultDeclaration {
+  id                String            @id @default(uuid()) @db.Uuid
+
+  electionId        String            @map("election_id") @db.Uuid
+  election          Election          @relation(fields: [electionId], references: [id])
+
+  positionId        String            @map("position_id") @db.Uuid
+  position          Position          @relation(fields: [positionId], references: [id])
+
+  staffId           String            @map("staff_id") @db.Uuid
+  staff             IebcStaff         @relation(fields: [staffId], references: [id])
+
+  status            DeclarationStatus @default(DRAFT)
+
+  // Jurisdiction at the time of declaration (snapshot)
+  jurisdictionLevel JurisdictionLevel @map("jurisdiction_level")
+  jurisdictionValue String?           @map("jurisdiction_value") @db.VarChar(255)
+
+  // JSON snapshot of vote tallies at declaration time
+  tallySnapshot     String?           @map("tally_snapshot") @db.Text
+
+  declaredAt        DateTime?         @map("declared_at")
+  contestedAt       DateTime?         @map("contested_at")
+  contestReason     String?           @map("contest_reason") @db.Text
+
+  createdAt         DateTime          @default(now()) @map("created_at")
+  updatedAt         DateTime          @updatedAt      @map("updated_at")
+
+  // One officer can only declare each position once per election
+  @@unique([electionId, positionId, staffId])
+  @@index([electionId])
+  @@index([positionId])
+  @@index([staffId])
+  @@index([status])
+  @@map("result_declarations")
 }
 
 // ============================================================================

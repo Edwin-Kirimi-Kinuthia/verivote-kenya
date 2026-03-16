@@ -104,7 +104,7 @@ export class VoteRepository extends BaseRepository<Vote, CreateVoteInput, Update
       prisma.vote.count({ where }),
     ]);
 
-    return this.buildPaginatedResponse(data as VoteWithStation[], total, page, limit);
+    return this.buildPaginatedResponse(data as unknown as VoteWithStation[], total, page, limit);
   }
 
   async create(data: CreateVoteInput): Promise<Vote> {
@@ -113,11 +113,12 @@ export class VoteRepository extends BaseRepository<Vote, CreateVoteInput, Update
         encryptedVoteHash: data.encryptedVoteHash,
         encryptedVoteData: data.encryptedVoteData,
         homomorphicBallot: data.homomorphicBallot,
-        serialNumber: data.serialNumber,
-        zkpProof: data.zkpProof,
-        pollingStationId: data.pollingStationId,
-        previousVoteId: data.previousVoteId,
+        serialNumber:      data.serialNumber,
+        zkpProof:          data.zkpProof,
+        pollingStationId:  data.pollingStationId,
+        previousVoteId:    data.previousVoteId,
         isDistressFlagged: data.isDistressFlagged ?? false,
+        ...(data.electionId ? { electionId: data.electionId } : {}),
       },
     }) as Promise<Vote>;
   }

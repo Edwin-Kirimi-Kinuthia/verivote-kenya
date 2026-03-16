@@ -4,6 +4,7 @@ import { voterRepository, voteRepository, pollingStationRepository } from '../re
 import { blockchainService } from './blockchain.service.js';
 import { encryptionService } from './encryption.service.js';
 import { encryptHomomorphicBallot } from './homomorphic.service.js';
+import { validateSelections, getAllCandidatesForElection } from './ballot.service.js';
 import { notificationService } from './notification.service.js';
 import { emitVoteUpdate, emitDistressAlert } from '../lib/socket.js';
 import { ServiceError } from './voter.service.js';
@@ -42,9 +43,10 @@ function checkVotingWindow() {
 }
 
 interface CastVoteInput {
-  selections: Record<string, string>;
+  selections:       Record<string, string>;
   pollingStationId?: string;
-  pin?: string;
+  pin?:              string;
+  electionId?:       string;
 }
 
 interface CastVoteResult {
@@ -113,13 +115,22 @@ export class VoteService {
       throw new ServiceError('Invalid PIN', 401);
     }
 
+    // For dynamic elections: validate selections against the ballot service
+    if (input.electionId) {
+      await validateSelections(voter.sub, input.electionId, input.selections);
+    }
+
     // Encrypt selections and hash the ciphertext
     const encryptedData = encryptionService.encryptVote(input.selections);
-    const voteHash = encryptionService.hashEncryptedData(encryptedData);
+    const voteHash      = encryptionService.hashEncryptedData(encryptedData);
 
     // Generate per-candidate exponential ElGamal ballot for homomorphic tallying
+    let allCandidates: Array<{ positionId: string; candidateId: string }> | undefined;
+    if (input.electionId) {
+      allCandidates = await getAllCandidatesForElection(input.electionId);
+    }
     const homomorphicBallot = JSON.stringify(
-      encryptHomomorphicBallot(input.selections, encryptionService.getPublicKey())
+      encryptHomomorphicBallot(input.selections, encryptionService.getPublicKey(), input.electionId, allCandidates)
     );
     const serialNumber = generateSerialNumber();
     const isRevote = voterRecord.voteCount > 0;
@@ -146,6 +157,7 @@ export class VoteService {
         serialNumber,
         pollingStationId,
         isDistressFlagged: isDistressVote,
+        electionId:        input.electionId,
       });
       voteId = newVote.id;
     } else {
@@ -156,6 +168,7 @@ export class VoteService {
         serialNumber,
         pollingStationId,
         isDistressFlagged: isDistressVote,
+        electionId:        input.electionId,
       });
       voteId = vote.id;
     }
@@ -171,7 +184,7 @@ export class VoteService {
     }
 
     // Update voter status and record their latest voteId for future revotes
-    await voterRepository.recordVote(voter.sub, isRevote, voteId);
+    await voterRepository.recordVote(voter.sub, isRevote, voteId, isDistressVote);
 
     const castAt = new Date();
 

@@ -46,16 +46,32 @@ export const STATUS_CONFIG: Record<
   },
 };
 
-export const NAV_ITEMS = [
-  { href: "/admin", label: "Dashboard", icon: "grid" },
-  { href: "/admin/register", label: "Register Voter", icon: "user-plus" },
-  { href: "/admin/voters", label: "Voters", icon: "users" },
-  { href: "/admin/reviews", label: "Reviews", icon: "clipboard-check" },
-  { href: "/admin/appointments", label: "Appointments", icon: "calendar" },
-  { href: "/admin/pin-resets", label: "PIN Resets", icon: "key" },
-  { href: "/admin/officials", label: "IEBC Officials", icon: "shield" },
-  { href: "/admin/ai-security", label: "AI Security", icon: "cpu" },
-  { href: "/admin/results", label: "Election Results", icon: "chart-bar" },
-  { href: "/admin/mixnet", label: "Mixnet", icon: "shuffle" },
-  { href: "/admin/ceremony", label: "Homomorphic Tally", icon: "lock-open" },
-] as const;
+import type { StaffRole } from "./types";
+
+/** All nav items with optional role restriction (undefined = any admin) */
+export const ALL_NAV_ITEMS = [
+  { href: "/admin",                  label: "Dashboard",         icon: "grid",            allowedRoles: undefined },
+  { href: "/admin/register",         label: "Register Voter",    icon: "user-plus",       allowedRoles: ["COMMISSIONER", "PRESIDING_OFFICER", "ICT_ADMIN"] as StaffRole[] },
+  { href: "/admin/voters",           label: "Voters",            icon: "users",           allowedRoles: undefined },
+  { href: "/admin/reviews",          label: "Reviews",           icon: "clipboard-check", allowedRoles: undefined },
+  { href: "/admin/appointments",     label: "Appointments",      icon: "calendar",        allowedRoles: undefined },
+  { href: "/admin/pin-resets",       label: "PIN Resets",        icon: "key",             allowedRoles: undefined },
+  { href: "/admin/staff",             label: "IEBC Officials",    icon: "shield",          allowedRoles: ["COMMISSIONER"] as StaffRole[] },
+  { href: "/admin/ai-security",      label: "AI Security",       icon: "cpu",             allowedRoles: ["COMMISSIONER", "NATIONAL_RO", "ICT_ADMIN"] as StaffRole[] },
+  { href: "/admin/elections",        label: "Elections",         icon: "ballot",          allowedRoles: ["COMMISSIONER", "NATIONAL_RO", "ICT_ADMIN"] as StaffRole[] },
+  { href: "/admin/election-ceremony",label: "Election Ceremony", icon: "chart-bar",       allowedRoles: ["COMMISSIONER", "NATIONAL_RO", "ICT_ADMIN"] as StaffRole[] },
+  { href: "/admin/declarations",     label: "Declarations",      icon: "document-check",  allowedRoles: ["COMMISSIONER", "NATIONAL_RO", "COUNTY_RO", "CONSTITUENCY_RO"] as StaffRole[] },
+  { href: "/admin/polling-stations", label: "Polling Stations",  icon: "map-pin",         allowedRoles: ["COMMISSIONER", "NATIONAL_RO", "COUNTY_RO", "CONSTITUENCY_RO", "PRESIDING_OFFICER", "ICT_ADMIN"] as StaffRole[] },
+];
+
+/** Returns the nav items visible to a given staff role (or all unrestricted items for plain admins) */
+export function getNavItems(staffRole?: StaffRole | null) {
+  return ALL_NAV_ITEMS.filter((item) => {
+    if (!item.allowedRoles) return true;       // visible to all admins regardless of role
+    if (!staffRole) return false;              // plain admin (no IebcStaff record) — hide role-gated items
+    return item.allowedRoles.includes(staffRole);
+  });
+}
+
+/** Legacy alias — sidebar uses getNavItems() but some pages still reference NAV_ITEMS */
+export const NAV_ITEMS = ALL_NAV_ITEMS;

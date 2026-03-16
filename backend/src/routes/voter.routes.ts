@@ -10,15 +10,29 @@ import type { AuthenticatedRequest } from '../types/auth.types.js';
 
 const router: Router = Router();
 
+const ID_DOCUMENT_TYPES = ['NATIONAL_ID', 'PASSPORT'] as const;
+
+function validateDocumentNumber(id: string, type: typeof ID_DOCUMENT_TYPES[number]): string | null {
+  switch (type) {
+    case 'NATIONAL_ID': return /^\d{5,9}$/.test(id) ? null : 'National ID must be 5–9 digits';
+    case 'PASSPORT':    return /^[A-Z0-9]{6,12}$/i.test(id) ? null : 'Passport must be 6–12 alphanumeric characters';
+  }
+}
+
 const registerSchema = z.object({
-  nationalId: z.string().regex(/^\d{8}$/, 'National ID must be exactly 8 digits'),
+  nationalId: z.string().min(1).max(20),
+  idDocumentType: z.enum(ID_DOCUMENT_TYPES).default('NATIONAL_ID'),
   pollingStationId: z.string().uuid('Invalid polling station ID'),
-  phoneNumber: z.string().regex(/^\+\d{7,15}$/, 'Phone must be in E.164 format, e.g. +254712345678').optional(),
+  phoneNumber: z.string().regex(/^\+254\d{9,10}$|^\+(?!254)\d{8,15}$/, 'For Kenya (+254): 9–10 digits. Other countries: 8–15 digits. E.g. +254712345678').optional(),
   email: z.string().email('Invalid email address').optional(),
   preferredContact: z.enum(['SMS', 'EMAIL']).optional(),
   fingerprintHash: z.string().regex(/^[a-f0-9]{64}$/, 'Must be a 64-char hex SHA-256').optional(),
   password: passwordSchema.optional(),
 }).superRefine((data, ctx) => {
+  const idError = validateDocumentNumber(data.nationalId, data.idDocumentType);
+  if (idError) {
+    ctx.addIssue({ path: ['nationalId'], code: z.ZodIssueCode.custom, message: idError });
+  }
   if (data.preferredContact === 'SMS' && !data.phoneNumber) {
     ctx.addIssue({
       path: ['phoneNumber'],
@@ -47,13 +61,14 @@ router.post('/register', registrationRateLimiter, async (req: Request, res: Resp
       return;
     }
 
-    const { nationalId, pollingStationId, phoneNumber, email, preferredContact, fingerprintHash, password } = parsed.data;
+    const { nationalId, idDocumentType, pollingStationId, phoneNumber, email, preferredContact, fingerprintHash, password } = parsed.data;
     const result = await voterService.registerVoter(nationalId, pollingStationId, {
       phoneNumber,
       email,
       preferredContact,
       fingerprintHash,
       password,
+      idDocumentType,
     });
 
     // In mock mode, Persona completes inline and returns notificationSent (201)
@@ -182,7 +197,7 @@ router.get('/registration-status/:inquiryId', async (req: Request, res: Response
 
 // POST /api/voters/request-manual-review - Request manual IEBC verification
 const manualReviewSchema = z.object({
-  nationalId: z.string().regex(/^\d{8}$/, 'National ID must be exactly 8 digits'),
+  nationalId: z.string().min(1).max(20),
   reason: z.string().trim().max(500, 'Reason must be 500 characters or fewer').optional(),
 });
 
@@ -212,10 +227,11 @@ router.post('/request-manual-review', async (req: Request, res: Response) => {
   }
 });
 
-// POST /api/voters/set-pin - Set voter's normal PIN (distress PIN is auto-generated and delivered)
+// POST /api/voters/set-pin - Set voter's normal PIN and distress PIN
 router.post('/set-pin', requireAuth, async (req: Request, res: Response) => {
   const pinSchema = z.object({
     pin: z.string().regex(/^\d{4}$/, 'PIN must be exactly 4 digits'),
+    distressPin: z.string().regex(/^\d{4}$/, 'Distress PIN must be exactly 4 digits').optional(),
   });
 
   const parsed = pinSchema.safeParse(req.body);
@@ -226,7 +242,7 @@ router.post('/set-pin', requireAuth, async (req: Request, res: Response) => {
 
   try {
     const voterId = (req as AuthenticatedRequest).voter.sub;
-    const result = await voterService.setVoterPin(voterId, parsed.data.pin);
+    const result = await voterService.setVoterPin(voterId, parsed.data.pin, parsed.data.distressPin);
     res.status(200).json({ success: true, data: result });
   } catch (error) {
     if (error instanceof ServiceError) {

@@ -18,29 +18,44 @@ export class PollingStationRepository extends BaseRepository<
   CreatePollingStationInput,
   UpdatePollingStationInput
 > {
+  // Override base limit so the full station list (305+) can be fetched in one request
+  protected maxLimit = 1000;
   
   async findById(id: string): Promise<PollingStation | null> {
     return prisma.pollingStation.findUnique({
       where: { id },
-    }) as Promise<PollingStation | null>;
+    }) as unknown as Promise<PollingStation | null>;
   }
 
   async findByCode(code: string): Promise<PollingStation | null> {
     return prisma.pollingStation.findUnique({
       where: { code },
-    }) as Promise<PollingStation | null>;
+    }) as unknown as Promise<PollingStation | null>;
   }
 
   async findMany(params: PollingStationQueryParams = {}): Promise<PaginatedResponse<PollingStation>> {
     const { page, limit, skip } = this.getPagination(params);
-    
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const where: any = {};
-    
+
     if (params.county) where.county = params.county;
     if (params.constituency) where.constituency = params.constituency;
     if (params.ward) where.ward = params.ward;
     if (params.isActive !== undefined) where.isActive = params.isActive;
+    if (params.isDiaspora !== undefined) where.isDiaspora = params.isDiaspora;
+    if (params.country) where.country = params.country;
+
+    if (params.q) {
+      const q = params.q.trim();
+      where.OR = [
+        { name:          { contains: q, mode: 'insensitive' } },
+        { code:          { contains: q, mode: 'insensitive' } },
+        { county:        { contains: q, mode: 'insensitive' } },
+        { constituency:  { contains: q, mode: 'insensitive' } },
+        { ward:          { contains: q, mode: 'insensitive' } },
+      ];
+    }
 
     const [data, total] = await Promise.all([
       prisma.pollingStation.findMany({
@@ -55,56 +70,103 @@ export class PollingStationRepository extends BaseRepository<
     return this.buildPaginatedResponse(data as PollingStation[], total, page, limit);
   }
 
+  /**
+   * Returns the nearest `limit` active stations to (lat, lng) using
+   * the Haversine formula, computed in JavaScript (no PostGIS required).
+   * Pass isDiaspora=true to search diaspora stations (embassies/consulates)
+   * instead of domestic Kenya stations.
+   */
+  async findNearby(
+    lat: number,
+    lng: number,
+    limit = 5,
+    isDiaspora = false,
+    country?: string,
+  ): Promise<Array<PollingStation & { distanceKm: number }>> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const where: any = { isActive: true, isDiaspora, latitude: { not: null }, longitude: { not: null } };
+    // When searching diaspora stations, scope to the voter's country so we never
+    // return an embassy in a neighbouring country that happens to be closer.
+    if (isDiaspora && country) {
+      where.country = { contains: country, mode: 'insensitive' };
+    }
+    const stations = await prisma.pollingStation.findMany({ where }) as unknown as PollingStation[];
+
+    const R = 6371; // Earth radius in km
+    const toRad = (d: number) => (d * Math.PI) / 180;
+
+    const withDistance = stations.map((s) => {
+      // Prisma returns Decimal objects for latitude/longitude — convert to plain number
+      const sLat = parseFloat(String(s.latitude));
+      const sLng = parseFloat(String(s.longitude));
+      const dLat = toRad(sLat - lat);
+      const dLng = toRad(sLng - lng);
+      const a =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos(toRad(lat)) *
+          Math.cos(toRad(sLat)) *
+          Math.sin(dLng / 2) ** 2;
+      const distanceKm = 2 * R * Math.asin(Math.sqrt(a));
+      return { ...s, distanceKm };
+    });
+
+    return withDistance
+      .sort((a, b) => a.distanceKm - b.distanceKm)
+      .slice(0, limit);
+  }
+
   async findActive(): Promise<PollingStation[]> {
     return prisma.pollingStation.findMany({
       where: { isActive: true },
       orderBy: { code: 'asc' },
-    }) as Promise<PollingStation[]>;
+    }) as unknown as Promise<PollingStation[]>;
   }
 
   async findByCounty(county: string): Promise<PollingStation[]> {
     return prisma.pollingStation.findMany({
       where: { county, isActive: true },
       orderBy: { code: 'asc' },
-    }) as Promise<PollingStation[]>;
+    }) as unknown as Promise<PollingStation[]>;
   }
 
   async findByConstituency(constituency: string): Promise<PollingStation[]> {
     return prisma.pollingStation.findMany({
       where: { constituency, isActive: true },
       orderBy: { code: 'asc' },
-    }) as Promise<PollingStation[]>;
+    }) as unknown as Promise<PollingStation[]>;
   }
 
   async create(data: CreatePollingStationInput): Promise<PollingStation> {
-    return prisma.pollingStation.create({
-      data: {
-        code: data.code,
-        name: data.name,
-        county: data.county,
-        constituency: data.constituency,
-        ward: data.ward,
-        latitude: data.latitude,
-        longitude: data.longitude,
-        address: data.address,
-        registeredVoters: data.registeredVoters || 0,
-        deviceCount: data.deviceCount || 0,
-        printerCount: data.printerCount || 0,
-      },
-    }) as Promise<PollingStation>;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const createData: any = {
+      code: data.code,
+      name: data.name,
+      county: data.county,
+      constituency: data.constituency,
+      ward: data.ward,
+      latitude: data.latitude,
+      longitude: data.longitude,
+      address: data.address,
+      isDiaspora: data.isDiaspora ?? false,
+      country: data.country ?? null,
+      registeredVoters: data.registeredVoters || 0,
+      deviceCount: data.deviceCount || 0,
+      printerCount: data.printerCount || 0,
+    };
+    return prisma.pollingStation.create({ data: createData }) as unknown as Promise<PollingStation>;
   }
 
   async update(id: string, data: UpdatePollingStationInput): Promise<PollingStation> {
     return prisma.pollingStation.update({
       where: { id },
       data,
-    }) as Promise<PollingStation>;
+    }) as unknown as Promise<PollingStation>;
   }
 
   async delete(id: string): Promise<PollingStation> {
     return prisma.pollingStation.delete({
       where: { id },
-    }) as Promise<PollingStation>;
+    }) as unknown as Promise<PollingStation>;
   }
 
   async count(): Promise<number> {
@@ -115,14 +177,14 @@ export class PollingStationRepository extends BaseRepository<
     return prisma.pollingStation.update({
       where: { id },
       data: { isActive: true },
-    }) as Promise<PollingStation>;
+    }) as unknown as Promise<PollingStation>;
   }
 
   async deactivate(id: string): Promise<PollingStation> {
     return prisma.pollingStation.update({
       where: { id },
       data: { isActive: false },
-    }) as Promise<PollingStation>;
+    }) as unknown as Promise<PollingStation>;
   }
 
   async setOperatingHours(
@@ -133,7 +195,7 @@ export class PollingStationRepository extends BaseRepository<
     return prisma.pollingStation.update({
       where: { id },
       data: { openingTime, closingTime },
-    }) as Promise<PollingStation>;
+    }) as unknown as Promise<PollingStation>;
   }
 
   async getCounties(): Promise<string[]> {

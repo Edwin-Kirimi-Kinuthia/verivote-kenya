@@ -98,13 +98,30 @@ export default function ReceiptPage() {
             </p>
           </div>
 
-          <div className="mb-6 border-t border-gray-100 pt-4">
-            <p className="text-xs font-medium text-gray-500 uppercase">
-              {t("receipt.blockchain")}
-            </p>
-            <p className="mt-1 break-all font-mono text-sm text-gray-700">
-              {receipt.blockchainTxHash || t("receipt.pending")}
-            </p>
+          <div className="mb-4 border-t border-gray-100 pt-4">
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-xs font-medium text-gray-500 uppercase">
+                {t("receipt.blockchain")}
+              </p>
+              {receipt.blockchainTxHash ? (
+                <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-700">
+                  <svg className="h-3 w-3" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z" clipRule="evenodd" /></svg>
+                  Confirmed on-chain
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">
+                  <svg className="h-3 w-3 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                  Pending
+                </span>
+              )}
+            </div>
+            {receipt.blockchainTxHash ? (
+              <p className="break-all font-mono text-xs text-gray-600">{receipt.blockchainTxHash}</p>
+            ) : (
+              <p className="text-xs text-gray-500">
+                Your vote is securely recorded in the system. Blockchain confirmation is processed in the background and does not affect your vote being counted.
+              </p>
+            )}
           </div>
 
           <p className="text-xs text-gray-400">{t("receipt.keepSafe")}</p>

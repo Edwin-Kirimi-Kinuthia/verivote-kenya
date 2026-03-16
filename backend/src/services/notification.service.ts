@@ -1,4 +1,3 @@
-import nodemailer from 'nodemailer';
 import AfricasTalking from 'africastalking';
 import type { OtpPurpose } from './otp.service.js';
 import { logger } from '../lib/logger.js';
@@ -22,7 +21,6 @@ export interface DistressPinPayload {
 export class NotificationService {
   private mockMode = process.env.NOTIFICATION_MOCK === 'true';
   private atSms: ReturnType<typeof AfricasTalking>['SMS'] | null = null;
-  private smtp: nodemailer.Transporter | null = null;
 
   constructor() {
     if (!this.mockMode) {
@@ -31,12 +29,45 @@ export class NotificationService {
         username: process.env.AT_USERNAME!,
       });
       this.atSms = at.SMS;
-      this.smtp = nodemailer.createTransport({
-        host: process.env.SMTP_HOST,
-        port: Number(process.env.SMTP_PORT) || 587,
-        secure: Number(process.env.SMTP_PORT) === 465,
-        auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-      });
+    }
+  }
+
+  /**
+   * Send an email via Mailtrap Email Testing HTTP API.
+   * Falls back to a warning log in non-production if the token is missing or the call fails.
+   */
+  private async sendEmail(opts: {
+    to: string;
+    subject: string;
+    text: string;
+  }): Promise<void> {
+    const token   = process.env.MAILTRAP_TOKEN;
+    const inboxId = process.env.MAILTRAP_INBOX_ID;
+
+    if (!token || !inboxId) {
+      throw new Error('MAILTRAP_TOKEN and MAILTRAP_INBOX_ID must be set in .env');
+    }
+
+    const response = await fetch(
+      `https://sandbox.api.mailtrap.io/api/send/${inboxId}`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from:    { email: 'noreply@verivote.go.ke', name: 'VeriVote Kenya' },
+          to:      [{ email: opts.to }],
+          subject: opts.subject,
+          text:    opts.text,
+        }),
+      },
+    );
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`Mailtrap API error ${response.status}: ${body}`);
     }
   }
 
@@ -84,22 +115,21 @@ export class NotificationService {
       }
     } else {
       try {
-        await this.smtp!.sendMail({
-          from: process.env.EMAIL_FROM || '"VeriVote Kenya" <noreply@verivote.go.ke>',
+        await this.sendEmail({
           to: payload.recipient,
           subject: this.emailSubject(payload.purpose),
           text: this.emailText(payload),
         });
-      } catch (smtpErr) {
-        // In development, fall back to logger so SMTP misconfiguration doesn't block the demo
+      } catch (emailErr) {
+        // In development, fall back to logger so misconfiguration doesn't block the demo
         if (process.env.NODE_ENV !== 'production') {
-          logger.warn('[EMAIL FALLBACK] SMTP send failed — OTP not delivered', {
+          logger.warn('[EMAIL FALLBACK] Mailtrap send failed — OTP not delivered', {
             nationalId: payload.nationalId,
-            reason: (smtpErr as Error).message,
+            reason: (emailErr as Error).message,
           });
           return;
         }
-        throw smtpErr;
+        throw emailErr;
       }
     }
   }
@@ -132,22 +162,24 @@ export class NotificationService {
 
     const smsMsg = (
       `VeriVote Kenya: Your ${contextLabel} distress PIN is ${payload.distressPin}. ` +
-      `Use ONLY under coercion. Keep confidential. Never share with anyone.`
+      `Use ONLY if forced to vote against your will. Never share this with anyone — not even IEBC officials.`
     );
 
-    const emailSubject = `VeriVote Kenya — Your ${contextLabel === 'registration' ? 'Registration' : 'PIN Reset'} Distress PIN`;
+    const emailSubject = `VeriVote Kenya — Your Distress PIN (${contextLabel === 'registration' ? 'Registration' : 'PIN Reset'})`;
     const emailBody = [
       `Dear Voter (National ID: ${payload.nationalId}),`,
       ``,
-      `Your VeriVote Kenya distress PIN (${contextLabel}) is:`,
+      `Your VeriVote Kenya distress PIN has been generated for ${contextLabel}:`,
       ``,
       `    ${payload.distressPin}`,
       ``,
-      `Use the distress PIN ONLY if you are forced to vote against your will.`,
-      `It silently alerts IEBC officials and flags your vote for review.`,
-      `Keep this PIN confidential. Do not share it with anyone, including IEBC officials.`,
+      `WHAT IS THE DISTRESS PIN?`,
+      `Use this PIN ONLY if you are being forced or coerced to vote against your will.`,
+      `Voting with the distress PIN casts your vote normally (so no one present can tell),`,
+      `but it silently alerts IEBC security officials to investigate your situation.`,
       ``,
-      `Your normal PIN is the one you chose during setup — keep it private too.`,
+      `Keep this PIN confidential. Do not share it with anyone — including IEBC officials.`,
+      `Your normal PIN (the one you set yourself) is separate — keep it private too.`,
       ``,
       `VeriVote Kenya — IEBC`,
     ].join('\n');
@@ -167,15 +199,14 @@ export class NotificationService {
       }
     } else {
       try {
-        await this.smtp!.sendMail({
-          from: process.env.EMAIL_FROM || '"VeriVote Kenya" <noreply@verivote.go.ke>',
+        await this.sendEmail({
           to: payload.recipient,
           subject: emailSubject,
           text: emailBody,
         });
       } catch (err) {
         if (process.env.NODE_ENV !== 'production') {
-          logger.warn('[DISTRESS PIN EMAIL FALLBACK] SMTP send failed — distress PIN not delivered', {
+          logger.warn('[DISTRESS PIN EMAIL FALLBACK] Mailtrap send failed — distress PIN not delivered', {
             nationalId: payload.nationalId,
             reason: (err as Error).message,
           });
@@ -212,23 +243,25 @@ export class NotificationService {
     }
 
     const smsMsg =
-      `VeriVote Kenya: Complete your voter registration by setting your PIN here: ${payload.setupUrl}` +
-      ` — Link expires in 24 hours. Do not share it with anyone.`;
+      `VeriVote Kenya: Your voter registration is complete. Set your PINs and enroll your fingerprint here: ${payload.setupUrl}` +
+      ` — Link expires in 24 hours. Do not share it with anyone, including IEBC officials.`;
 
     const emailBody = [
       `Dear Voter (National ID: ${payload.nationalId}),`,
       ``,
       `Your in-person voter registration at an IEBC office is complete.`,
-      `Please click the link below on your personal device to set your private voting PIN:`,
+      ``,
+      `Please open the link below on YOUR OWN personal device (phone or computer) to:`,
+      `  1. Optionally enroll your fingerprint or Face ID for quicker login`,
+      `  2. Set your Normal PIN — used every time you vote`,
+      `  3. Set your Distress PIN — use ONLY if forced to vote against your will;`,
+      `     it silently alerts IEBC without revealing coercion to anyone present`,
       ``,
       `    ${payload.setupUrl}`,
       ``,
       `This link expires in 24 hours and can only be used once.`,
       `Do not share this link with anyone — including IEBC officials.`,
-      ``,
-      `After you set your PIN, a separate distress PIN will be sent to this contact.`,
-      `Use the distress PIN ONLY if you are ever forced to vote against your will —`,
-      `it silently flags your vote for IEBC review without alerting anyone present.`,
+      `Both PINs are set by you privately; they are never visible to IEBC officers.`,
       ``,
       `VeriVote Kenya — IEBC`,
     ].join('\n');
@@ -245,15 +278,14 @@ export class NotificationService {
       }
     } else {
       try {
-        await this.smtp!.sendMail({
-          from: process.env.EMAIL_FROM || '"VeriVote Kenya" <noreply@verivote.go.ke>',
+        await this.sendEmail({
           to: payload.recipient,
-          subject: 'VeriVote Kenya — Set Your Voting PIN',
+          subject: 'VeriVote Kenya — Complete Your Voter Registration Setup',
           text: emailBody,
         });
       } catch (err) {
         if (process.env.NODE_ENV !== 'production') {
-          console.warn(`[PIN SETUP LINK EMAIL FALLBACK] SMTP failed. URL for ${payload.nationalId}: ${payload.setupUrl}`);
+          console.warn(`[PIN SETUP LINK EMAIL FALLBACK] Mailtrap failed. URL for ${payload.nationalId}: ${payload.setupUrl}`);
           return;
         }
         throw err;
@@ -346,10 +378,9 @@ export class NotificationService {
       );
     }
 
-    if (coordinatorEmail && this.smtp) {
+    if (coordinatorEmail) {
       tasks.push(
-        this.smtp.sendMail({
-          from: `VeriVote Security <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
+        this.sendEmail({
           to: coordinatorEmail,
           subject: `[URGENT] Distress PIN activated — ${payload.stationName}`,
           text: msg,

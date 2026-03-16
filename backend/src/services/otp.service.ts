@@ -115,8 +115,9 @@ export class OtpService {
       channel: channel.toLowerCase(),
     };
 
-    // In mock mode, expose the OTP in the response to aid testing
-    if (notificationService.isMockMode()) {
+    // In non-production environments, expose the OTP in the response so the
+    // flow can be tested without a working SMTP / Africa's Talking configuration.
+    if (process.env.NODE_ENV !== 'production') {
       result.mockCode = code;
     }
 

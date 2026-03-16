@@ -1,9 +1,9 @@
 /**
  * Threshold Homomorphic Ceremony routes.
  *
- * POST /api/ceremony/start        — admin: load ballots, aggregate, init ceremony
- * POST /api/ceremony/partial/:id  — admin: commissioner submits partial decryption
- * POST /api/ceremony/finalize     — admin: combine partials, BSGS, get results
+ * POST /api/ceremony/start        — admin: aggregate ballots + generate SSS key shares
+ * POST /api/ceremony/partial/:id  — admin: commissioner submits their SSS key share
+ * POST /api/ceremony/finalize     — admin: reconstruct key (Lagrange), decrypt aggregates, BSGS
  * GET  /api/ceremony/status       — admin: current ceremony state
  * GET  /api/ceremony/result       — admin: final tally
  * POST /api/ceremony/reset        — admin: clear ceremony state
@@ -12,7 +12,7 @@ import { Router, type Router as ExpressRouter, type Request, type Response } fro
 import { requireAuth, requireAdmin } from '../middleware/auth.middleware.js';
 import {
   startCeremony,
-  submitPartial,
+  submitShare,
   finalizeCeremony,
   getCeremonyState,
   getHomomorphicResult,
@@ -27,9 +27,11 @@ const router: ExpressRouter = Router();
 router.use(requireAuth, requireAdmin);
 
 // POST /api/ceremony/start
-router.post('/start', async (_req: Request, res: Response) => {
+// Body: { electionId?: string }  — omit to use legacy ALL_CANDIDATES (v2 ballots)
+router.post('/start', async (req: Request, res: Response) => {
   try {
-    const info = await startCeremony();
+    const electionId = (req.body as { electionId?: string })?.electionId;
+    const info = await startCeremony(electionId);
     res.json({ success: true, ...info });
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
@@ -38,14 +40,22 @@ router.post('/start', async (_req: Request, res: Response) => {
 });
 
 // POST /api/ceremony/partial/:commissionerId
+// Body: { share: string }  — the commissioner's SSS key share (hex)
 router.post('/partial/:commissionerId', (req: Request, res: Response) => {
   const { commissionerId } = req.params;
   if (!COMMISSIONER_IDS.includes(commissionerId as CommissionerId)) {
     res.status(400).json({ error: `Invalid commissioner ID. Must be one of: ${COMMISSIONER_IDS.join(', ')}` });
     return;
   }
+
+  const { share } = req.body as { share?: string };
+  if (!share || typeof share !== 'string' || share.trim() === '') {
+    res.status(400).json({ error: 'Request body must include a non-empty "share" field (hex string).' });
+    return;
+  }
+
   try {
-    const { received, remaining } = submitPartial(commissionerId as CommissionerId);
+    const { received, remaining } = submitShare(commissionerId as CommissionerId, share);
     res.json({ success: true, received, remaining, allReceived: remaining.length === 0 });
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
@@ -73,12 +83,12 @@ router.get('/status', (_req: Request, res: Response) => {
   }
   res.json({
     started: true,
-    ceremonyId: state.ceremonyId,
-    startedAt: state.startedAt,
-    totalBallots: state.totalBallots,
-    partialsReceived: Object.keys(state.partials),
-    partialsRemaining: COMMISSIONER_IDS.filter((id) => !state.partials[id]),
-    finalized: !!state.result,
+    ceremonyId:        state.ceremonyId,
+    startedAt:         state.startedAt,
+    totalBallots:      state.totalBallots,
+    partialsReceived:  Object.keys(state.submittedShares),
+    partialsRemaining: COMMISSIONER_IDS.filter((id) => !state.submittedShares[id]),
+    finalized:         !!state.result,
   });
 });
 

@@ -129,6 +129,7 @@ What gets created:
 
 Open a dedicated terminal (keep it running):
 
+
 ```bash
 cd smart-contracts
 npx hardhat node

@@ -2,7 +2,7 @@ import rateLimit from 'express-rate-limit';
 
 export const globalRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 100,
+  limit: 600,            // ~40 req/min — enough for admin dashboard multi-call pages
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   message: { success: false, error: 'Too many requests, please try again later' },
@@ -65,7 +65,7 @@ export const webAuthnEnrollRateLimiter = rateLimit({
 
 export const adminRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 200,
+  limit: 1000,           // high — admins navigate many pages per session
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   message: { success: false, error: 'Too many requests, please try again later' },

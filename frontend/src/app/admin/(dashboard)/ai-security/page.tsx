@@ -639,8 +639,10 @@ function AISecurityContent() {
                         </span>
                       </td>
                       <td className="px-4 py-2 text-gray-500">
-                        {entry.triggered_rules.length > 0
-                          ? entry.triggered_rules.map((r) => r.rule_id).join(", ")
+                        {isMounted
+                          ? entry.triggered_rules.length > 0
+                            ? entry.triggered_rules.map((r) => r.rule_id).join(", ")
+                            : "—"
                           : "—"}
                       </td>
                     </tr>

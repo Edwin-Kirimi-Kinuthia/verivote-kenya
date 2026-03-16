@@ -8,6 +8,7 @@ import { AppointmentSlotPicker } from "@/components/appointment-slot-picker";
 import { CountryCodeSelect } from "@/components/country-code-select";
 import type {
   PollingStation,
+  NearbyStation,
   BookedAppointmentResult,
   ApiResponse,
   PaginatedResponse,
@@ -40,6 +41,7 @@ export default function RegisterPage() {
   const [stations, setStations] = useState<PollingStation[]>([]);
 
   // Form fields
+  const [idDocumentType, setIdDocumentType] = useState<"NATIONAL_ID" | "PASSPORT">("NATIONAL_ID");
   const [nationalId, setNationalId] = useState("");
   const [pollingStationId, setPollingStationId] = useState("");
   const [preferredContact, setPreferredContact] = useState<"SMS" | "EMAIL">("EMAIL");
@@ -48,6 +50,8 @@ export default function RegisterPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -71,19 +75,42 @@ export default function RegisterPage() {
   // PIN setup state
   const [pin, setPin] = useState("");
   const [confirmPin, setConfirmPin] = useState("");
+  const [distressPin, setDistressPin] = useState("");
+  const [confirmDistressPin, setConfirmDistressPin] = useState("");
   const [showPin, setShowPin] = useState(false);
   const [showConfirmPin, setShowConfirmPin] = useState(false);
+  const [showDistressPin, setShowDistressPin] = useState(false);
+  const [showConfirmDistressPin, setShowConfirmDistressPin] = useState(false);
   const [pinLoading, setPinLoading] = useState(false);
   const [pinError, setPinError] = useState("");
 
+  // Polling station search/dropdown
+  const [stationSearch, setStationSearch] = useState("");
+  const [stationDropdownOpen, setStationDropdownOpen] = useState(false);
+  const [locationLoading, setLocationLoading] = useState(false);
+  const [nearbyStationIds, setNearbyStationIds] = useState<string[]>([]);
+  const [detectedCountry, setDetectedCountry] = useState<string | null>(null); // null = Kenya / domestic
+  const stationDropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     api
       .get<{ success: boolean } & PaginatedResponse<PollingStation>>(
-        "/api/polling-stations?limit=100"
+        "/api/polling-stations?limit=500"
       )
       .then((res) => { if (res.data) setStations(res.data); })
       .catch(() => {});
+  }, []);
+
+  // Close station dropdown on outside click
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (stationDropdownRef.current && !stationDropdownRef.current.contains(e.target as Node)) {
+        setStationDropdownOpen(false);
+        setStationSearch("");
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
   }, []);
 
   // Cooldown timer for OTP resend
@@ -114,6 +141,71 @@ export default function RegisterPage() {
     return () => window.removeEventListener("message", handler);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view]);
+
+  // ── Geolocation — detect nearest polling stations ─────────────────────────
+
+  async function detectNearbyStations() {
+    if (!navigator.geolocation) return;
+    setLocationLoading(true);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const { latitude: lat, longitude: lng } = pos.coords;
+        try {
+          // Step 1 — reverse-geocode to get the actual country (Nominatim/OSM, free, no key)
+          let country: string | null = null;
+          let countryCode: string | null = null;
+          try {
+            const geo = await fetch(
+              `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&accept-language=en`,
+              { headers: { "Accept": "application/json" } }
+            );
+            if (geo.ok) {
+              const geoJson = await geo.json() as { address?: { country?: string; country_code?: string } };
+              country = geoJson.address?.country ?? null;
+              countryCode = geoJson.address?.country_code?.toLowerCase() ?? null;
+            }
+          } catch { /* geolocation still works even if reverse-geocoding fails */ }
+
+          const isKenya = !countryCode || countryCode === "ke";
+
+          if (isKenya) {
+            // Domestic — find nearest Kenya polling station
+            setDetectedCountry(null);
+            const res = await api.get<{ success: boolean; data: NearbyStation[] }>(
+              `/api/polling-stations/nearby?lat=${lat}&lng=${lng}&limit=5`
+            );
+            if (res.data?.length) {
+              const ids = res.data.map((s) => s.id);
+              setNearbyStationIds(ids);
+              if (!pollingStationId) setPollingStationId(ids[0]!);
+            }
+          } else {
+            // Diaspora — find nearest embassy/consulate in this specific country
+            setDetectedCountry(country);
+            const params = `lat=${lat}&lng=${lng}&limit=5&isDiaspora=true${country ? `&country=${encodeURIComponent(country)}` : ""}`;
+            const res = await api.get<{ success: boolean; data: NearbyStation[] }>(
+              `/api/polling-stations/nearby?${params}`
+            );
+            // Load all diaspora stations for this country into the dropdown
+            if (country) {
+              const all = await api.get<{ success: boolean } & PaginatedResponse<PollingStation>>(
+                `/api/polling-stations?isDiaspora=true&country=${encodeURIComponent(country)}&limit=200`
+              );
+              if (all.data) setStations(all.data);
+            }
+            if (res.data?.length) {
+              const ids = res.data.map((s) => s.id);
+              setNearbyStationIds(ids);
+              if (!pollingStationId) setPollingStationId(ids[0]!);
+            }
+          }
+        } finally {
+          setLocationLoading(false);
+        }
+      },
+      () => setLocationLoading(false)
+    );
+  }
 
   // ── Password strength ──────────────────────────────────────────────────────
 
@@ -169,10 +261,19 @@ export default function RegisterPage() {
       setError('Password must not contain more than 3 consecutive keyboard or sequential characters (e.g. "qwer", "1234", "abcd").');
       return;
     }
-    const phoneNumber = countryCode + localPhone.replace(/\D/g, "");
-    if (preferredContact === "SMS" && !/^\+\d{7,15}$/.test(phoneNumber)) {
-      setError("Enter a valid phone number (digits only, 7–15 digits after the country code).");
-      return;
+    const digits = localPhone.replace(/\D/g, "");
+    const phoneNumber = countryCode + digits;
+    if (preferredContact === "SMS") {
+      const isKenya = countryCode === "+254";
+      const validLength = isKenya ? (digits.length >= 9 && digits.length <= 10) : (digits.length >= 7 && digits.length <= 12);
+      if (!validLength || !/^\+\d+$/.test(phoneNumber)) {
+        setError(
+          isKenya
+            ? "Enter a valid Kenyan number — 9 or 10 digits after +254 (e.g. 712345678)."
+            : "Enter a valid phone number (7–12 digits after the country code)."
+        );
+        return;
+      }
     }
     if (preferredContact === "EMAIL" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       setError("Please enter a valid email address");
@@ -183,6 +284,7 @@ export default function RegisterPage() {
     try {
       const res = await api.post<ApiResponse<RegistrationData>>("/api/voters/register", {
         nationalId,
+        idDocumentType,
         pollingStationId: pollingStationId || undefined,
         preferredContact,
         phoneNumber: preferredContact === "SMS" ? (countryCode + localPhone.replace(/\D/g, "")) : undefined,
@@ -356,7 +458,7 @@ export default function RegisterPage() {
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Enrollment failed";
       if (msg.includes("cancelled") || msg.includes("user") || msg.includes("abort")) {
-        setWebAuthnError("Fingerprint capture was cancelled. You can try again or skip for now.");
+        setWebAuthnError("Fingerprint capture was cancelled. Please try again.");
       } else {
         setWebAuthnError(msg);
       }
@@ -383,11 +485,16 @@ export default function RegisterPage() {
     const { ok, error: pinErr } = isPinValid(pin);
     if (!ok) { setPinError(pinErr); return; }
     if (pin !== confirmPin) { setPinError("PINs do not match"); return; }
+    const { ok: distressOk, error: distressErr } = isPinValid(distressPin);
+    if (!distressOk) { setPinError(`Distress PIN: ${distressErr}`); return; }
+    if (distressPin !== confirmDistressPin) { setPinError("Distress PINs do not match"); return; }
+    const diffCount = distressPin.split("").filter((d, i) => d !== pin[i]).length;
+    if (diffCount < 2) { setPinError("Distress PIN must differ from your normal PIN in at least 2 digit positions"); return; }
     setPinLoading(true);
     try {
       const res = await api.post<ApiResponse<{ pinSet: boolean; message: string }>>(
         "/api/voters/set-pin",
-        { pin }
+        { pin, distressPin }
       );
       if (!res.success) {
         setPinError((res as ApiResponse<unknown> & { error?: string }).error || "Failed to set PIN");
@@ -422,41 +529,170 @@ export default function RegisterPage() {
               </div>
             )}
 
-            {/* National ID */}
+            {/* Identity document type */}
+            <div>
+              <label className="mb-2 block text-sm font-semibold text-gray-700">
+                Identity Document Type
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                {(["NATIONAL_ID", "PASSPORT"] as const).map((type) => {
+                  const labels: Record<string, string> = {
+                    NATIONAL_ID: "National ID",
+                    PASSPORT: "Passport",
+                  };
+                  return (
+                    <label
+                      key={type}
+                      className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors ${
+                        idDocumentType === type
+                          ? "border-green-600 bg-green-50 text-green-800 font-medium"
+                          : "border-gray-200 bg-white text-gray-700 hover:border-gray-300"
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="idDocumentType"
+                        value={type}
+                        checked={idDocumentType === type}
+                        onChange={() => { setIdDocumentType(type); setNationalId(""); }}
+                        className="accent-green-700"
+                      />
+                      {labels[type]}
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Identity document number */}
             <div>
               <label htmlFor="nationalId" className="mb-2 block text-sm font-semibold text-gray-700">
-                {t("register.nationalId")}
+                {idDocumentType === "NATIONAL_ID" ? "National ID Number" : "Passport Number"}
               </label>
               <input
                 id="nationalId"
                 type="text"
-                inputMode="numeric"
-                pattern="\d{8}"
-                maxLength={8}
+                inputMode={idDocumentType === "NATIONAL_ID" ? "numeric" : "text"}
+                maxLength={idDocumentType === "NATIONAL_ID" ? 9 : 12}
                 required
                 value={nationalId}
-                onChange={(e) => setNationalId(e.target.value.replace(/\D/g, ""))}
-                placeholder="12345678"
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (idDocumentType === "NATIONAL_ID") {
+                    setNationalId(val.replace(/\D/g, "").slice(0, 9));
+                  } else {
+                    setNationalId(val.replace(/[^A-Za-z0-9]/g, "").toUpperCase().slice(0, 12));
+                  }
+                }}
+                placeholder={idDocumentType === "NATIONAL_ID" ? "12345678" : "AB123456"}
                 className="w-full rounded-lg border border-gray-300 px-4 py-3 text-base focus:border-green-700 focus:ring-2 focus:ring-green-700 focus:outline-none"
               />
+              <p className="mt-1 text-xs text-gray-500">
+                {idDocumentType === "NATIONAL_ID" ? "5–9 digits" : "6–12 alphanumeric characters"}
+              </p>
             </div>
 
-            {/* Polling Station */}
+            {/* Polling Station — searchable dropdown with geolocation */}
             <div>
-              <label htmlFor="station" className="mb-2 block text-sm font-semibold text-gray-700">
-                {t("register.station")}
-              </label>
-              <select
-                id="station"
-                value={pollingStationId}
-                onChange={(e) => setPollingStationId(e.target.value)}
-                className="w-full rounded-lg border border-gray-300 px-4 py-3 text-base focus:border-green-700 focus:ring-2 focus:ring-green-700 focus:outline-none"
-              >
-                <option value="">{t("register.stationPlaceholder")}</option>
-                {stations.map((s) => (
-                  <option key={s.id} value={s.id}>{s.code} — {s.name}</option>
-                ))}
-              </select>
+              <div className="mb-2 flex items-center justify-between">
+                <label className="text-sm font-semibold text-gray-700">
+                  {t("register.station")}
+                </label>
+                <button
+                  type="button"
+                  onClick={detectNearbyStations}
+                  disabled={locationLoading}
+                  className="flex items-center gap-1 text-xs text-green-700 hover:text-green-800 disabled:opacity-50 font-medium"
+                >
+                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                  {locationLoading ? "Detecting…" : nearbyStationIds.length > 0 ? "Location detected" : "Use my location"}
+                </button>
+              </div>
+
+              {detectedCountry && (
+                <div className="mb-2 rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-xs text-blue-800">
+                  Diaspora detected: <strong>{detectedCountry}</strong> — showing nearest Kenyan embassy/consulate.
+                </div>
+              )}
+              <div ref={stationDropdownRef} className="relative">
+                {/* Trigger button */}
+                <button
+                  type="button"
+                  onClick={() => setStationDropdownOpen((v) => !v)}
+                  className="flex w-full items-center justify-between rounded-lg border border-gray-300 px-4 py-3 text-base focus:border-green-700 focus:ring-2 focus:ring-green-700 focus:outline-none bg-white"
+                >
+                  {(() => {
+                    const sel = stations.find((s) => s.id === pollingStationId);
+                    return sel ? (
+                      <span className="text-gray-900 text-left truncate">{sel.code} — {sel.name}</span>
+                    ) : (
+                      <span className="text-gray-400">{t("register.stationPlaceholder")}</span>
+                    );
+                  })()}
+                  <svg
+                    className={`h-4 w-4 shrink-0 text-gray-400 ml-2 transition-transform ${stationDropdownOpen ? "rotate-180" : ""}`}
+                    fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+
+                {stationDropdownOpen && (
+                  <div className="absolute left-0 top-full z-50 mt-1 w-full rounded-lg border border-gray-200 bg-white shadow-lg">
+                    {/* Search input */}
+                    <div className="border-b border-gray-100 p-2">
+                      <input
+                        type="text"
+                        value={stationSearch}
+                        onChange={(e) => setStationSearch(e.target.value)}
+                        placeholder="Search by name or code…"
+                        autoFocus
+                        className="w-full rounded-md border border-gray-200 px-3 py-1.5 text-sm focus:border-green-600 focus:ring-1 focus:ring-green-600 focus:outline-none"
+                      />
+                    </div>
+                    <ul className="max-h-56 overflow-y-auto py-1">
+                      {(() => {
+                        const q = stationSearch.trim().toLowerCase();
+                        const filtered = q
+                          ? stations.filter((s) =>
+                              s.name.toLowerCase().includes(q) ||
+                              s.code.toLowerCase().includes(q) ||
+                              s.county.toLowerCase().includes(q) ||
+                              s.constituency.toLowerCase().includes(q) ||
+                              s.ward.toLowerCase().includes(q)
+                            )
+                          : [...stations].sort((a, b) => {
+                              const aN = nearbyStationIds.indexOf(a.id);
+                              const bN = nearbyStationIds.indexOf(b.id);
+                              if (aN !== -1 && bN !== -1) return aN - bN;
+                              if (aN !== -1) return -1;
+                              if (bN !== -1) return 1;
+                              return 0;
+                            });
+                        if (filtered.length === 0) {
+                          return <li className="px-3 py-2 text-sm text-gray-400">No stations found</li>;
+                        }
+                        return filtered.map((s) => (
+                          <li
+                            key={s.id}
+                            onClick={() => { setPollingStationId(s.id); setStationDropdownOpen(false); setStationSearch(""); }}
+                            className={`flex cursor-pointer items-center gap-2 px-3 py-2 text-sm hover:bg-green-50 ${pollingStationId === s.id ? "bg-green-50 font-semibold text-green-800" : "text-gray-800"}`}
+                          >
+                            {nearbyStationIds.includes(s.id) && (
+                              <span className="shrink-0 rounded bg-green-100 px-1.5 py-0.5 text-xs font-medium text-green-700">Near you</span>
+                            )}
+                            <span className="flex-1 truncate">{s.code} — {s.name}</span>
+                            <span className="shrink-0 text-xs text-gray-400">{s.county}</span>
+                          </li>
+                        ));
+                      })()}
+                    </ul>
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Contact preference */}
@@ -521,13 +757,16 @@ export default function RegisterPage() {
                     inputMode="numeric"
                     required
                     value={localPhone}
-                    onChange={(e) => setLocalPhone(e.target.value.replace(/\D/g, ""))}
-                    placeholder="712345678"
+                    onChange={(e) => setLocalPhone(e.target.value.replace(/\D/g, "").slice(0, countryCode === "+254" ? 10 : 12))}
+                    placeholder={countryCode === "+254" ? "712345678" : "XXXXXXXXX"}
+                    maxLength={countryCode === "+254" ? 10 : 12}
                     className="flex-1 rounded-lg border border-gray-300 px-4 py-3 text-base focus:border-green-700 focus:ring-2 focus:ring-green-700 focus:outline-none"
                   />
                 </div>
                 <p className="mt-1 text-xs text-gray-500">
-                  Full number: {countryCode}{localPhone || "XXXXXXXXX"}
+                  {countryCode === "+254"
+                    ? `9–10 digits — Full: ${countryCode}${localPhone || "712345678"}`
+                    : `Full number: ${countryCode}${localPhone || "XXXXXXXXX"}`}
                 </p>
               </div>
             )}
@@ -537,15 +776,34 @@ export default function RegisterPage() {
               <label htmlFor="password" className="mb-2 block text-sm font-semibold text-gray-700">
                 Password
               </label>
-              <input
-                id="password"
-                type="password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Create a strong password"
-                className="w-full rounded-lg border border-gray-300 px-4 py-3 text-base focus:border-green-700 focus:ring-2 focus:ring-green-700 focus:outline-none"
-              />
+              <div className="relative">
+                <input
+                  id="password"
+                  type={showPassword ? "text" : "password"}
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Create a strong password"
+                  className="w-full rounded-lg border border-gray-300 px-4 py-3 pr-11 text-base focus:border-green-700 focus:ring-2 focus:ring-green-700 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((v) => !v)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                >
+                  {showPassword ? (
+                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" />
+                    </svg>
+                  ) : (
+                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                  )}
+                </button>
+              </div>
               {password.length > 0 && (
                 <div className="mt-2 space-y-1">
                   <div className="flex gap-1 h-1.5">
@@ -573,19 +831,38 @@ export default function RegisterPage() {
               <label htmlFor="confirmPassword" className="mb-2 block text-sm font-semibold text-gray-700">
                 Confirm Password
               </label>
-              <input
-                id="confirmPassword"
-                type="password"
-                required
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                placeholder="Repeat password"
-                className={`w-full rounded-lg border px-4 py-3 text-base focus:ring-2 focus:outline-none ${
-                  confirmPassword && confirmPassword !== password
-                    ? "border-red-400 focus:border-red-500 focus:ring-red-500"
-                    : "border-gray-300 focus:border-green-700 focus:ring-green-700"
-                }`}
-              />
+              <div className="relative">
+                <input
+                  id="confirmPassword"
+                  type={showConfirmPassword ? "text" : "password"}
+                  required
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="Repeat password"
+                  className={`w-full rounded-lg border px-4 py-3 pr-11 text-base focus:ring-2 focus:outline-none ${
+                    confirmPassword && confirmPassword !== password
+                      ? "border-red-400 focus:border-red-500 focus:ring-red-500"
+                      : "border-gray-300 focus:border-green-700 focus:ring-green-700"
+                  }`}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmPassword((v) => !v)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  aria-label={showConfirmPassword ? "Hide password" : "Show password"}
+                >
+                  {showConfirmPassword ? (
+                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" />
+                    </svg>
+                  ) : (
+                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                  )}
+                </button>
+              </div>
               {confirmPassword.length > 0 && confirmPassword !== password && (
                 <p className="mt-1 text-xs font-medium text-red-600">Passwords do not match</p>
               )}
@@ -596,7 +873,10 @@ export default function RegisterPage() {
 
             <button
               type="submit"
-              disabled={loading || nationalId.length !== 8}
+              disabled={loading || !(
+                idDocumentType === "NATIONAL_ID" ? /^\d{5,9}$/.test(nationalId) :
+                /^[A-Z0-9]{6,12}$/i.test(nationalId)
+              )}
               className="w-full rounded-lg bg-green-700 px-6 py-3 text-base font-semibold text-white hover:bg-green-800 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {loading ? "Registering..." : t("register.submit")}
@@ -857,6 +1137,10 @@ export default function RegisterPage() {
               </div>
             )}
 
+            <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800">
+              Fingerprint enrollment is required to complete registration. Please use your device biometric reader (Windows Hello, Touch ID, or fingerprint sensor).
+            </div>
+
             <button
               type="button"
               onClick={handleEnrollFingerprint}
@@ -865,19 +1149,7 @@ export default function RegisterPage() {
             >
               {webAuthnLoading ? "Waiting for device..." : "Enroll Fingerprint / Windows Hello"}
             </button>
-
-            <button
-              type="button"
-              onClick={() => setView("pinSetup")}
-              className="w-full rounded-lg border border-gray-300 px-6 py-3 text-base font-semibold text-gray-700 hover:bg-gray-50"
-            >
-              Skip for now
-            </button>
           </div>
-
-          <p className="mt-3 text-center text-xs text-gray-400">
-            You can enroll your fingerprint later from your account settings.
-          </p>
         </div>
       </div>
     );
@@ -888,7 +1160,11 @@ export default function RegisterPage() {
   if (view === "pinSetup") {
     const { ok: pinOk } = pin.length === 4 ? isPinValid(pin) : { ok: false };
     const confirmMatch = confirmPin.length === 4 && confirmPin === pin;
-    const canSubmit = pinOk && confirmMatch;
+    const { ok: distressOk } = distressPin.length === 4 ? isPinValid(distressPin) : { ok: false };
+    const distressConfirmMatch = confirmDistressPin.length === 4 && confirmDistressPin === distressPin;
+    const distressDiffOk = pin.length === 4 && distressPin.length === 4 &&
+      distressPin.split("").filter((d, i) => d !== pin[i]).length >= 2;
+    const canSubmit = pinOk && confirmMatch && distressOk && distressConfirmMatch && distressDiffOk;
 
     return (
       <div className="flex min-h-[60vh] items-center justify-center px-4">
@@ -899,10 +1175,9 @@ export default function RegisterPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
               </svg>
             </div>
-            <h1 className="mt-4 text-2xl font-bold text-gray-900">Set Your Voting PIN</h1>
+            <h1 className="mt-4 text-2xl font-bold text-gray-900">Set Your Voting PINs</h1>
             <p className="mt-2 text-sm text-gray-500">
-              Choose a 4-digit PIN you will remember. A distress PIN will be auto-generated and sent to your{" "}
-              {preferredContact === "EMAIL" ? "email" : "phone"} — use it only if forced to vote against your will.
+              Set both your <strong>Normal PIN</strong> (used every time you vote) and your <strong>Distress PIN</strong> (used only if forced to vote against your will — silently alerts IEBC). Keep both secret.
             </p>
           </div>
 
@@ -993,12 +1268,105 @@ export default function RegisterPage() {
             </div>
 
             <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-xs text-amber-800 space-y-1">
-              <p className="font-semibold">PIN rules:</p>
+              <p className="font-semibold">PIN rules (apply to both PINs):</p>
               <ul className="list-disc list-inside space-y-0.5">
                 <li>Exactly 4 digits</li>
                 <li>Not all the same (e.g. 1111)</li>
                 <li>Not sequential (e.g. 1234 or 4321)</li>
+                <li>Distress PIN must differ from Normal PIN in at least 2 positions</li>
               </ul>
+            </div>
+
+            {/* Divider */}
+            <div className="border-t border-gray-200 pt-2">
+              <p className="text-sm font-semibold text-gray-700 mb-4">
+                Distress PIN
+                <span className="ml-2 text-xs font-normal text-gray-500">— enter this if forced to vote against your will</span>
+              </p>
+            </div>
+
+            {/* Distress PIN */}
+            <div>
+              <label htmlFor="distressPin" className="mb-2 block text-sm font-semibold text-gray-700">
+                Distress PIN (you choose)
+              </label>
+              <div className="relative">
+                <input
+                  id="distressPin"
+                  type={showDistressPin ? "text" : "password"}
+                  inputMode="numeric"
+                  maxLength={4}
+                  required
+                  value={distressPin}
+                  onChange={(e) => setDistressPin(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                  placeholder="••••"
+                  className="w-full rounded-lg border border-gray-300 px-4 py-3 text-center text-2xl font-mono tracking-[1em] focus:border-green-700 focus:ring-2 focus:ring-green-700 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowDistressPin((v) => !v)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  aria-label={showDistressPin ? "Hide PIN" : "Show PIN"}
+                >
+                  {showDistressPin ? (
+                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" />
+                    </svg>
+                  ) : (
+                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                  )}
+                </button>
+              </div>
+              {distressPin.length === 4 && !distressOk && (
+                <p className="mt-1 text-xs text-red-600">{isPinValid(distressPin).error}</p>
+              )}
+              {distressPin.length === 4 && distressOk && pin.length === 4 && !distressDiffOk && (
+                <p className="mt-1 text-xs text-red-600">Must differ from your Normal PIN in at least 2 positions</p>
+              )}
+            </div>
+
+            {/* Confirm Distress PIN */}
+            <div>
+              <label htmlFor="confirmDistressPin" className="mb-2 block text-sm font-semibold text-gray-700">
+                Confirm Distress PIN
+              </label>
+              <div className="relative">
+                <input
+                  id="confirmDistressPin"
+                  type={showConfirmDistressPin ? "text" : "password"}
+                  inputMode="numeric"
+                  maxLength={4}
+                  required
+                  value={confirmDistressPin}
+                  onChange={(e) => setConfirmDistressPin(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                  placeholder="••••"
+                  className={`w-full rounded-lg border px-4 py-3 text-center text-2xl font-mono tracking-[1em] focus:ring-2 focus:outline-none ${
+                    confirmDistressPin.length === 4 && confirmDistressPin !== distressPin
+                      ? "border-red-400 focus:border-red-500 focus:ring-red-500"
+                      : "border-gray-300 focus:border-green-700 focus:ring-green-700"
+                  }`}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmDistressPin((v) => !v)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  aria-label={showConfirmDistressPin ? "Hide PIN" : "Show PIN"}
+                >
+                  {showConfirmDistressPin ? (
+                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" />
+                    </svg>
+                  ) : (
+                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                  )}
+                </button>
+              </div>
             </div>
 
             <button
@@ -1006,7 +1374,7 @@ export default function RegisterPage() {
               disabled={pinLoading || !canSubmit}
               className="w-full rounded-lg bg-green-700 px-6 py-3 text-base font-semibold text-white hover:bg-green-800 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {pinLoading ? "Setting up PIN..." : "Set PIN & Finish Registration"}
+              {pinLoading ? "Setting up PINs..." : "Set PINs & Finish Registration"}
             </button>
           </form>
         </div>
@@ -1027,16 +1395,15 @@ export default function RegisterPage() {
           </div>
           <h1 className="mt-4 text-2xl font-bold text-gray-900">Registration Complete!</h1>
           <p className="mt-2 text-sm text-gray-500">
-            Your voting PIN is set. Your <strong>distress PIN</strong> has been sent to your{" "}
-            {preferredContact === "EMAIL" ? `email (${email})` : `phone (${countryCode}${localPhone})`}.
+            Both your <strong>Normal PIN</strong> and <strong>Distress PIN</strong> have been set. Keep them safe.
           </p>
 
           <div className="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-5 text-left">
             <p className="text-sm font-semibold text-amber-800">Important — Keep your PINs safe</p>
             <ul className="mt-2 space-y-1 text-sm text-amber-700 list-disc list-inside">
-              <li>Use your <strong>Normal PIN</strong> (the one you just set) to vote regularly</li>
-              <li>Use your <strong>Distress PIN</strong> (just sent to your contact) only if forced to vote against your will — it silently alerts IEBC</li>
-              <li>Never share your PINs with anyone, including IEBC officials</li>
+              <li>Use your <strong>Normal PIN</strong> to vote regularly</li>
+              <li>Use your <strong>Distress PIN</strong> only if forced to vote against your will — it silently alerts IEBC without the attacker knowing</li>
+              <li>Never share either PIN with anyone, including IEBC officials</li>
             </ul>
           </div>
 

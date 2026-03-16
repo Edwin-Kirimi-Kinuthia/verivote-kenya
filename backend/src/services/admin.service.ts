@@ -13,6 +13,7 @@ export class AdminService {
    */
   async registerVoter(data: {
     nationalId: string;
+    idDocumentType?: string;
     pollingStationId: string;
     preferredContact: 'SMS' | 'EMAIL';
     phoneNumber?: string;
@@ -25,30 +26,23 @@ export class AdminService {
 
     const voter = await voterRepository.create({
       nationalId: data.nationalId,
+      idDocumentType: data.idDocumentType,
       pollingStationId: data.pollingStationId,
       preferredContact: data.preferredContact,
       phoneNumber: data.preferredContact === 'SMS' ? data.phoneNumber : undefined,
       email: data.preferredContact === 'EMAIL' ? data.email : undefined,
     });
 
-    // Mint SBT — in-person verification counts as approved identity check
-    const wallet = ethers.Wallet.createRandom();
-    const { tokenId, txHash } = await blockchainService.mintSBT(wallet.address, data.nationalId);
-    await voterRepository.registerWithSbt(voter.id, wallet.address, tokenId);
+    // Place voter into manual review — KYC via Persona + fingerprint enrollment
+    // must complete before the SBT is minted and the voter is REGISTERED.
     await voterRepository.update(voter.id, {
-      status: 'REGISTERED',
-      personaVerifiedAt: new Date(),
+      status: 'PENDING_MANUAL_REVIEW',
+      manualReviewRequestedAt: new Date(),
     });
 
-    // Fingerprint will be enrolled next (WebAuthn on officer's device).
-    // PIN setup link is sent only AFTER successful fingerprint enrollment,
-    // via the separate sendSetupLink() method below.
     return {
       voterId: voter.id,
       nationalId: voter.nationalId,
-      walletAddress: wallet.address,
-      sbtTokenId: tokenId,
-      txHash,
     };
   }
 
