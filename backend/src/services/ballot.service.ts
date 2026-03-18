@@ -247,8 +247,7 @@ export async function getVoterBallot(voterId: string, electionId: string): Promi
 
         // Step 3: find the constituency node under the matched county
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        let constituencyNode: any | undefined;
-        constituencyNode = (childrenOf.get(countyNode.id) ?? []).find(
+        const constituencyNode = (childrenOf.get(countyNode.id) ?? []).find(
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           (n: any) => n.name.toLowerCase() === constituency.toLowerCase(),
         );
