@@ -14,12 +14,15 @@ NIRU D2 (Auditability): Every explanation logged with model version and tier use
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.2:1b")
@@ -236,7 +239,7 @@ async def explain_anomaly(
 
     except Exception as e:
         # Graceful degradation — log and use template
-        print(f"[LLM FALLBACK] Ollama unavailable ({type(e).__name__}: {e}). Using template.")
+        logger.warning("LLM fallback: Ollama unavailable (%s: %s). Using template.", type(e).__name__, e)
         template = _template_explanation(
             station_code, anomaly_score, alert_level,
             features, triggered_rules, station_hourly_average,
@@ -257,7 +260,7 @@ async def check_ollama_health() -> dict:
             resp.raise_for_status()
             tags = resp.json()
             models = [m["name"] for m in tags.get("models", [])]
-            model_available = any(OLLAMA_MODEL in m for m in models)
+            model_available = OLLAMA_MODEL in models
             return {
                 "ollama_running": True,
                 "configured_model": OLLAMA_MODEL,

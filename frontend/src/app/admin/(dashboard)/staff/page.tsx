@@ -8,23 +8,50 @@ import type { IebcStaffMember, StaffRole, JurisdictionLevel } from "@/lib/types"
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 const ROLE_LABELS: Record<StaffRole, string> = {
-  COMMISSIONER:       "Commissioner",
-  NATIONAL_RO:        "National RO",
-  COUNTY_RO:          "County RO",
-  CONSTITUENCY_RO:    "Constituency RO",
-  PRESIDING_OFFICER:  "Presiding Officer",
-  ICT_ADMIN:          "ICT Admin",
-  OBSERVER:           "Observer",
+  CHAIRPERSON:                 "Chairperson",
+  COMMISSIONER:                "Commissioner",
+  COMMISSION_SECRETARY:        "Commission Secretary (CEO)",
+  DEPUTY_COMMISSION_SECRETARY: "Deputy Commission Secretary",
+  DIRECTOR:                    "Director",
+  MANAGER:                     "Manager",
+  NATIONAL_RO:                 "National Returning Officer",
+  ICT_ADMIN:                   "ICT Administrator",
+  REGIONAL_COORDINATOR:        "Regional Election Coordinator",
+  COUNTY_RO:                   "County Election Manager",
+  CONSTITUENCY_RO:             "Constituency Election Coordinator",
+  PRESIDING_OFFICER:           "Presiding Officer",
+  DEPUTY_PRESIDING_OFFICER:    "Deputy Presiding Officer",
+  POLLING_CLERK:               "Polling Clerk",
+  SECURITY_OFFICER:            "Security Officer",
+  OBSERVER:                    "Observer",
 };
 
+// Role groups for display ordering
+const ROLE_GROUPS = [
+  { label: "Commission", roles: ["CHAIRPERSON","COMMISSIONER","COMMISSION_SECRETARY","DEPUTY_COMMISSION_SECRETARY"] as StaffRole[] },
+  { label: "Secretariat", roles: ["DIRECTOR","MANAGER","NATIONAL_RO","ICT_ADMIN"] as StaffRole[] },
+  { label: "Field Offices", roles: ["REGIONAL_COORDINATOR","COUNTY_RO","CONSTITUENCY_RO"] as StaffRole[] },
+  { label: "Polling Station", roles: ["PRESIDING_OFFICER","DEPUTY_PRESIDING_OFFICER","POLLING_CLERK","SECURITY_OFFICER"] as StaffRole[] },
+  { label: "Special", roles: ["OBSERVER"] as StaffRole[] },
+];
+
 const ROLE_DESCRIPTIONS: Record<StaffRole, string> = {
-  COMMISSIONER:       "Full oversight of all elections",
-  NATIONAL_RO:        "National Returning Officer",
-  COUNTY_RO:          "County-level returning officer",
-  CONSTITUENCY_RO:    "Constituency-level returning officer",
-  PRESIDING_OFFICER:  "Manages a single polling station",
-  ICT_ADMIN:          "System administration access",
-  OBSERVER:           "Read-only observation access",
+  CHAIRPERSON:                 "Presidential Returning Officer — highest authority",
+  COMMISSIONER:                "Policy oversight and election supervision",
+  COMMISSION_SECRETARY:        "CEO — executes Commission decisions",
+  DEPUTY_COMMISSION_SECRETARY: "Supports CEO in managing electoral operations",
+  DIRECTOR:                    "Heads a functional department",
+  MANAGER:                     "Manages day-to-day department operations",
+  NATIONAL_RO:                 "Coordinates national results collation",
+  ICT_ADMIN:                   "Manages KIEMS, results transmission, and system security",
+  REGIONAL_COORDINATOR:        "Oversees IEBC activities across multiple counties",
+  COUNTY_RO:                   "County-level operations and results declaration",
+  CONSTITUENCY_RO:             "Constituency operations — tallying and Form 34B",
+  PRESIDING_OFFICER:           "In charge of a polling station — Form 34A",
+  DEPUTY_PRESIDING_OFFICER:    "Handles voter queue and verification at station",
+  POLLING_CLERK:               "Verifies voter identity and marks indelible ink",
+  SECURITY_OFFICER:            "Law and order at polling station (read-only)",
+  OBSERVER:                    "Accredited read-only observer",
 };
 
 const JURISDICTION_LABELS: Record<JurisdictionLevel, string> = {
@@ -36,34 +63,63 @@ const JURISDICTION_LABELS: Record<JurisdictionLevel, string> = {
 };
 
 // Roles that require a jurisdiction value
-const NEEDS_JURISDICTION = new Set<StaffRole>(["COUNTY_RO", "CONSTITUENCY_RO", "PRESIDING_OFFICER"]);
+const NEEDS_JURISDICTION = new Set<StaffRole>([
+  "REGIONAL_COORDINATOR", "COUNTY_RO", "CONSTITUENCY_RO",
+  "PRESIDING_OFFICER", "DEPUTY_PRESIDING_OFFICER", "POLLING_CLERK", "SECURITY_OFFICER",
+]);
+
+// Roles that require a department
+const NEEDS_DEPARTMENT = new Set<StaffRole>(["DIRECTOR", "MANAGER"]);
 
 // Default jurisdiction level for each role
 const DEFAULT_JURISDICTION: Record<StaffRole, JurisdictionLevel> = {
-  COMMISSIONER:       "NATIONAL",
-  NATIONAL_RO:        "NATIONAL",
-  COUNTY_RO:          "COUNTY",
-  CONSTITUENCY_RO:    "CONSTITUENCY",
-  PRESIDING_OFFICER:  "POLLING_STATION",
-  ICT_ADMIN:          "NATIONAL",
-  OBSERVER:           "NATIONAL",
+  CHAIRPERSON:                 "NATIONAL",
+  COMMISSIONER:                "NATIONAL",
+  COMMISSION_SECRETARY:        "NATIONAL",
+  DEPUTY_COMMISSION_SECRETARY: "NATIONAL",
+  DIRECTOR:                    "NATIONAL",
+  MANAGER:                     "NATIONAL",
+  NATIONAL_RO:                 "NATIONAL",
+  ICT_ADMIN:                   "NATIONAL",
+  REGIONAL_COORDINATOR:        "COUNTY",
+  COUNTY_RO:                   "COUNTY",
+  CONSTITUENCY_RO:             "CONSTITUENCY",
+  PRESIDING_OFFICER:           "POLLING_STATION",
+  DEPUTY_PRESIDING_OFFICER:    "POLLING_STATION",
+  POLLING_CLERK:               "POLLING_STATION",
+  SECURITY_OFFICER:            "POLLING_STATION",
+  OBSERVER:                    "NATIONAL",
 };
 
 const ROLE_COLORS: Record<StaffRole, string> = {
-  COMMISSIONER:      "bg-purple-100 text-purple-800",
-  NATIONAL_RO:       "bg-blue-100 text-blue-800",
-  COUNTY_RO:         "bg-indigo-100 text-indigo-800",
-  CONSTITUENCY_RO:   "bg-cyan-100 text-cyan-800",
-  PRESIDING_OFFICER: "bg-teal-100 text-teal-800",
-  ICT_ADMIN:         "bg-orange-100 text-orange-800",
-  OBSERVER:          "bg-gray-100 text-gray-800",
+  CHAIRPERSON:                 "bg-red-100 text-red-800",
+  COMMISSIONER:                "bg-purple-100 text-purple-800",
+  COMMISSION_SECRETARY:        "bg-purple-100 text-purple-800",
+  DEPUTY_COMMISSION_SECRETARY: "bg-purple-50 text-purple-700",
+  DIRECTOR:                    "bg-blue-100 text-blue-800",
+  MANAGER:                     "bg-blue-50 text-blue-700",
+  NATIONAL_RO:                 "bg-indigo-100 text-indigo-800",
+  ICT_ADMIN:                   "bg-orange-100 text-orange-800",
+  REGIONAL_COORDINATOR:        "bg-teal-100 text-teal-800",
+  COUNTY_RO:                   "bg-cyan-100 text-cyan-800",
+  CONSTITUENCY_RO:             "bg-sky-100 text-sky-800",
+  PRESIDING_OFFICER:           "bg-green-100 text-green-800",
+  DEPUTY_PRESIDING_OFFICER:    "bg-green-50 text-green-700",
+  POLLING_CLERK:               "bg-lime-100 text-lime-800",
+  SECURITY_OFFICER:            "bg-gray-100 text-gray-700",
+  OBSERVER:                    "bg-gray-100 text-gray-600",
 };
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function StaffPage() {
   const { voter } = useAuth();
-  const isCommissioner = voter?.staffRole === "COMMISSIONER";
+  // Any senior commission role can manage staff
+  const canManageStaff = voter?.staffRole
+    ? (["CHAIRPERSON","COMMISSIONER","COMMISSION_SECRETARY","DEPUTY_COMMISSION_SECRETARY"] as StaffRole[]).includes(voter.staffRole as StaffRole)
+    : false;
+  const isChairperson = voter?.staffRole === "CHAIRPERSON";
+  const COMMISSION_TIER = new Set(["CHAIRPERSON","COMMISSIONER","COMMISSION_SECRETARY","DEPUTY_COMMISSION_SECRETARY"]);
 
   const [staff, setStaff] = useState<IebcStaffMember[]>([]);
   const [loading, setLoading] = useState(true);
@@ -75,6 +131,7 @@ export default function StaffPage() {
   const [newRole, setNewRole] = useState<StaffRole>("PRESIDING_OFFICER");
   const [newLevel, setNewLevel] = useState<JurisdictionLevel>("POLLING_STATION");
   const [newValue, setNewValue] = useState("");
+  const [newDepartment, setNewDepartment] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
@@ -153,19 +210,21 @@ export default function StaffPage() {
     try {
       // Use cascading geo value if available
       let jurisdictionValue: string | undefined = newValue.trim() || undefined;
-      if (newRole === "COUNTY_RO" && geoCounty) jurisdictionValue = geoCounty;
+      if ((newRole === "COUNTY_RO" || newRole === "REGIONAL_COORDINATOR") && geoCounty) jurisdictionValue = geoCounty;
       else if (newRole === "CONSTITUENCY_RO" && geoConstituency) jurisdictionValue = geoConstituency;
-      else if (newRole === "PRESIDING_OFFICER" && geoWard) jurisdictionValue = geoWard;
+      else if ((newRole === "PRESIDING_OFFICER" || newRole === "DEPUTY_PRESIDING_OFFICER" || newRole === "POLLING_CLERK" || newRole === "SECURITY_OFFICER") && geoWard) jurisdictionValue = geoWard;
 
       await api.post("/api/staff", {
         nationalId: trimmedId,
         staffRole: newRole,
         jurisdictionLevel: newLevel,
         jurisdictionValue,
+        ...(NEEDS_DEPARTMENT.has(newRole) && newDepartment.trim() ? { department: newDepartment.trim() } : {}),
       });
       setShowCreate(false);
       setNationalId("");
       setNewValue("");
+      setNewDepartment("");
       setNewRole("PRESIDING_OFFICER");
       setNewLevel("POLLING_STATION");
       setGeoCounty("");
@@ -201,7 +260,7 @@ export default function StaffPage() {
             All IEBC officials, returning officers, presiding officers, and admins
           </p>
         </div>
-        {isCommissioner && (
+        {canManageStaff && (
           <button
             onClick={() => { setShowCreate(!showCreate); setCreateError(null); }}
             className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
@@ -215,7 +274,7 @@ export default function StaffPage() {
       </div>
 
       {/* Create form */}
-      {showCreate && isCommissioner && (
+      {showCreate && canManageStaff && (
         <div className="mb-6 rounded-xl border border-blue-200 bg-blue-50 p-6">
           <h2 className="mb-1 font-semibold text-blue-900">Add New Staff Member</h2>
           <p className="mb-4 text-xs text-gray-500">
@@ -244,32 +303,53 @@ export default function StaffPage() {
             {/* Role */}
             <div>
               <label className="mb-1 block text-sm font-medium text-gray-700">Role *</label>
-              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                {(Object.keys(ROLE_LABELS) as StaffRole[]).map((r) => (
-                  <label
-                    key={r}
-                    className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-sm transition-colors ${
-                      newRole === r
-                        ? "border-blue-500 bg-white ring-1 ring-blue-500"
-                        : "border-gray-200 bg-white hover:border-gray-300"
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="staffRole"
-                      value={r}
-                      checked={newRole === r}
-                      onChange={() => handleRoleChange(r)}
-                      className="mt-0.5 accent-blue-600"
-                    />
-                    <div>
-                      <p className="font-medium text-gray-900">{ROLE_LABELS[r]}</p>
-                      <p className="text-xs text-gray-500">{ROLE_DESCRIPTIONS[r]}</p>
+              <div className="space-y-3">
+                {ROLE_GROUPS.map((group) => (
+                  <div key={group.label}>
+                    <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-gray-400">{group.label}</p>
+                    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                      {group.roles.map((r) => (
+                        <label
+                          key={r}
+                          className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 text-sm transition-colors ${
+                            newRole === r
+                              ? "border-blue-500 bg-white ring-1 ring-blue-500"
+                              : "border-gray-200 bg-white hover:border-gray-300"
+                          }`}
+                        >
+                          <input
+                            type="radio"
+                            name="staffRole"
+                            value={r}
+                            checked={newRole === r}
+                            onChange={() => handleRoleChange(r)}
+                            className="mt-0.5 accent-blue-600"
+                          />
+                          <div>
+                            <p className="font-medium text-gray-900">{ROLE_LABELS[r]}</p>
+                            <p className="text-xs text-gray-500">{ROLE_DESCRIPTIONS[r]}</p>
+                          </div>
+                        </label>
+                      ))}
                     </div>
-                  </label>
+                  </div>
                 ))}
               </div>
             </div>
+
+            {/* Department — shown for Director and Manager */}
+            {NEEDS_DEPARTMENT.has(newRole) && (
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">Department *</label>
+                <input
+                  type="text"
+                  value={newDepartment}
+                  onChange={(e) => setNewDepartment(e.target.value)}
+                  placeholder="e.g. Electoral Operations, ICT, Legal"
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+            )}
 
             {/* Jurisdiction — shown for roles that need it */}
             {NEEDS_JURISDICTION.has(newRole) && (
@@ -284,8 +364,8 @@ export default function StaffPage() {
                   <option value="">— Select County —</option>
                   {counties.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
-                {/* Constituency selector for CONSTITUENCY_RO and PRESIDING_OFFICER */}
-                {(newRole === "CONSTITUENCY_RO" || newRole === "PRESIDING_OFFICER") && geoCounty && (
+                {/* Constituency selector for CONSTITUENCY_RO and all station roles */}
+                {(newRole === "CONSTITUENCY_RO" || newRole === "PRESIDING_OFFICER" || newRole === "DEPUTY_PRESIDING_OFFICER" || newRole === "POLLING_CLERK" || newRole === "SECURITY_OFFICER") && geoCounty && (
                   <select
                     value={geoConstituency}
                     onChange={(e) => setGeoConstituency(e.target.value)}
@@ -295,8 +375,8 @@ export default function StaffPage() {
                     {constituencies.map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
                 )}
-                {/* Ward selector for PRESIDING_OFFICER */}
-                {newRole === "PRESIDING_OFFICER" && geoConstituency && (
+                {/* Ward selector for all station roles */}
+                {(newRole === "PRESIDING_OFFICER" || newRole === "DEPUTY_PRESIDING_OFFICER" || newRole === "POLLING_CLERK" || newRole === "SECURITY_OFFICER") && geoConstituency && (
                   <select
                     value={geoWard}
                     onChange={(e) => setGeoWard(e.target.value)}
@@ -323,7 +403,7 @@ export default function StaffPage() {
               </button>
               <button
                 type="button"
-                onClick={() => { setShowCreate(false); setCreateError(null); setNationalId(""); setNewValue(""); }}
+                onClick={() => { setShowCreate(false); setCreateError(null); setNationalId(""); setNewValue(""); setNewDepartment(""); }}
                 className="rounded-lg border border-gray-300 px-5 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
               >
                 Cancel
@@ -367,7 +447,7 @@ export default function StaffPage() {
         <div className="py-12 text-center text-gray-400">Loading staff…</div>
       ) : staff.length === 0 ? (
         <div className="rounded-xl border border-dashed border-gray-300 py-12 text-center text-gray-400">
-          No staff members found.{isCommissioner ? " Click \"Add Staff Member\" to get started." : ""}
+          No staff members found.{canManageStaff ? " Click \"Add Staff Member\" to get started." : ""}
         </div>
       ) : (
         <div className="overflow-hidden rounded-xl border border-gray-200">
@@ -378,7 +458,7 @@ export default function StaffPage() {
                 <th className="px-4 py-3 text-left font-medium text-gray-600">Role</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-600">Jurisdiction</th>
                 <th className="px-4 py-3 text-left font-medium text-gray-600">Status</th>
-                {isCommissioner && <th className="px-4 py-3 text-left font-medium text-gray-600">Actions</th>}
+                {canManageStaff && <th className="px-4 py-3 text-left font-medium text-gray-600">Actions</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -405,9 +485,9 @@ export default function StaffPage() {
                       {s.isActive ? "Active" : "Inactive"}
                     </span>
                   </td>
-                  {isCommissioner && (
+                  {canManageStaff && (
                     <td className="px-4 py-3">
-                      {s.isActive && s.staffRole !== "COMMISSIONER" ? (
+                      {s.isActive && (isChairperson ? s.staffRole !== "CHAIRPERSON" : !COMMISSION_TIER.has(s.staffRole)) ? (
                         <button
                           onClick={() => handleDeactivate(s.id, s.voter?.nationalId ?? s.id)}
                           className="text-xs text-red-600 hover:text-red-800"

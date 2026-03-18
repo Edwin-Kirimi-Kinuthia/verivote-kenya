@@ -179,7 +179,7 @@ export async function runMixnet(electionId?: string): Promise<MixnetResult> {
 
   const dbVotes = await prisma.vote.findMany({
     where: { status: 'CONFIRMED', ...(electionId ? { electionId } : {}) },
-    select: { encryptedVoteData: true },
+    select: { encryptedVoteData: true, homomorphicBallot: true },
   });
 
   log.push(`[${ts()}] Found ${dbVotes.length} confirmed vote(s)`);
@@ -189,16 +189,38 @@ export async function runMixnet(electionId?: string): Promise<MixnetResult> {
   }
 
   // ── 2. Parse ciphertexts ──────────────────────────────────────────────────
+  // Primary: try encryptedVoteData (v1 legacy ElGamal format).
+  // Fallback: extract the first candidate's c1/c2 from homomorphicBallot (v2/v3).
   let batch: RawCiphertext[] = [];
   let parseErrors = 0;
 
   for (const v of dbVotes) {
-    if (!v.encryptedVoteData) { parseErrors++; continue; }
-    try {
-      batch.push(parse(v.encryptedVoteData));
-    } catch {
-      parseErrors++;
+    // Try primary field first
+    if (v.encryptedVoteData) {
+      try {
+        batch.push(parse(v.encryptedVoteData));
+        continue;
+      } catch {
+        // fall through to homomorphicBallot
+      }
     }
+    // Fallback: extract first candidate ciphertext from homomorphicBallot
+    if (v.homomorphicBallot) {
+      try {
+        const hb = JSON.parse(v.homomorphicBallot) as {
+          v: number;
+          candidates: Record<string, { c1: string; c2: string }>;
+        };
+        const firstEntry = Object.values(hb.candidates ?? {})[0];
+        if (firstEntry?.c1 && firstEntry?.c2) {
+          batch.push({ c1: BigInt('0x' + firstEntry.c1), c2: BigInt('0x' + firstEntry.c2) });
+          continue;
+        }
+      } catch {
+        // fall through
+      }
+    }
+    parseErrors++;
   }
 
   if (parseErrors > 0) {

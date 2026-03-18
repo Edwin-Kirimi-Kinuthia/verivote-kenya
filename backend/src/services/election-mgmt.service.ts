@@ -20,7 +20,7 @@ const ALLOWED_TRANSITIONS: Record<ElectionStatus, ElectionStatus[]> = {
   DRAFT:       ['NOMINATIONS', 'ARCHIVED'],
   NOMINATIONS: ['ACTIVE', 'DRAFT', 'ARCHIVED'],
   ACTIVE:      ['CLOSED'],
-  CLOSED:      ['TALLIED'],
+  CLOSED:      [],  // TALLIED only via homomorphic ceremony — no manual transition
   TALLIED:     ['ARCHIVED'],
   ARCHIVED:    [],
 };
@@ -306,6 +306,133 @@ export async function deleteCandidate(id: string) {
     throw new ServiceError('Cannot delete candidates in an active or completed election', 409);
   }
   await prisma.candidate.delete({ where: { id } });
+}
+
+// ── Jurisdiction tree ─────────────────────────────────────────────────────────
+
+export interface CreateJurisdictionInput {
+  name:       string;
+  level?:     'NATIONAL' | 'COUNTY' | 'CONSTITUENCY' | 'WARD';
+  parentId?:  string;
+  orderIndex?: number;
+}
+
+export interface UpdateJurisdictionInput {
+  name?:       string;
+  level?:      'NATIONAL' | 'COUNTY' | 'CONSTITUENCY' | 'WARD' | null;
+  orderIndex?: number;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const jurisdictionModel = () => (prisma as any).electionJurisdiction;
+
+/** Returns the full tree for an election as a flat array (sorted depth-first by depth, then orderIndex). */
+export async function listJurisdictions(electionId: string) {
+  const election = await prisma.election.findUnique({ where: { id: electionId } });
+  if (!election) throw new ServiceError('Election not found', 404);
+
+  return jurisdictionModel().findMany({
+    where:   { electionId },
+    orderBy: [{ depth: 'asc' }, { orderIndex: 'asc' }, { name: 'asc' }],
+    include: {
+      _count:    { select: { children: true, positions: true } },
+      positions: { orderBy: { orderIndex: 'asc' }, include: { candidates: { where: { isActive: true } } } },
+    },
+  });
+}
+
+export async function createJurisdiction(electionId: string, input: CreateJurisdictionInput) {
+  const election = await prisma.election.findUnique({ where: { id: electionId } });
+  if (!election) throw new ServiceError('Election not found', 404);
+  if (['ACTIVE', 'CLOSED', 'TALLIED', 'ARCHIVED'].includes(election.status)) {
+    throw new ServiceError('Cannot modify jurisdictions on an active or completed election', 409);
+  }
+
+  // Determine depth from parent
+  let depth = 0;
+  if (input.parentId) {
+    const parent = await jurisdictionModel().findUnique({ where: { id: input.parentId } });
+    if (!parent) throw new ServiceError('Parent jurisdiction not found', 404);
+    if (parent.electionId !== electionId) throw new ServiceError('Parent belongs to a different election', 400);
+    depth = parent.depth + 1;
+  }
+
+  return jurisdictionModel().create({
+    data: {
+      electionId,
+      parentId:   input.parentId ?? null,
+      name:       input.name,
+      level:      input.level ?? null,
+      depth,
+      orderIndex: input.orderIndex ?? 0,
+    },
+  });
+}
+
+export async function updateJurisdiction(id: string, input: UpdateJurisdictionInput) {
+  const node = await jurisdictionModel().findUnique({
+    where:   { id },
+    include: { election: true },
+  });
+  if (!node) throw new ServiceError('Jurisdiction not found', 404);
+  if (['ACTIVE', 'CLOSED', 'TALLIED', 'ARCHIVED'].includes(node.election.status)) {
+    throw new ServiceError('Cannot modify jurisdictions on an active or completed election', 409);
+  }
+
+  return jurisdictionModel().update({
+    where: { id },
+    data: {
+      ...(input.name       !== undefined && { name:       input.name       }),
+      ...(input.level      !== undefined && { level:      input.level      }),
+      ...(input.orderIndex !== undefined && { orderIndex: input.orderIndex }),
+    },
+  });
+}
+
+export async function deleteJurisdiction(id: string) {
+  const node = await jurisdictionModel().findUnique({
+    where:   { id },
+    include: { election: true, _count: { select: { children: true } } },
+  });
+  if (!node) throw new ServiceError('Jurisdiction not found', 404);
+  if (['ACTIVE', 'CLOSED', 'TALLIED', 'ARCHIVED'].includes(node.election.status)) {
+    throw new ServiceError('Cannot modify jurisdictions on an active or completed election', 409);
+  }
+  if (node._count.children > 0) {
+    throw new ServiceError('Cannot delete a jurisdiction that has children. Delete children first.', 409);
+  }
+  await jurisdictionModel().delete({ where: { id } });
+}
+
+/** Create a position linked to a jurisdiction node (in addition to the election). */
+export async function createPositionInJurisdiction(
+  electionId:     string,
+  jurisdictionId: string,
+  input:          CreatePositionInput,
+) {
+  const election = await prisma.election.findUnique({ where: { id: electionId } });
+  if (!election) throw new ServiceError('Election not found', 404);
+  if (['ACTIVE', 'CLOSED', 'TALLIED', 'ARCHIVED'].includes(election.status)) {
+    throw new ServiceError('Cannot add positions to an active or completed election', 409);
+  }
+  const node = await jurisdictionModel().findUnique({ where: { id: jurisdictionId } });
+  if (!node) throw new ServiceError('Jurisdiction not found', 404);
+  if (node.electionId !== electionId) throw new ServiceError('Jurisdiction belongs to a different election', 400);
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (prisma.position as any).create({
+    data: {
+      electionId,
+      jurisdictionId,
+      title:            input.title,
+      description:      input.description,
+      scope:            input.scope,
+      scopeValue:       input.scopeValue,
+      maxVotesPerVoter: input.maxVotesPerVoter ?? 1,
+      orderIndex:       input.orderIndex       ?? 0,
+    },
+    include: { candidates: true },
+  });
 }
 
 // ── Enrollment (INSTITUTIONAL / CORPORATE) ────────────────────────────────────

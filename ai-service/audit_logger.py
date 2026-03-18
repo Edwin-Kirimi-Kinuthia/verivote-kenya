@@ -112,8 +112,11 @@ def log_alert_dispatched(
         "anomaly_score": anomaly_score,
         "channels": channels,
     }
-    with open(_log_file(), "a", encoding="utf-8") as f:
-        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    try:
+        with open(_log_file(), "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except OSError as e:
+        _console.error("Failed to write alert dispatch log: %s", e)
 
     _console.warning(
         "ALERT DISPATCHED | station=%s | level=%s | score=%.1f | channels=%s",
@@ -132,8 +135,20 @@ def read_recent_decisions(limit: int = 100) -> list[dict[str, Any]]:
             line = line.strip()
             if line:
                 try:
-                    entries.append(json.loads(line))
+                    obj = json.loads(line)
+                    # Skip dispatch events — audit trail only, not decision records
+                    if obj.get("event") != "ALERT_DISPATCHED":
+                        entries.append(obj)
                 except json.JSONDecodeError:
                     pass
-    # Most recent first
-    return list(reversed(entries[-limit:]))
+    # Most recent first; deduplicate by request_id to handle any log corruption
+    seen: set[str] = set()
+    deduped: list[dict] = []
+    for entry in reversed(entries[-limit:]):
+        rid = entry.get("request_id", "")
+        if rid and rid in seen:
+            continue
+        if rid:
+            seen.add(rid)
+        deduped.append(entry)
+    return deduped

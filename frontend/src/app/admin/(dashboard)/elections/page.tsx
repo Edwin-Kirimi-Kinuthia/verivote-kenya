@@ -3,7 +3,11 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api-client";
+import { useAuth } from "@/contexts/auth-context";
 import type { ApiResponse } from "@/lib/types";
+import type { StaffRole } from "@/lib/types";
+
+const COMMISSION_ROLES: StaffRole[] = ["CHAIRPERSON","COMMISSIONER","COMMISSION_SECRETARY","DEPUTY_COMMISSION_SECRETARY"];
 
 type ElectionType = "GOVERNMENT" | "INSTITUTIONAL" | "CORPORATE" | "CUSTOM";
 type ElectionStatus = "DRAFT" | "NOMINATIONS" | "ACTIVE" | "CLOSED" | "TALLIED" | "ARCHIVED";
@@ -46,13 +50,17 @@ const STATUS_NEXT: Record<ElectionStatus, ElectionStatus | null> = {
   DRAFT: "NOMINATIONS",
   NOMINATIONS: "ACTIVE",
   ACTIVE: "CLOSED",
-  CLOSED: "TALLIED",
+  CLOSED: null,      // TALLIED only via ceremony — no manual transition
   TALLIED: "ARCHIVED",
   ARCHIVED: null,
 };
 
 export default function AdminElectionsPage() {
   const router = useRouter();
+  const { voter } = useAuth();
+  const canWrite = voter?.staffRole
+    ? COMMISSION_ROLES.includes(voter.staffRole as StaffRole)
+    : false;
   const [elections, setElections] = useState<ElectionListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -109,16 +117,18 @@ export default function AdminElectionsPage() {
             Manage all elections — government, institutional, and corporate.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => router.push("/admin/elections/new")}
-          className="flex items-center gap-2 rounded-lg bg-green-700 px-4 py-2 text-sm font-semibold text-white hover:bg-green-800"
-        >
-          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-          </svg>
-          New Election
-        </button>
+        {canWrite && (
+          <button
+            type="button"
+            onClick={() => router.push("/admin/elections/new")}
+            className="flex items-center gap-2 rounded-lg bg-green-700 px-4 py-2 text-sm font-semibold text-white hover:bg-green-800"
+          >
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+            </svg>
+            New Election
+          </button>
+        )}
       </div>
 
       {error && (
@@ -187,9 +197,9 @@ export default function AdminElectionsPage() {
                         onClick={() => router.push(`/admin/elections/${election.id}`)}
                         className="rounded-md px-3 py-1.5 text-xs font-medium text-green-700 hover:bg-green-50"
                       >
-                        Manage
+                        {canWrite ? "Manage" : "View"}
                       </button>
-                      {STATUS_NEXT[election.status] && (
+                      {canWrite && STATUS_NEXT[election.status] && (
                         <button
                           type="button"
                           onClick={() => advanceStatus(election)}
@@ -199,7 +209,7 @@ export default function AdminElectionsPage() {
                           {transitioning === election.id ? "…" : `→ ${STATUS_NEXT[election.status]}`}
                         </button>
                       )}
-                      {election.status === "DRAFT" && (
+                      {canWrite && election.status === "DRAFT" && (
                         <button
                           type="button"
                           onClick={() => handleDelete(election)}

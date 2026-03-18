@@ -44,11 +44,13 @@ import ceremonyRoutes from './routes/ceremony.routes.js';
 import electionRoutes from './routes/election.routes.js';
 import adminAuthRoutes from './routes/admin-auth.routes.js';
 import electionMgmtRoutes from './routes/election-mgmt.routes.js';
+import jurisdictionRoutes from './routes/jurisdiction.routes.js';
 import ballotRoutes from './routes/ballot.routes.js';
 import pollingStationRoutes from './routes/polling-station.routes.js';
 import staffRoutes from './routes/staff.routes.js';
 import declarationRoutes from './routes/declaration.routes.js';
 import geoRoutes from './routes/geo.routes.js';
+import aiInternalRoutes from './routes/ai-internal.routes.js';
 
 // ============================================
 // SENTRY — initialise before anything else
@@ -376,12 +378,14 @@ app.use('/api/print-queue', printQueueRoutes);
 
 app.use('/api/blockchain', blockchainRoutes);
 app.use('/api/ai', aiRoutes);
+app.use('/api/ai-internal', aiInternalRoutes);
 app.use('/api/tally', tallyRoutes);
 app.use('/api/mixnet', mixnetRoutes);
 app.use('/api/ceremony', ceremonyRoutes);
 app.use('/api/election', electionRoutes);
 app.use('/api/admin-auth', adminAuthRoutes);
 app.use('/api/elections', electionMgmtRoutes);
+app.use('/api/jurisdictions', jurisdictionRoutes);
 app.use('/api/ballot', ballotRoutes);
 app.use('/api/polling-stations', pollingStationRoutes);
 app.use('/api/staff', staffRoutes);

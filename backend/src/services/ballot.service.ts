@@ -157,7 +157,8 @@ export async function getVoterBallot(voterId: string, electionId: string): Promi
   });
   if (!voter) throw new ServiceError('Voter not found', 404);
 
-  const election = await prisma.election.findUnique({
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const election = await (prisma.election as any).findUnique({
     where:   { id: electionId },
     include: {
       positions: {
@@ -169,7 +170,8 @@ export async function getVoterBallot(voterId: string, electionId: string): Promi
           },
         },
       },
-      enrollments: { where: { voterId } },
+      enrollments:   { where: { voterId } },
+      jurisdictions: true,
     },
   });
   if (!election) throw new ServiceError('Election not found', 404);
@@ -187,20 +189,130 @@ export async function getVoterBallot(voterId: string, electionId: string): Promi
   const ward         = voter.pollingStation?.ward         ?? '';
   const isEnrolled   = election.enrollments.length > 0;
 
-  // Diaspora voters at embassy stations see only NATIONAL-scoped positions
-  // (they cannot vote for Governor, MP, etc. for a specific geographic area)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const isDiaspora = (voter.pollingStation as any)?.isDiaspora === true;
 
-  const eligiblePositions: BallotPosition[] = election.positions
-    .filter(pos => {
+  // ── Jurisdiction-tree ballot (new path) ─────────────────────────────────────
+  // If the election has a jurisdiction tree AND at least one position is linked to
+  // a jurisdiction node, use top-down hierarchical matching to build the ballot.
+  //
+  // Algorithm (prevents false matches across unrelated branches):
+  //   1. Root nodes (depth 0) are always included — hold national positions.
+  //   2. Among children of each root, find the one whose name matches voter.county.
+  //   3. Among children of the matched county node, find the one matching voter.constituency.
+  //   4. Among children of the matched constituency node, find the one matching voter.ward.
+  //   Each match adds only that specific node to eligibleNodeIds — never a sibling.
+  //
+  // Diaspora voters (isDiaspora=true) only receive national positions (depth-0 nodes).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const treePositions = (election.positions as any[]).filter((p: any) => p.jurisdictionId != null);
+
+  if (treePositions.length > 0 && election.jurisdictions.length > 0) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const allNodes: any[] = election.jurisdictions;
+
+    // Build children map: parentId → child nodes
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const childrenOf = new Map<string | null, any[]>();
+    // Build depth lookup: nodeId → depth (used for ballot ordering)
+    const nodeDepth = new Map<string, number>();
+    for (const node of allNodes) {
+      const key = node.parentId ?? null;
+      if (!childrenOf.has(key)) childrenOf.set(key, []);
+      childrenOf.get(key)!.push(node);
+      nodeDepth.set(node.id, node.depth);
+    }
+
+    const eligibleNodeIds = new Set<string>();
+
+    // Step 1: always include root nodes (depth 0)
+    const rootNodes = childrenOf.get(null) ?? [];
+    for (const root of rootNodes) {
+      eligibleNodeIds.add(root.id);
+    }
+
+    if (!isDiaspora) {
+      // Step 2: find the county node under any root that matches voter.county
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let countyNode: any | undefined;
+      for (const root of rootNodes) {
+        const match = (childrenOf.get(root.id) ?? []).find(
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (n: any) => n.name.toLowerCase() === county.toLowerCase(),
+        );
+        if (match) { countyNode = match; break; }
+      }
+      if (countyNode) {
+        eligibleNodeIds.add(countyNode.id);
+
+        // Step 3: find the constituency node under the matched county
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let constituencyNode: any | undefined;
+        constituencyNode = (childrenOf.get(countyNode.id) ?? []).find(
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (n: any) => n.name.toLowerCase() === constituency.toLowerCase(),
+        );
+        if (constituencyNode) {
+          eligibleNodeIds.add(constituencyNode.id);
+
+          // Step 4: find the ward node under the matched constituency
+          const wardNode = (childrenOf.get(constituencyNode.id) ?? []).find(
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (n: any) => n.name.toLowerCase() === ward.toLowerCase(),
+          );
+          if (wardNode) {
+            eligibleNodeIds.add(wardNode.id);
+          }
+        }
+      }
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const eligiblePositions: BallotPosition[] = treePositions
+      .filter((pos: any) => eligibleNodeIds.has(pos.jurisdictionId as string))
+      // Sort before mapping: parent nodes first (lowest depth = highest rank),
+      // then by orderIndex for positions that share the same jurisdiction node.
+      .sort((a: any, b: any) => {
+        const depthDiff = (nodeDepth.get(a.jurisdictionId) ?? 0) - (nodeDepth.get(b.jurisdictionId) ?? 0);
+        return depthDiff !== 0 ? depthDiff : a.orderIndex - b.orderIndex;
+      })
+      .map((pos: any) => ({
+        positionId:       pos.id,
+        title:            pos.title,
+        description:      pos.description,
+        scope:            pos.scope,
+        maxVotesPerVoter: pos.maxVotesPerVoter,
+        orderIndex:       pos.orderIndex,
+        candidates:       (pos.candidates as any[]).map((c: any) => ({
+          candidateId:  c.id,
+          name:         c.name,
+          party:        c.party,
+          description:  c.description,
+          photoUrl:     c.photoUrl,
+          ballotNumber: c.ballotNumber,
+        })),
+      }))
+      .filter((pos: any) => pos.candidates.length > 0);
+
+    return {
+      electionId:   election.id,
+      electionName: election.name,
+      electionType: election.type,
+      positions:    eligiblePositions,
+    };
+  }
+
+  // ── Legacy scope/scopeValue ballot (original path) ──────────────────────────
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const eligiblePositions: BallotPosition[] = (election.positions as any[])
+    .filter((pos: any) => {
       if (isDiaspora && election.type === 'GOVERNMENT') {
         return pos.scope === 'NATIONAL';
       }
       if (pos.scope === 'CUSTOM') return isEnrolled;
       return isEligiblePosition(pos.scope, pos.scopeValue, county, constituency, ward);
     })
-    .map(pos => {
+    .map((pos: any) => {
       const localCandidates = filterCandidatesForVoter(
         pos.scope, pos.scopeValue, pos.candidates, county, constituency, ward,
       );
@@ -211,7 +323,7 @@ export async function getVoterBallot(voterId: string, electionId: string): Promi
         scope:            pos.scope,
         maxVotesPerVoter: pos.maxVotesPerVoter,
         orderIndex:       pos.orderIndex,
-        candidates:       localCandidates.map(c => ({
+        candidates:       localCandidates.map((c: any) => ({
           candidateId:  c.id,
           name:         c.name,
           party:        c.party,
@@ -222,7 +334,7 @@ export async function getVoterBallot(voterId: string, electionId: string): Promi
       };
     })
     // Drop template positions that have no candidates for this voter's area
-    .filter(pos => pos.candidates.length > 0);
+    .filter((pos: any) => pos.candidates.length > 0);
 
   return {
     electionId:   election.id,

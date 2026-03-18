@@ -37,6 +37,22 @@ export interface PollingStation {
   country: string | null;
   registeredVoters: number;
   isActive: boolean;
+  openingTime: string | null;
+  closingTime: string | null;
+  deviceCount: number;
+  printerCount: number;
+}
+
+export interface StationStaff {
+  id: string;
+  staffRole: string;
+  jurisdictionValue: string | null;
+  voter: { nationalId: string; email: string | null };
+}
+
+export interface PollingStationDetail extends PollingStation {
+  iebcStaff: StationStaff[];
+  _count: { voters: number; votes: number };
 }
 
 export interface NearbyStation extends PollingStation {
@@ -109,8 +125,16 @@ export interface RegisterLiveResult {
 }
 
 export type StaffRole =
-  | "COMMISSIONER" | "NATIONAL_RO" | "COUNTY_RO"
-  | "CONSTITUENCY_RO" | "PRESIDING_OFFICER" | "ICT_ADMIN" | "OBSERVER";
+  // Commission
+  | "CHAIRPERSON" | "COMMISSIONER" | "COMMISSION_SECRETARY" | "DEPUTY_COMMISSION_SECRETARY"
+  // Secretariat
+  | "DIRECTOR" | "MANAGER" | "NATIONAL_RO" | "ICT_ADMIN"
+  // Field
+  | "REGIONAL_COORDINATOR" | "COUNTY_RO" | "CONSTITUENCY_RO"
+  // Station
+  | "PRESIDING_OFFICER" | "DEPUTY_PRESIDING_OFFICER" | "POLLING_CLERK" | "SECURITY_OFFICER"
+  // Special
+  | "OBSERVER";
 
 export type JurisdictionLevel =
   | "NATIONAL" | "COUNTY" | "CONSTITUENCY" | "WARD" | "POLLING_STATION";
@@ -123,6 +147,7 @@ export interface IebcStaffMember {
   staffRole: StaffRole;
   jurisdictionLevel: JurisdictionLevel;
   jurisdictionValue: string | null;
+  department: string | null;
   pollingStationId: string | null;
   isActive: boolean;
   createdByStaffId: string | null;

@@ -72,4 +72,81 @@ router.get('/llm-status', requireAuth, requireAdmin, async (_req: Request, res: 
   }
 });
 
+// ── Continuous monitoring endpoints ──────────────────────────────────────────
+
+// GET /api/ai/monitor/status — monitoring engine heartbeat
+router.get('/monitor/status', requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    const { status, data } = await proxyToAI('/api/ai/monitor/status', 'GET');
+    res.status(status).json(data);
+  } catch {
+    res.status(503).json({ error: 'AI service unavailable' });
+  }
+});
+
+// GET /api/ai/monitor/scores — latest per-station anomaly scores
+router.get('/monitor/scores', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const limit      = Math.min(Number(req.query.limit) || 100, 500);
+  const alertLevel = req.query.alert_level as string | undefined;
+  const qs         = `limit=${limit}${alertLevel ? `&alert_level=${alertLevel}` : ''}`;
+  try {
+    const { status, data } = await proxyToAI(`/api/ai/monitor/scores?${qs}`, 'GET');
+    res.status(status).json(data);
+  } catch {
+    res.status(503).json({ error: 'AI service unavailable' });
+  }
+});
+
+// GET /api/ai/monitor/station/:id — score history for one station
+router.get('/monitor/station/:id', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const limit = Math.min(Number(req.query.limit) || 50, 200);
+  try {
+    const { status, data } = await proxyToAI(`/api/ai/monitor/station/${req.params.id}?limit=${limit}`, 'GET');
+    res.status(status).json(data);
+  } catch {
+    res.status(503).json({ error: 'AI service unavailable' });
+  }
+});
+
+// GET /api/ai/reports/fraud — fraud activity report
+router.get('/reports/fraud', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  const hours = Math.min(Number(req.query.hours) || 24, 168);
+  try {
+    const { status, data } = await proxyToAI(`/api/ai/reports/fraud?hours=${hours}`, 'GET');
+    res.status(status).json(data);
+  } catch {
+    res.status(503).json({ error: 'AI service unavailable' });
+  }
+});
+
+// GET /api/ai/reports/integrity — blockchain vs tally integrity report
+router.get('/reports/integrity', requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    const { status, data } = await proxyToAI('/api/ai/reports/integrity', 'GET');
+    res.status(status).json(data);
+  } catch {
+    res.status(503).json({ error: 'AI service unavailable' });
+  }
+});
+
+// GET /api/ai/reports/security — security events report
+router.get('/reports/security', requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    const { status, data } = await proxyToAI('/api/ai/reports/security', 'GET');
+    res.status(status).json(data);
+  } catch {
+    res.status(503).json({ error: 'AI service unavailable' });
+  }
+});
+
+// GET /api/ai/reports/health — combined system health
+router.get('/reports/health', requireAuth, requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    const { status, data } = await proxyToAI('/api/ai/reports/health', 'GET');
+    res.status(status).json(data);
+  } catch {
+    res.status(503).json({ error: 'AI service unavailable' });
+  }
+});
+
 export default router;
