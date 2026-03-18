@@ -65,7 +65,7 @@ router.post('/start', commissionOnly, async (req: Request, res: Response) => {
     }
 
     // ── Load all active COMMISSION-role staff ─────────────────────────────────
-    const staffRows = await (prisma.iebcStaff as any).findMany({
+    const staffRows = await prisma.iebcStaff.findMany({
       where: {
         isActive: true,
         staffRole: {
@@ -84,11 +84,11 @@ router.post('/start', commissionOnly, async (req: Request, res: Response) => {
     });
 
     // Only include staff whose voter account can log in (has password + active status)
-    const activeStaff = staffRows.filter((s: any) =>
+    const activeStaff = staffRows.filter((s) =>
       s.voter?.passwordHash && ['REGISTERED', 'VOTED', 'REVOTED'].includes(s.voter.status),
     );
 
-    const allCommissioners: CommissionerInfo[] = activeStaff.map((s: any) => ({
+    const allCommissioners: CommissionerInfo[] = activeStaff.map((s) => ({
       voterId:     s.voter.id,
       nationalId:  s.voter.nationalId,
       name:        s.voter.email?.split('@')[0] ?? `Commissioner ${s.voter.nationalId}`,

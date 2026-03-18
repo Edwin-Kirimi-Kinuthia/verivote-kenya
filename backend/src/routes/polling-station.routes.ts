@@ -112,13 +112,12 @@ router.get('/nearby', async (req: Request, res: Response): Promise<void> => {
 // GET /api/polling-stations/countries — distinct countries (diaspora)
 router.get('/countries', async (_req: Request, res: Response) => {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result = await (prisma.pollingStation as any).findMany({
+    const result = await prisma.pollingStation.findMany({
       where:    { isDiaspora: true, isActive: true, country: { not: null } },
       select:   { country: true },
       distinct: ['country'],
       orderBy:  { country: 'asc' },
-    }) as Array<{ country: string | null }>;
+    });
     res.json({ success: true, data: result.map((r) => r.country) });
   } catch (error) {
     res.status(500).json({
@@ -168,8 +167,7 @@ router.get('/all', requireAuth, requireAdmin, async (req: Request, res: Response
 // GET /api/polling-stations/:id — single station with assigned IEBC staff
 router.get('/:id', requireAuth, requireAdmin, async (req: Request, res: Response) => {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const station = await (prisma.pollingStation as any).findUnique({
+    const station = await prisma.pollingStation.findUnique({
       where: { id: req.params.id },
       include: {
         iebcStaff: {
@@ -214,8 +212,7 @@ router.post('/', requireAuth, requireAdmin, WRITE_ROLES, async (req: Request, re
   }
 
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const station = await (prisma.pollingStation as any).create({
+    const station = await prisma.pollingStation.create({
       data: {
         code:             parsed.data.code,
         name:             parsed.data.name,
@@ -251,8 +248,7 @@ router.patch('/:id', requireAuth, requireAdmin, WRITE_ROLES, async (req: Request
 
   let station: { id: string; county: string; constituency: string } | null;
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    station = await (prisma.pollingStation as any).findUnique({ where: { id: req.params.id } });
+    station = await prisma.pollingStation.findUnique({ where: { id: req.params.id } });
   } catch (error) {
     res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'Database error' });
     return;
@@ -266,8 +262,7 @@ router.patch('/:id', requireAuth, requireAdmin, WRITE_ROLES, async (req: Request
   const authReq = req as AuthenticatedRequest;
   const { staffRole, jurisdictionLevel, jurisdictionValue } = authReq.voter;
   if (staffRole === 'PRESIDING_OFFICER') {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const staffRecord = await (prisma.iebcStaff as any).findUnique({
+    const staffRecord = await prisma.iebcStaff.findUnique({
       where: { voterId: authReq.voter.sub },
     });
     if (!staffRecord || staffRecord.pollingStationId !== req.params.id) {
@@ -287,8 +282,7 @@ router.patch('/:id', requireAuth, requireAdmin, WRITE_ROLES, async (req: Request
   }
 
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const updated = await (prisma.pollingStation as any).update({
+    const updated = await prisma.pollingStation.update({
       where: { id: req.params.id },
       data:  parsed.data,
     });
@@ -304,8 +298,7 @@ router.delete('/:id', requireAuth, requireAdmin,
   async (req: Request, res: Response) => {
     let station: { name: string; county: string; constituency: string; _count: { voters: number; votes: number } } | null;
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      station = await (prisma.pollingStation as any).findUnique({
+      station = await prisma.pollingStation.findUnique({
         where:   { id: req.params.id },
         include: { _count: { select: { voters: true, votes: true } } },
       });
@@ -335,8 +328,8 @@ router.delete('/:id', requireAuth, requireAdmin,
     }
 
     // Prevent deletion if voters or votes are linked
-    const voterCount = (station._count as { voters: number; votes: number }).voters;
-    const voteCount  = (station._count as { voters: number; votes: number }).votes;
+    const voterCount = station._count.voters;
+    const voteCount  = station._count.votes;
     if (voterCount > 0 || voteCount > 0) {
       res.status(409).json({
         success: false,
@@ -346,8 +339,7 @@ router.delete('/:id', requireAuth, requireAdmin,
     }
 
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (prisma.pollingStation as any).delete({ where: { id: req.params.id } });
+      await prisma.pollingStation.delete({ where: { id: req.params.id } });
       res.json({ success: true, message: `Station "${station.name}" deleted` });
     } catch (error) {
       res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'Failed to delete' });
