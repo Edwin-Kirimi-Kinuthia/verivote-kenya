@@ -392,6 +392,115 @@ export class NotificationService {
 
     await Promise.all(tasks);
   }
+
+  /**
+   * Deliver a Shamir's Secret Sharing key share to a selected commissioner
+   * at the start of the threshold homomorphic tally ceremony.
+   *
+   * The share is sensitive cryptographic material — treat it accordingly.
+   * In mock/dev mode we log to console instead of sending.
+   */
+  async sendCeremonyKeyShare(payload: {
+    channel:          'EMAIL' | 'SMS';
+    recipient:        string;
+    nationalId:       string;
+    commissionerName: string;
+    electionName:     string;
+    shareIndex:       number;
+    threshold:        number;
+    shareHex:         string;
+    commitment:       string;
+    ceremonyId:       string;
+  }): Promise<void> {
+    if (this.mockMode) {
+      logger.info('[CEREMONY KEY SHARE MOCK] Share issued — not delivered', {
+        nationalId: payload.nationalId,
+        shareIndex: payload.shareIndex,
+        threshold:  payload.threshold,
+        ceremonyId: payload.ceremonyId,
+      });
+      return;
+    }
+
+    if (process.env.NODE_ENV !== 'production') {
+      logger.info('[CEREMONY KEY SHARE DEV] Share dispatched', {
+        nationalId:  payload.nationalId,
+        recipient:   payload.recipient,
+        shareIndex:  payload.shareIndex,
+        threshold:   payload.threshold,
+        // shareHex deliberately omitted from logs even in dev
+      });
+    }
+
+    const smsMsg =
+      `VeriVote Kenya CEREMONY: You hold key share ${payload.shareIndex}/${payload.threshold} ` +
+      `for "${payload.electionName}". ` +
+      `Share: ${payload.shareHex.slice(0, 16)}… (full value in your email). ` +
+      `CeremonyID: ${payload.ceremonyId.slice(0, 8)}`;
+
+    const emailBody = [
+      `Dear ${payload.commissionerName} (National ID: ${payload.nationalId}),`,
+      ``,
+      `You have been selected to hold a decryption key share for the following election ceremony:`,
+      ``,
+      `  Election:   ${payload.electionName}`,
+      `  Ceremony:   ${payload.ceremonyId}`,
+      `  Share:      ${payload.shareIndex} of ${payload.threshold}`,
+      ``,
+      `YOUR KEY SHARE (copy exactly — it is case-insensitive hex):`,
+      ``,
+      `  ${payload.shareHex}`,
+      ``,
+      `Public commitment (verifiable by anyone):`,
+      `  g^share = ${payload.commitment}`,
+      ``,
+      `INSTRUCTIONS:`,
+      `1. Keep this share strictly confidential until the tally ceremony begins.`,
+      `2. When requested by the IEBC Returning Officer, navigate to:`,
+      `   Admin Portal → Election Ceremony`,
+      `3. Paste your key share into the input field and click "Submit Share".`,
+      `4. The tally will proceed only when all ${payload.threshold} selected commissioner(s) have submitted.`,
+      ``,
+      `SECURITY NOTES:`,
+      `- Do NOT share this value with anyone outside the official ceremony.`,
+      `- Do NOT respond to any requests for your share via SMS, WhatsApp, or phone.`,
+      `- If you believe this share has been compromised, contact the Commission Secretary immediately.`,
+      ``,
+      `VeriVote Kenya — IEBC Electoral Commission`,
+    ].join('\n');
+
+    if (payload.channel === 'SMS') {
+      try {
+        await this.atSms!.send({ to: [payload.recipient], message: smsMsg });
+      } catch (err) {
+        if (process.env.NODE_ENV !== 'production') {
+          logger.warn('[CEREMONY KEY SHARE SMS FALLBACK] AT send failed', {
+            nationalId: payload.nationalId,
+            reason: (err as Error).message,
+          });
+          return;
+        }
+        throw err;
+      }
+    } else {
+      try {
+        await this.sendEmail({
+          to:      payload.recipient,
+          subject: `[VeriVote Kenya] Your Tally Key Share — ${payload.electionName} (Share ${payload.shareIndex}/${payload.threshold})`,
+          text:    emailBody,
+        });
+      } catch (err) {
+        if (process.env.NODE_ENV !== 'production') {
+          logger.warn('[CEREMONY KEY SHARE EMAIL FALLBACK] Mailtrap send failed', {
+            nationalId: payload.nationalId,
+            reason: (err as Error).message,
+          });
+          return;
+        }
+        throw err;
+      }
+    }
+  }
 }
 
 export const notificationService = new NotificationService();

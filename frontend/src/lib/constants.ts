@@ -48,20 +48,28 @@ export const STATUS_CONFIG: Record<
 
 import type { StaffRole } from "./types";
 
+// ── Role tier helpers ─────────────────────────────────────────────────────────
+const COMMISSION = ["CHAIRPERSON","COMMISSIONER","COMMISSION_SECRETARY","DEPUTY_COMMISSION_SECRETARY"] as StaffRole[];
+const SECRETARIAT = ["DIRECTOR","MANAGER","NATIONAL_RO","ICT_ADMIN"] as StaffRole[];
+const NATIONAL = [...COMMISSION, ...SECRETARIAT];
+const FIELD = [...NATIONAL, "REGIONAL_COORDINATOR","COUNTY_RO","CONSTITUENCY_RO"] as StaffRole[];
+const ALL_STAFF = [...FIELD, "PRESIDING_OFFICER","DEPUTY_PRESIDING_OFFICER","POLLING_CLERK","SECURITY_OFFICER","OBSERVER"] as StaffRole[];
+
 /** All nav items with optional role restriction (undefined = any admin) */
 export const ALL_NAV_ITEMS = [
   { href: "/admin",                  label: "Dashboard",         icon: "grid",            allowedRoles: undefined },
-  { href: "/admin/register",         label: "Register Voter",    icon: "user-plus",       allowedRoles: ["COMMISSIONER", "PRESIDING_OFFICER", "ICT_ADMIN"] as StaffRole[] },
+  { href: "/admin/staff-portal",     label: "My Portal",         icon: "users-cog",       allowedRoles: ALL_STAFF },
+  { href: "/admin/register",         label: "Register Voter",    icon: "user-plus",       allowedRoles: [...NATIONAL, "PRESIDING_OFFICER"] as StaffRole[] },
   { href: "/admin/voters",           label: "Voters",            icon: "users",           allowedRoles: undefined },
   { href: "/admin/reviews",          label: "Reviews",           icon: "clipboard-check", allowedRoles: undefined },
   { href: "/admin/appointments",     label: "Appointments",      icon: "calendar",        allowedRoles: undefined },
   { href: "/admin/pin-resets",       label: "PIN Resets",        icon: "key",             allowedRoles: undefined },
-  { href: "/admin/staff",             label: "IEBC Officials",    icon: "shield",          allowedRoles: ["COMMISSIONER"] as StaffRole[] },
-  { href: "/admin/ai-security",      label: "AI Security",       icon: "cpu",             allowedRoles: ["COMMISSIONER", "NATIONAL_RO", "ICT_ADMIN"] as StaffRole[] },
-  { href: "/admin/elections",        label: "Elections",         icon: "ballot",          allowedRoles: ["COMMISSIONER", "NATIONAL_RO", "ICT_ADMIN"] as StaffRole[] },
-  { href: "/admin/election-ceremony",label: "Election Ceremony", icon: "chart-bar",       allowedRoles: ["COMMISSIONER", "NATIONAL_RO", "ICT_ADMIN"] as StaffRole[] },
-  { href: "/admin/declarations",     label: "Declarations",      icon: "document-check",  allowedRoles: ["COMMISSIONER", "NATIONAL_RO", "COUNTY_RO", "CONSTITUENCY_RO"] as StaffRole[] },
-  { href: "/admin/polling-stations", label: "Polling Stations",  icon: "map-pin",         allowedRoles: ["COMMISSIONER", "NATIONAL_RO", "COUNTY_RO", "CONSTITUENCY_RO", "PRESIDING_OFFICER", "ICT_ADMIN"] as StaffRole[] },
+  { href: "/admin/staff",            label: "IEBC Officials",    icon: "shield",          allowedRoles: COMMISSION },
+  { href: "/admin/ai-security",      label: "AI Security",       icon: "cpu",             allowedRoles: [...NATIONAL] as StaffRole[] },
+  { href: "/admin/elections",        label: "Elections",         icon: "ballot",          allowedRoles: COMMISSION },
+  { href: "/admin/election-ceremony",label: "Election Ceremony", icon: "chart-bar",       allowedRoles: [...COMMISSION, "NATIONAL_RO","ICT_ADMIN"] as StaffRole[] },
+  { href: "/admin/declarations",     label: "Declarations",      icon: "document-check",  allowedRoles: [...COMMISSION, "NATIONAL_RO","COUNTY_RO","CONSTITUENCY_RO"] as StaffRole[] },
+  { href: "/admin/polling-stations", label: "Polling Stations",  icon: "map-pin",         allowedRoles: [...FIELD, "PRESIDING_OFFICER","DEPUTY_PRESIDING_OFFICER"] as StaffRole[] },
 ];
 
 /** Returns the nav items visible to a given staff role (or all unrestricted items for plain admins) */

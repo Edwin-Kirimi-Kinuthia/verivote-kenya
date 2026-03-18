@@ -20,7 +20,7 @@ const ALLOWED_TRANSITIONS: Record<ElectionStatus, ElectionStatus[]> = {
   DRAFT:       ['NOMINATIONS', 'ARCHIVED'],
   NOMINATIONS: ['ACTIVE', 'DRAFT', 'ARCHIVED'],
   ACTIVE:      ['CLOSED'],
-  CLOSED:      ['TALLIED'],
+  CLOSED:      [],  // TALLIED only via homomorphic ceremony — no manual transition
   TALLIED:     ['ARCHIVED'],
   ARCHIVED:    [],
 };
@@ -312,12 +312,14 @@ export async function deleteCandidate(id: string) {
 
 export interface CreateJurisdictionInput {
   name:       string;
+  level?:     'NATIONAL' | 'COUNTY' | 'CONSTITUENCY' | 'WARD';
   parentId?:  string;
   orderIndex?: number;
 }
 
 export interface UpdateJurisdictionInput {
   name?:       string;
+  level?:      'NATIONAL' | 'COUNTY' | 'CONSTITUENCY' | 'WARD' | null;
   orderIndex?: number;
 }
 
@@ -360,6 +362,7 @@ export async function createJurisdiction(electionId: string, input: CreateJurisd
       electionId,
       parentId:   input.parentId ?? null,
       name:       input.name,
+      level:      input.level ?? null,
       depth,
       orderIndex: input.orderIndex ?? 0,
     },
@@ -380,6 +383,7 @@ export async function updateJurisdiction(id: string, input: UpdateJurisdictionIn
     where: { id },
     data: {
       ...(input.name       !== undefined && { name:       input.name       }),
+      ...(input.level      !== undefined && { level:      input.level      }),
       ...(input.orderIndex !== undefined && { orderIndex: input.orderIndex }),
     },
   });

@@ -27,8 +27,16 @@ class Severity(str, Enum):
     CRITICAL = "CRITICAL"
 
     def __gt__(self, other: "Severity") -> bool:
-        order = [s.value for s in Severity]
-        return order.index(self.value) > order.index(other.value)
+        return _SEVERITY_ORDER[self.value] > _SEVERITY_ORDER[other.value]
+
+    def __ge__(self, other: "Severity") -> bool:
+        return _SEVERITY_ORDER[self.value] >= _SEVERITY_ORDER[other.value]
+
+
+# Module-level constant — computed once, not per comparison
+_SEVERITY_ORDER: dict[str, int] = {
+    "NONE": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4,
+}
 
 
 @dataclass

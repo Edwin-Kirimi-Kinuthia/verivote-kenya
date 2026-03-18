@@ -55,6 +55,7 @@ export interface IebcStaffRecord {
   staffRole: StaffRole;
   jurisdictionLevel: JurisdictionLevel;
   jurisdictionValue: string | null;
+  department: string | null;
   pollingStationId: string | null;
   isActive: boolean;
   createdByStaffId: string | null;
@@ -87,6 +88,7 @@ export interface CreateIebcStaffInput {
   staffRole: StaffRole;
   jurisdictionLevel: JurisdictionLevel;
   jurisdictionValue?: string;
+  department?: string;
   pollingStationId?: string;
   createdByStaffId?: string;
 }

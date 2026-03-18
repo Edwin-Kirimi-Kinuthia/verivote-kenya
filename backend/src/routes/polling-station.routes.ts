@@ -48,6 +48,8 @@ const updateSchema = z.object({
   registeredVoters: z.number().int().min(0).optional(),
   deviceCount:      z.number().int().min(0).optional(),
   printerCount:     z.number().int().min(0).optional(),
+  openingTime:      z.coerce.date().nullable().optional(),
+  closingTime:      z.coerce.date().nullable().optional(),
 });
 
 // GET /api/polling-stations
@@ -153,10 +155,35 @@ router.get('/all', requireAuth, requireAdmin, async (req: Request, res: Response
     const limit = parseInt(req.query.limit as string) || 100;
     const county       = req.query.county       as string | undefined;
     const constituency = req.query.constituency as string | undefined;
+    const ward         = req.query.ward         as string | undefined;
     const q            = req.query.q            as string | undefined;
 
-    const result = await pollingStationRepository.findMany({ page, limit, county, constituency, q });
+    const result = await pollingStationRepository.findMany({ page, limit, county, constituency, ward, q });
     res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'Failed' });
+  }
+});
+
+// GET /api/polling-stations/:id — single station with assigned IEBC staff
+router.get('/:id', requireAuth, requireAdmin, async (req: Request, res: Response) => {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const station = await (prisma.pollingStation as any).findUnique({
+      where: { id: req.params.id },
+      include: {
+        iebcStaff: {
+          where:  { isActive: true },
+          select: {
+            id: true, staffRole: true, jurisdictionValue: true,
+            voter: { select: { nationalId: true, email: true } },
+          },
+        },
+        _count: { select: { voters: true, votes: true } },
+      },
+    });
+    if (!station) { res.status(404).json({ success: false, error: 'Station not found' }); return; }
+    res.json({ success: true, data: station });
   } catch (error) {
     res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'Failed' });
   }

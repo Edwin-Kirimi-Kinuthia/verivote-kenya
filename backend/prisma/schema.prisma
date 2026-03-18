@@ -119,13 +119,31 @@ enum IdDocumentType {
 
 /// IEBC staff role determining portal access level
 enum StaffRole {
-  COMMISSIONER       // One of the 9 IEBC Commissioners (full access + ceremony)
-  NATIONAL_RO        // National Returning Officer (coordinates national results)
-  COUNTY_RO          // County Returning Officer (declares county-level results)
-  CONSTITUENCY_RO    // Constituency Returning Officer (declares MP results)
-  PRESIDING_OFFICER  // Station Presiding Officer (voter management at station)
-  ICT_ADMIN          // ICT systems administrator (technical access, no election data)
-  OBSERVER           // Read-only observer (results + audit reports only)
+  // Commission
+  CHAIRPERSON                 // Presidential Returning Officer — highest authority
+  COMMISSIONER                // IEBC Commissioner — policy & oversight
+  COMMISSION_SECRETARY        // CEO — manages day-to-day operations
+  DEPUTY_COMMISSION_SECRETARY // Deputy CEO
+
+  // Secretariat
+  DIRECTOR   // Functional director (ICT, Finance, HR, Legal, Voter Reg — see department)
+  MANAGER    // Functional manager (see department field)
+  NATIONAL_RO   // National Returning Officer (coordinates national results)
+  ICT_ADMIN     // ICT systems administrator (technical access)
+
+  // Field offices
+  REGIONAL_COORDINATOR   // One of 17 regional coordinators
+  COUNTY_RO              // County Election Manager / Returning Officer
+  CONSTITUENCY_RO        // Constituency Election Coordinator
+
+  // Polling station (temporary election officials)
+  PRESIDING_OFFICER       // Presiding Officer — overall in charge of station
+  DEPUTY_PRESIDING_OFFICER // Deputy Presiding Officer
+  POLLING_CLERK           // Polling Clerk — voter verification & inking
+  SECURITY_OFFICER        // Security Officer — read-only station status
+
+  // Special
+  OBSERVER  // Read-only observer (results + audit reports only)
 }
 
 /// Administrative level of a staff member's jurisdiction
@@ -188,9 +206,10 @@ model ElectionJurisdiction {
   parent   ElectionJurisdiction? @relation("JurisdictionTree", fields: [parentId], references: [id], onDelete: Cascade)
   children ElectionJurisdiction[] @relation("JurisdictionTree")
 
-  name       String @db.VarChar(255)
-  depth      Int    @default(0)
-  orderIndex Int    @default(0) @map("order_index")
+  name       String             @db.VarChar(255)
+  level      JurisdictionLevel?                   // NATIONAL | COUNTY | CONSTITUENCY | WARD
+  depth      Int                @default(0)
+  orderIndex Int                @default(0) @map("order_index")
 
   positions Position[]
 
@@ -753,6 +772,8 @@ model IebcStaff {
   jurisdictionLevel JurisdictionLevel @map("jurisdiction_level")
   // County name, constituency name, ward name, station code — null for NATIONAL
   jurisdictionValue String?           @map("jurisdiction_value") @db.VarChar(255)
+  // Functional department for DIRECTOR / MANAGER roles (e.g. "ICT", "Finance", "HR")
+  department        String?           @map("department") @db.VarChar(100)
 
   // For PRESIDING_OFFICER: direct link to their polling station
   pollingStationId  String?           @map("polling_station_id") @db.Uuid

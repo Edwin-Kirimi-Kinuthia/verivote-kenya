@@ -3,7 +3,11 @@
 import { useState, useEffect, use, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api-client";
+import { useAuth } from "@/contexts/auth-context";
 import type { ApiResponse } from "@/lib/types";
+import type { StaffRole } from "@/lib/types";
+
+const BALLOT_WRITE_ROLES: StaffRole[] = ["CHAIRPERSON","COMMISSIONER","COMMISSION_SECRETARY","DEPUTY_COMMISSION_SECRETARY","NATIONAL_RO","COUNTY_RO","CONSTITUENCY_RO"];
 
 type PositionScope = "NATIONAL" | "COUNTY" | "CONSTITUENCY" | "WARD" | "CUSTOM";
 type ElectionStatus = "DRAFT" | "NOMINATIONS" | "ACTIVE" | "CLOSED" | "TALLIED" | "ARCHIVED";
@@ -80,7 +84,7 @@ function getStatusActions(status: ElectionStatus): StatusAction[] {
     case "ACTIVE":
       return [{ label: "Close Voting", next: "CLOSED", style: "danger" }];
     case "CLOSED":
-      return [{ label: "Begin Tally →", next: "TALLIED", style: "primary" }];
+      return []; // TALLIED only via homomorphic ceremony — no manual transition
     case "TALLIED":
       return [{ label: "Archive", next: "ARCHIVED", style: "ghost" }];
     default:
@@ -90,10 +94,13 @@ function getStatusActions(status: ElectionStatus): StatusAction[] {
 
 // ── Jurisdiction tree types ────────────────────────────────────────────────────
 
+type JurisdictionLevel = "NATIONAL" | "COUNTY" | "CONSTITUENCY" | "WARD";
+
 interface JurisdictionNode {
   id:         string;
   parentId:   string | null;
   name:       string;
+  level:      JurisdictionLevel | null;
   depth:      number;
   orderIndex: number;
   _count:     { children: number; positions: number };
@@ -109,6 +116,10 @@ export default function ElectionDetailPage({
 }) {
   const { id } = use(params);
   const router = useRouter();
+  const { voter } = useAuth();
+  const canWrite = voter?.staffRole
+    ? BALLOT_WRITE_ROLES.includes(voter.staffRole as StaffRole)
+    : false;
   const [election, setElection] = useState<ElectionDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -118,9 +129,13 @@ export default function ElectionDetailPage({
   const [jurisdictions, setJurisdictions] = useState<JurisdictionNode[]>([]);
   const [jurisLoading, setJurisLoading] = useState(false);
   const [addingJuris, setAddingJuris] = useState(false);
-  const [jurisForm, setJurisForm] = useState({ name: "", parentId: "" });
+  const [jurisForm, setJurisForm] = useState({ name: "", level: "" as JurisdictionLevel | "", parentId: "" });
   const [jurisSaving, setJurisSaving] = useState(false);
   const [jurisError, setJurisError] = useState("");
+  // Search state
+  const [jurisSearch, setJurisSearch] = useState("");           // filters tree display
+  const [parentSearch, setParentSearch] = useState("");         // filters parent combobox
+  const [parentDropdownOpen, setParentDropdownOpen] = useState(false);
   // Add position to jurisdiction
   const [addingPosToJuris, setAddingPosToJuris] = useState<string | null>(null);
   const [jurisPosForm, setJurisPosForm] = useState({ title: "", description: "", scope: "NATIONAL" as PositionScope, maxVotesPerVoter: 1 });
@@ -196,7 +211,7 @@ export default function ElectionDetailPage({
   async function fetchJurisdictions() {
     setJurisLoading(true);
     try {
-      const res = await api.get<ApiResponse<JurisdictionNode[]>>(`/api/elections/${id}/jurisdictions`);
+      const res = await api.get<ApiResponse<JurisdictionNode[]>>(`/api/jurisdictions/${id}`);
       if (res.success && res.data) setJurisdictions(res.data);
     } catch (e) {
       setJurisError(e instanceof Error ? e.message : "Failed to load jurisdictions");
@@ -210,12 +225,14 @@ export default function ElectionDetailPage({
     setJurisError("");
     setJurisSaving(true);
     try {
-      await api.post(`/api/elections/${id}/jurisdictions`, {
+      await api.post(`/api/jurisdictions/${id}`, {
         name:     jurisForm.name.trim(),
+        level:    jurisForm.level || undefined,
         parentId: jurisForm.parentId || undefined,
       });
       setAddingJuris(false);
-      setJurisForm({ name: "", parentId: "" });
+      setJurisForm({ name: "", level: "", parentId: "" });
+      setParentSearch("");
       await fetchJurisdictions();
     } catch (e) {
       setJurisError(e instanceof Error ? e.message : "Failed to add jurisdiction");
@@ -227,7 +244,7 @@ export default function ElectionDetailPage({
   async function handleDeleteJurisdiction(nodeId: string, name: string) {
     if (!confirm(`Delete jurisdiction "${name}"? This also removes all positions inside it.`)) return;
     try {
-      await api.delete(`/api/elections/jurisdictions/${nodeId}`);
+      await api.delete(`/api/jurisdictions/node/${nodeId}`);
       await fetchJurisdictions();
     } catch (e) {
       alert(e instanceof Error ? e.message : "Failed to delete jurisdiction");
@@ -240,7 +257,7 @@ export default function ElectionDetailPage({
     setJurisPosError("");
     setJurisPosSaving(true);
     try {
-      await api.post(`/api/elections/${id}/jurisdictions/${addingPosToJuris}/positions`, {
+      await api.post(`/api/jurisdictions/${id}/${addingPosToJuris}/positions`, {
         title:            jurisPosForm.title,
         description:      jurisPosForm.description || undefined,
         scope:            jurisPosForm.scope,
@@ -303,7 +320,12 @@ export default function ElectionDetailPage({
       setPosGeoWard("");
       await fetchElection();
     } catch (e) {
-      setPositionError(e instanceof Error ? e.message : "Failed to add position");
+      const msg = e instanceof Error ? e.message : "Failed to add position";
+      setPositionError(
+        msg.toLowerCase().includes("staff role")
+          ? "Permission denied — please log out and log back in to refresh your session."
+          : msg
+      );
     } finally {
       setPositionSaving(false);
     }
@@ -336,7 +358,12 @@ export default function ElectionDetailPage({
       setCandGeoSearch("");
       await fetchElection();
     } catch (e) {
-      setCandidateError(e instanceof Error ? e.message : "Failed to add candidate");
+      const msg = e instanceof Error ? e.message : "Failed to add candidate";
+      setCandidateError(
+        msg.toLowerCase().includes("staff role")
+          ? "Permission denied — please log out and log back in to refresh your session."
+          : msg
+      );
     } finally {
       setCandidateSaving(false);
     }
@@ -420,7 +447,7 @@ export default function ElectionDetailPage({
             <span className={`inline-flex rounded-full px-3 py-1 text-sm font-semibold ${STATUS_COLOURS[election.status]}`}>
               {election.status}
             </span>
-            {statusActions.map((action) => (
+            {canWrite && statusActions.map((action) => (
               <button
                 key={action.next}
                 type="button"
@@ -431,7 +458,7 @@ export default function ElectionDetailPage({
                 {advancingStatus ? "…" : action.label}
               </button>
             ))}
-            {election.status === "DRAFT" && (
+            {canWrite && election.status === "DRAFT" && (
               <button
                 type="button"
                 onClick={handleDeleteElection}
@@ -547,7 +574,7 @@ export default function ElectionDetailPage({
                 county, constituency, or ward name; they see positions on that node and all its ancestors.
               </p>
             </div>
-            {canEdit && (
+            {canEdit && canWrite && (
               <button
                 type="button"
                 onClick={() => setAddingJuris((v) => !v)}
@@ -579,26 +606,70 @@ export default function ElectionDetailPage({
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs font-semibold text-gray-700">Parent Node</label>
+                  <label className="mb-1 block text-xs font-semibold text-gray-700">Level</label>
                   <select
-                    value={jurisForm.parentId}
-                    onChange={(e) => setJurisForm((f) => ({ ...f, parentId: e.target.value }))}
+                    value={jurisForm.level}
+                    onChange={(e) => setJurisForm((f) => ({ ...f, level: e.target.value as JurisdictionLevel | "" }))}
                     className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-green-700 focus:outline-none focus:ring-1 focus:ring-green-700"
                   >
-                    <option value="">— Root (no parent)</option>
-                    {jurisdictions.map((n) => (
-                      <option key={n.id} value={n.id}>
-                        {"  ".repeat(n.depth)}{n.depth > 0 ? "↳ " : ""}{n.name}
-                      </option>
-                    ))}
+                    <option value="">— Unspecified</option>
+                    <option value="NATIONAL">National</option>
+                    <option value="COUNTY">County</option>
+                    <option value="CONSTITUENCY">Constituency</option>
+                    <option value="WARD">Ward</option>
                   </select>
+                </div>
+                <div className="relative">
+                  <label className="mb-1 block text-xs font-semibold text-gray-700">Parent Node</label>
+                  {/* Searchable combobox */}
+                  <input
+                    type="text"
+                    placeholder={jurisForm.parentId
+                      ? (jurisdictions.find(n => n.id === jurisForm.parentId)?.name ?? "Search nodes…")
+                      : "— Root (no parent)"}
+                    value={parentSearch}
+                    onFocus={() => setParentDropdownOpen(true)}
+                    onChange={(e) => { setParentSearch(e.target.value); setParentDropdownOpen(true); }}
+                    onBlur={() => setTimeout(() => setParentDropdownOpen(false), 150)}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-green-700 focus:outline-none focus:ring-1 focus:ring-green-700"
+                  />
+                  {parentDropdownOpen && (
+                    <ul className="absolute z-20 mt-1 max-h-52 w-full overflow-auto rounded-lg border border-gray-200 bg-white shadow-lg text-sm">
+                      <li
+                        onMouseDown={() => { setJurisForm(f => ({ ...f, parentId: "" })); setParentSearch(""); setParentDropdownOpen(false); }}
+                        className="cursor-pointer px-3 py-2 text-gray-400 hover:bg-green-50"
+                      >
+                        — Root (no parent)
+                      </li>
+                      {jurisdictions
+                        .filter(n => n.name.toLowerCase().includes(parentSearch.toLowerCase()))
+                        .map(n => (
+                          <li
+                            key={n.id}
+                            onMouseDown={() => { setJurisForm(f => ({ ...f, parentId: n.id })); setParentSearch(""); setParentDropdownOpen(false); }}
+                            className={`cursor-pointer px-3 py-2 hover:bg-green-50 ${jurisForm.parentId === n.id ? "bg-green-100 font-semibold text-green-800" : "text-gray-800"}`}
+                          >
+                            {"\u00a0\u00a0".repeat(n.depth)}{n.depth > 0 ? "↳ " : ""}{n.name}
+                          </li>
+                        ))}
+                      {jurisdictions.filter(n => n.name.toLowerCase().includes(parentSearch.toLowerCase())).length === 0 && (
+                        <li className="px-3 py-2 text-gray-400 italic">No matching nodes</li>
+                      )}
+                    </ul>
+                  )}
+                  {jurisForm.parentId && (
+                    <p className="mt-1 text-xs text-green-700">
+                      Parent: <span className="font-medium">{jurisdictions.find(n => n.id === jurisForm.parentId)?.name}</span>
+                      <button type="button" onClick={() => { setJurisForm(f => ({ ...f, parentId: "" })); setParentSearch(""); }} className="ml-2 text-red-400 hover:text-red-600">✕ clear</button>
+                    </p>
+                  )}
                 </div>
               </div>
               <div className="flex gap-3">
                 <button type="submit" disabled={jurisSaving} className="rounded-lg bg-green-700 px-4 py-2 text-sm font-semibold text-white hover:bg-green-800 disabled:opacity-50">
                   {jurisSaving ? "Saving…" : "Save Node"}
                 </button>
-                <button type="button" onClick={() => { setAddingJuris(false); setJurisError(""); }} className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium hover:bg-gray-50">
+                <button type="button" onClick={() => { setAddingJuris(false); setJurisError(""); setParentSearch(""); setJurisForm({ name: "", level: "", parentId: "" }); }} className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium hover:bg-gray-50">
                   Cancel
                 </button>
               </div>
@@ -606,6 +677,23 @@ export default function ElectionDetailPage({
           )}
 
           {/* Tree display */}
+          {jurisdictions.length > 0 && (
+            <div className="relative">
+              <svg className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0z" />
+              </svg>
+              <input
+                type="text"
+                placeholder={`Search ${jurisdictions.length} node${jurisdictions.length !== 1 ? "s" : ""}…`}
+                value={jurisSearch}
+                onChange={(e) => setJurisSearch(e.target.value)}
+                className="w-full rounded-lg border border-gray-300 py-2 pl-9 pr-3 text-sm focus:border-green-700 focus:outline-none focus:ring-1 focus:ring-green-700"
+              />
+              {jurisSearch && (
+                <button type="button" onClick={() => setJurisSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs">✕</button>
+              )}
+            </div>
+          )}
           {jurisLoading ? (
             <div className="flex justify-center py-8">
               <div className="h-6 w-6 animate-spin rounded-full border-4 border-green-700 border-t-transparent" />
@@ -616,7 +704,9 @@ export default function ElectionDetailPage({
             </div>
           ) : (
             <div className="space-y-2">
-              {jurisdictions.map((node) => (
+              {jurisdictions
+                .filter(node => !jurisSearch || node.name.toLowerCase().includes(jurisSearch.toLowerCase()))
+                .map((node) => (
                 <div
                   key={node.id}
                   style={{ marginLeft: `${node.depth * 24}px` }}
@@ -627,12 +717,17 @@ export default function ElectionDetailPage({
                       <span className="font-semibold text-gray-900">
                         {node.depth > 0 && <span className="mr-1 text-gray-400">↳</span>}
                         {node.name}
+                        {node.level && (
+                          <span className="ml-2 rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700">
+                            {node.level.charAt(0) + node.level.slice(1).toLowerCase()}
+                          </span>
+                        )}
                       </span>
                       <span className="ml-3 text-xs text-gray-400">
                         depth {node.depth} · {node._count.children} child{node._count.children !== 1 ? "ren" : ""} · {node._count.positions} position{node._count.positions !== 1 ? "s" : ""}
                       </span>
                     </div>
-                    {canEdit && (
+                    {canEdit && canWrite && (
                       <div className="flex items-center gap-2">
                         <button
                           type="button"
@@ -722,7 +817,7 @@ export default function ElectionDetailPage({
                             </span>
                             <span className="ml-2 text-gray-400">{pos.candidates.length} candidates</span>
                           </div>
-                          {canEdit && (
+                          {canEdit && canWrite && (
                             <button
                               type="button"
                               onClick={() => handleDeletePosition(pos.id, pos.title)}
@@ -746,7 +841,7 @@ export default function ElectionDetailPage({
       {tab === "ballot" && (
         <div className="space-y-4">
           {/* Add Position button */}
-          {canEdit && (
+          {canEdit && canWrite && (
             <div className="flex items-center justify-between">
               <p className="text-sm text-gray-500">
                 {election.positions.length === 0
@@ -953,7 +1048,7 @@ export default function ElectionDetailPage({
                       )}
                     </div>
                     <div className="flex items-center gap-2">
-                      {canEdit && (
+                      {canEdit && canWrite && (
                         <>
                           <button
                             type="button"
@@ -1090,7 +1185,7 @@ export default function ElectionDetailPage({
                                 )}
                               </div>
                             </div>
-                            {canEdit && (
+                            {canEdit && canWrite && (
                               <button
                                 type="button"
                                 onClick={() => handleDeleteCandidate(c.id, c.name)}

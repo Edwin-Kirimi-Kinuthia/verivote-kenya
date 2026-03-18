@@ -48,24 +48,37 @@ const { prime: p, generator: g } = getGroup(2048);
 
 // ── Candidate roster (mirrors tally.service.ts) ───────────────────────────────
 
-const ALL_CANDIDATES: { positionId: string; positionTitle: string; candidateId: string; candidateName: string }[] = [
-  { positionId: 'president', positionTitle: 'President', candidateId: 'pres-1', candidateName: 'Amina Wanjiku' },
-  { positionId: 'president', positionTitle: 'President', candidateId: 'pres-2', candidateName: 'James Ochieng' },
-  { positionId: 'president', positionTitle: 'President', candidateId: 'pres-3', candidateName: 'Fatuma Hassan' },
-  { positionId: 'president', positionTitle: 'President', candidateId: 'pres-4', candidateName: 'Peter Kamau' },
-  { positionId: 'governor',  positionTitle: 'Governor',  candidateId: 'gov-1',  candidateName: 'Grace Muthoni' },
-  { positionId: 'governor',  positionTitle: 'Governor',  candidateId: 'gov-2',  candidateName: 'David Kiprop' },
-  { positionId: 'governor',  positionTitle: 'Governor',  candidateId: 'gov-3',  candidateName: 'Sarah Akinyi' },
+const ALL_CANDIDATES: { positionId: string; positionTitle: string; positionScope: string; positionScopeValue: string | null; candidateId: string; candidateName: string }[] = [
+  { positionId: 'president', positionTitle: 'President', positionScope: 'NATIONAL', positionScopeValue: null,      candidateId: 'pres-1', candidateName: 'Amina Wanjiku' },
+  { positionId: 'president', positionTitle: 'President', positionScope: 'NATIONAL', positionScopeValue: null,      candidateId: 'pres-2', candidateName: 'James Ochieng' },
+  { positionId: 'president', positionTitle: 'President', positionScope: 'NATIONAL', positionScopeValue: null,      candidateId: 'pres-3', candidateName: 'Fatuma Hassan' },
+  { positionId: 'president', positionTitle: 'President', positionScope: 'NATIONAL', positionScopeValue: null,      candidateId: 'pres-4', candidateName: 'Peter Kamau' },
+  { positionId: 'governor',  positionTitle: 'Governor',  positionScope: 'COUNTY',   positionScopeValue: 'Nairobi', candidateId: 'gov-1',  candidateName: 'Grace Muthoni' },
+  { positionId: 'governor',  positionTitle: 'Governor',  positionScope: 'COUNTY',   positionScopeValue: 'Nairobi', candidateId: 'gov-2',  candidateName: 'David Kiprop' },
+  { positionId: 'governor',  positionTitle: 'Governor',  positionScope: 'COUNTY',   positionScopeValue: 'Nairobi', candidateId: 'gov-3',  candidateName: 'Sarah Akinyi' },
 ];
 
-const COMMISSIONER_IDS = ['alpha', 'beta', 'gamma'] as const;
-type CommissionerId = typeof COMMISSIONER_IDS[number];
+/** Real IEBC commissioner information loaded from the database. */
+export interface CommissionerInfo {
+  voterId:     string;
+  nationalId:  string;
+  name:        string;
+  email:       string | null;
+  phoneNumber: string | null;
+}
 
-const COMMISSIONER_LABELS: Record<CommissionerId, string> = {
-  alpha: 'Commissioner Alpha (IEBC Nairobi HQ)',
-  beta:  'Commissioner Beta  (IEBC Mombasa)',
-  gamma: 'Commissioner Gamma (IEBC Kisumu)',
-};
+/**
+ * Compute the Shamir threshold k given N total active commissioners.
+ *   N=1  → k=1  (no split — one commissioner holds the full key)
+ *   N=2  → k=2  (split into 2, both needed)
+ *   N=4  → k=2  (ceil(√4) = 2)
+ *   N=9  → k=3  (ceil(√9) = 3)
+ *   N=16 → k=4
+ */
+export function computeThreshold(n: number): number {
+  if (n <= 0) throw new Error('No active commissioners found');
+  return Math.max(1, Math.ceil(Math.sqrt(n)));
+}
 
 // ── Math helpers ──────────────────────────────────────────────────────────────
 
@@ -130,21 +143,40 @@ function shamirSplit(secret: bigint, n: number): SSSShare[] {
 }
 
 /**
- * Reconstruct the secret from 3 shares (indices 1, 2, 3) via closed-form Lagrange at t = 0.
+ * Reconstruct the secret from k shares via general Lagrange interpolation at t = 0.
  *
- * For the degree-2 polynomial f(t) = x + a₁t + a₂t² over Z_p with shares at t = 1, 2, 3:
- *   x = f(0) = 3·y₁ − 3·y₂ + y₃  (mod p)
+ * Works for any k-of-k scheme (k = 1, 2, 3, …).
+ *   f(0) = Σ_i  y_i · Π_{j≠i} (0 − x_j) / (x_i − x_j)  mod p
  *
- * Derived by substituting y_i = f(i) and cancelling a₁ and a₂ terms.
- * No modular inverse required — avoids TypeScript bigint inference pitfalls.
+ * Special cases verify correctly:
+ *   k=1: share is the secret itself  → f(0) = y₁                         ✓
+ *   k=2: f(0) = 2y₁ − y₂            → two-point line through (1,y₁),(2,y₂) ✓
+ *   k=3: f(0) = 3y₁ − 3y₂ + y₃     → same closed form as the old function  ✓
  */
-function shamirReconstruct(shares: SSSShare[]): bigint {
-  const y1 = shares.find((s) => s.index === 1)!.value;
-  const y2 = shares.find((s) => s.index === 2)!.value;
-  const y3 = shares.find((s) => s.index === 3)!.value;
+function shamirReconstructGeneral(shares: SSSShare[]): bigint {
+  if (shares.length === 0) throw new Error('Cannot reconstruct from zero shares');
+  if (shares.length === 1) return shares[0].value % p;
 
-  // x = 3y₁ - 3y₂ + y₃ (mod p) — add 2p before mod to guarantee positive result
-  return (3n * y1 % p - 3n * y2 % p + y3 + 2n * p) % p;
+  let secret = 0n;
+  for (let i = 0; i < shares.length; i++) {
+    const xi: bigint = BigInt(shares[i].index);
+    const yi: bigint = shares[i].value;
+    let num: bigint = 1n;
+    let den: bigint = 1n;
+    for (let j = 0; j < shares.length; j++) {
+      if (i === j) continue;
+      const xj: bigint = BigInt(shares[j].index);
+      // numerator factor: (0 − xj) ≡ p − xj  (mod p);  xj is tiny so p − xj > 0
+      num = (num * (p - xj)) % p;
+      // denominator factor: (xi − xj) mod p;  both are tiny so add p if negative
+      const rawDiff: bigint = xi - xj;
+      const diff: bigint = rawDiff >= 0n ? rawDiff : rawDiff + p;
+      den = (den * diff) % p;
+    }
+    const term: bigint = (yi % p * (num % p) % p * modInverse(den, p)) % p;
+    secret = (secret + term) % p;
+  }
+  return secret;
 }
 
 // ── Ciphertext type ───────────────────────────────────────────────────────────
@@ -293,10 +325,14 @@ interface CeremonyState {
   totalBallots: number;
   /** Pre-computed homomorphic aggregates — one per candidate. */
   aggregates: Record<string, CT>;
-  /** SSS shares generated at ceremony start (held for validation). */
+  /** SSS shares generated at ceremony start (k shares, one per selected commissioner). */
   sssShares: SSSShare[];
-  /** Shares submitted by each commissioner during the ceremony. */
-  submittedShares: Partial<Record<CommissionerId, SSSShare>>;
+  /** Number of shares required to reconstruct the key (k-of-k). */
+  threshold: number;
+  /** The k commissioners randomly selected to hold a key share. */
+  selectedCommissioners: CommissionerInfo[];
+  /** Shares submitted by each selected commissioner (keyed by voterId). */
+  submittedShares: Record<string, SSSShare>;
   result: HomomorphicResult | null;
   /** Full candidate roster used for this ceremony (dynamic or legacy). */
   candidateRoster: typeof ALL_CANDIDATES;
@@ -304,11 +340,31 @@ interface CeremonyState {
   electionId?: string;
 }
 
+/** Public-safe ceremony status — no share values exposed. */
+export interface CeremonyStatus {
+  started: boolean;
+  ceremonyId?: string;
+  startedAt?: string;
+  electionId?: string;
+  totalBallots?: number;
+  threshold?: number;
+  selectedCommissioners?: Array<{
+    voterId:      string;
+    name:         string;
+    nationalId:   string; // masked
+    hasSubmitted: boolean;
+  }>;
+  sharesReceived?: number;
+  finalized?: boolean;
+}
+
 export interface CandidateTallyH {
   candidateId: string;
   candidateName: string;
   positionId: string;
   positionTitle: string;
+  positionScope: string;
+  positionScopeValue: string | null;
   votes: number;
 }
 
@@ -336,10 +392,12 @@ async function loadDynamicCandidates(electionId: string): Promise<typeof ALL_CAN
   });
   return positions.flatMap(p =>
     p.candidates.map(c => ({
-      positionId:    p.id,
-      positionTitle: p.title,
-      candidateId:   c.id,
-      candidateName: c.name,
+      positionId:         p.id,
+      positionTitle:      p.title,
+      positionScope:      p.scope,
+      positionScopeValue: p.scopeValue ?? null,
+      candidateId:        c.id,
+      candidateName:      c.name,
     }))
   );
 }
@@ -349,30 +407,46 @@ async function loadDynamicCandidates(electionId: string): Promise<typeof ALL_CAN
 /**
  * Step 1 — Aggregate ballots and generate SSS key shares.
  *
- * Returns the 3 commissioner shares (hex) so the admin can distribute
- * them to the physical commissioners before starting the ceremony proper.
+ * @param electionId  - Election to tally (required for v3 dynamic ballots)
+ * @param allCommissioners - All active COMMISSION-role staff from the DB.
+ *   k = ceil(√N) of them are randomly selected to hold a key share.
+ *
+ * Returns per-commissioner shareHex (so the caller can email them)
+ * and a safe summary for the HTTP response.
  */
-export async function startCeremony(electionId?: string): Promise<{
+export async function startCeremony(
+  electionId?: string,
+  allCommissioners: CommissionerInfo[] = [],
+): Promise<{
   ceremonyId: string;
   totalBallots: number;
-  commissioners: {
-    id: CommissionerId;
-    label: string;
-    shareIndex: number;
-    shareHex: string;
-    /** First 32 hex chars of the Pedersen commitment g^share for public verification */
-    commitment: string;
-  }[];
+  threshold: number;
+  totalCommissioners: number;
+  selectedCommissioners: Array<{
+    voterId:     string;
+    name:        string;
+    shareIndex:  number;
+    shareHex:    string;   // caller must email this and NOT return it in the HTTP response
+    commitment:  string;
+  }>;
 }> {
-  encryptionService.getPublicKey(); // Throws if not initialized (fail-fast guard)
+  encryptionService.getPublicKey(); // Throws if not initialized
 
-  // Load master key and split it
-  const keyHex = process.env.ELGAMAL_PRIVATE_KEY ?? '';
+  // Compute k = ceil(√N); default to 1 if no commissioners are registered yet
+  const n = allCommissioners.length;
+  const k = n > 0 ? computeThreshold(n) : 1;
+
+  // Randomly pick k commissioners from the list (Fisher-Yates–style shuffle)
+  const shuffled = [...allCommissioners].sort(() => Math.random() - 0.5);
+  const selected = shuffled.slice(0, k);
+
+  // Load master key and split into k shares
+  const keyHex  = process.env.ELGAMAL_PRIVATE_KEY ?? '';
   const cleaned = keyHex.startsWith('0x') ? keyHex.slice(2) : keyHex;
   const masterKey = BigInt('0x' + cleaned);
-  const sssShares = shamirSplit(masterKey, 3);
+  const sssShares = shamirSplit(masterKey, k);
 
-  // Fetch CONFIRMED votes — filtered to electionId when running a dynamic ceremony
+  // Fetch CONFIRMED votes for the given election
   const votes = await prisma.vote.findMany({
     where: {
       status: 'CONFIRMED',
@@ -396,16 +470,14 @@ export async function startCeremony(electionId?: string): Promise<{
 
   if (ballots.length === 0) {
     throw new Error(
-      `No homomorphic ballots found (${skipped} votes skipped — cast new votes or re-seed to generate v2/v3 ballots).`
+      `No homomorphic ballots found (${skipped} votes skipped — cast new votes or re-seed).`,
     );
   }
 
-  // Determine candidate roster: use dynamic DB candidates if electionId provided, else legacy list
   const candidateRoster = electionId
     ? await loadDynamicCandidates(electionId)
     : ALL_CANDIDATES;
 
-  // Aggregate per candidate
   const aggregates: Record<string, CT> = {};
   for (const cand of candidateRoster) {
     aggregates[cand.candidateId] = aggregate(ballots, cand.candidateId);
@@ -414,71 +486,86 @@ export async function startCeremony(electionId?: string): Promise<{
   const ceremonyId = uuid();
   _state = {
     ceremonyId,
-    startedAt:       new Date().toISOString(),
-    totalBallots:    ballots.length,
+    startedAt:            new Date().toISOString(),
+    totalBallots:         ballots.length,
     aggregates,
     sssShares,
-    submittedShares: {},
-    result:          null,
+    threshold:            k,
+    selectedCommissioners: selected,
+    submittedShares:      {},
+    result:               null,
     candidateRoster,
     electionId,
   };
 
-  // Build commissioner info — each commissioner receives their unique share
-  const commissioners = COMMISSIONER_IDS.map((id, i) => ({
-    id,
-    label:       COMMISSIONER_LABELS[id],
-    shareIndex:  i + 1,
-    shareHex:    sssShares[i].hex,
-    // Pedersen commitment g^share mod p — truncated for display; verifiable by anyone with g and p
-    commitment:  modPow(g, sssShares[i].value, p).toString(16).slice(0, 32) + '…',
+  const selectedOut = selected.map((c, i) => ({
+    voterId:    c.voterId,
+    name:       c.name,
+    shareIndex: i + 1,
+    shareHex:   sssShares[i].hex,
+    commitment: modPow(g, sssShares[i].value, p).toString(16).slice(0, 32) + '…',
   }));
 
-  logger.info('Homomorphic ceremony started — SSS shares generated', {
-    ceremonyId, ballots: ballots.length, skipped: skipped || 0,
+  logger.info('Homomorphic ceremony started — dynamic SSS shares generated', {
+    ceremonyId,
+    ballots: ballots.length,
+    skipped,
+    n,
+    k,
+    selected: selected.map(c => c.voterId),
   });
 
-  return { ceremonyId, totalBallots: ballots.length, commissioners };
+  return {
+    ceremonyId,
+    totalBallots:         ballots.length,
+    threshold:            k,
+    totalCommissioners:   n,
+    selectedCommissioners: selectedOut,
+  };
 }
 
 /**
- * Step 2 — Commissioner submits their key share.
+ * Step 2 — Commissioner submits their key share (identified by their voterId from JWT).
  *
- * The share hex is validated against the value generated in startCeremony.
- * On success the commissioner's contribution is recorded.
+ * The submitted hex is validated against the share generated at ceremony start.
+ * Returns progress counts; caller should auto-finalize when allReceived = true.
  */
-export function submitShare(commissionerId: CommissionerId, shareHex: string): {
-  received: CommissionerId[];
-  remaining: CommissionerId[];
+export function submitShare(voterId: string, shareHex: string): {
+  received:    number;
+  threshold:   number;
+  allReceived: boolean;
 } {
-  if (!_state) throw new Error('Ceremony not started. Call startCeremony first.');
+  if (!_state) throw new Error('No ceremony in progress. Start the ceremony first.');
   if (_state.result) throw new Error('Ceremony already finalized.');
-  if (_state.submittedShares[commissionerId]) {
-    throw new Error(`Commissioner ${commissionerId} has already submitted their share.`);
+
+  const commIdx = _state.selectedCommissioners.findIndex((c) => c.voterId === voterId);
+  if (commIdx === -1) {
+    throw new Error('You are not one of the selected commissioners for this ceremony.');
+  }
+  if (_state.submittedShares[voterId]) {
+    throw new Error('You have already submitted your key share.');
   }
 
-  const commIndex = COMMISSIONER_IDS.indexOf(commissionerId); // 0-based
-  const expected  = _state.sssShares[commIndex];
+  const expected = _state.sssShares[commIdx];
 
-  // Normalise the submitted hex (strip leading zeros / 0x)
+  // Normalise and compare
   let submittedHex = shareHex.trim().toLowerCase().replace(/^0x/, '');
-  // Pad to same length as expected for comparison
-  const maxLen = Math.max(submittedHex.length, expected.hex.length);
-  submittedHex = submittedHex.padStart(maxLen, '0');
+  const maxLen     = Math.max(submittedHex.length, expected.hex.length);
+  submittedHex     = submittedHex.padStart(maxLen, '0');
   const expectedHex = expected.hex.padStart(maxLen, '0');
 
   if (submittedHex !== expectedHex) {
-    throw new Error(`Invalid key share for Commissioner ${commissionerId}. Please check the value and try again.`);
+    throw new Error('Invalid key share. Please check the value from your email and try again.');
   }
 
-  _state.submittedShares[commissionerId] = expected;
+  _state.submittedShares[voterId] = { ...expected };
 
-  const received  = COMMISSIONER_IDS.filter((id) => !!_state!.submittedShares[id]);
-  const remaining = COMMISSIONER_IDS.filter((id) => !_state!.submittedShares[id]);
+  const received    = Object.keys(_state.submittedShares).length;
+  const allReceived = received >= _state.threshold;
 
-  logger.info('SSS key share verified', { commissionerId, received: received.length, total: 3 });
+  logger.info('SSS key share verified', { voterId, received, threshold: _state.threshold });
 
-  return { received, remaining };
+  return { received, threshold: _state.threshold, allReceived };
 }
 
 /**
@@ -492,14 +579,20 @@ export function finalizeCeremony(): HomomorphicResult {
   if (!_state) throw new Error('Ceremony not started.');
   if (_state.result) return _state.result;
 
-  const missing = COMMISSIONER_IDS.filter((id) => !_state!.submittedShares[id]);
-  if (missing.length > 0) {
-    throw new Error(`Waiting for key shares from: ${missing.map((id) => COMMISSIONER_LABELS[id]).join(', ')}`);
+  // If commissioners were selected (real threshold ceremony), all must have submitted.
+  // If selectedCommissioners is empty (legacy / auto-ceremony), use sssShares directly.
+  if (_state.selectedCommissioners.length > 0) {
+    const missing = _state.selectedCommissioners.filter((c) => !_state!.submittedShares[c.voterId]);
+    if (missing.length > 0) {
+      throw new Error(`Waiting for key shares from: ${missing.map((c) => c.name).join(', ')}`);
+    }
   }
 
-  // Reconstruct the master private key from the 3 SSS shares
-  const submittedArr = COMMISSIONER_IDS.map((id) => _state!.submittedShares[id]!);
-  const reconstructedKey = shamirReconstruct(submittedArr);
+  // Reconstruct from submitted commissioner shares (real ceremony) or all sssShares (auto).
+  const submittedArr = _state.selectedCommissioners.length > 0
+    ? _state.selectedCommissioners.map((c) => _state!.submittedShares[c.voterId]!)
+    : _state.sssShares; // auto-ceremony: reconstruct directly
+  const reconstructedKey = shamirReconstructGeneral(submittedArr);
 
   // Sanity-check: g^reconstructed should equal the public key
   const expectedPubKey = encryptionService.getPublicKey();
@@ -520,10 +613,12 @@ export function finalizeCeremony(): HomomorphicResult {
     const count  = bsgs(gCount, maxVoters);
 
     candidates.push({
-      candidateId:   cand.candidateId,
-      candidateName: cand.candidateName,
-      positionId:    cand.positionId,
-      positionTitle: cand.positionTitle,
+      candidateId:        cand.candidateId,
+      candidateName:      cand.candidateName,
+      positionId:         cand.positionId,
+      positionTitle:      cand.positionTitle,
+      positionScope:      cand.positionScope ?? 'NATIONAL',
+      positionScopeValue: cand.positionScopeValue ?? null,
       votes: count === -1 ? 0 : count,
     });
   }
@@ -543,10 +638,10 @@ export function finalizeCeremony(): HomomorphicResult {
     completedAt,
     durationMs,
     totalBallotsProcessed: _state.totalBallots,
-    commissionersWhoParticipated: [...COMMISSIONER_IDS],
+    commissionersWhoParticipated: _state.selectedCommissioners.map((c) => c.name),
     candidates,
     finalHash,
-    sovereigntyNote: 'Full homomorphic tally on-premise. Key reconstructed via Shamir\'s Secret Sharing (3-of-3). No individual vote decrypted. Zero foreign API calls.',
+    sovereigntyNote: `Full homomorphic tally on-premise. Key reconstructed via Shamir's Secret Sharing (${_state.threshold}-of-${_state.threshold}). No individual vote decrypted. Zero foreign API calls.`,
   };
 
   _state.result = result;
@@ -575,8 +670,26 @@ export function finalizeCeremony(): HomomorphicResult {
   return result;
 }
 
-export function getCeremonyState(): CeremonyState | null {
-  return _state;
+/** Public-safe ceremony status — share values are never exposed. */
+export function getCeremonyStatus(): CeremonyStatus {
+  if (!_state) return { started: false };
+  const sharesReceived = Object.keys(_state.submittedShares).length;
+  return {
+    started: true,
+    ceremonyId:   _state.ceremonyId,
+    startedAt:    _state.startedAt,
+    electionId:   _state.electionId,
+    totalBallots: _state.totalBallots,
+    threshold:    _state.threshold,
+    selectedCommissioners: _state.selectedCommissioners.map((c) => ({
+      voterId:      c.voterId,
+      name:         c.name,
+      nationalId:   c.nationalId.slice(0, 2) + '****' + c.nationalId.slice(-2),
+      hasSubmitted: !!_state!.submittedShares[c.voterId],
+    })),
+    sharesReceived,
+    finalized: !!_state.result,
+  };
 }
 
 export function getHomomorphicResult(): HomomorphicResult | null {
@@ -587,5 +700,3 @@ export function resetCeremony(): void {
   _state = null;
   _result = null;
 }
-
-export { COMMISSIONER_IDS, COMMISSIONER_LABELS, type CommissionerId };
