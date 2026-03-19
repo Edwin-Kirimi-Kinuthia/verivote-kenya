@@ -12,6 +12,7 @@ const BALLOT_WRITE_ROLES: StaffRole[] = ["CHAIRPERSON","COMMISSIONER","COMMISSIO
 type PositionScope = "NATIONAL" | "COUNTY" | "CONSTITUENCY" | "WARD" | "CUSTOM";
 type ElectionStatus = "DRAFT" | "NOMINATIONS" | "ACTIVE" | "CLOSED" | "TALLIED" | "ARCHIVED";
 type ElectionType = "GOVERNMENT" | "INSTITUTIONAL" | "CORPORATE" | "CUSTOM";
+type AuthMethod = "PERSONA_KYC" | "EMAIL_DOMAIN" | "OTP_ONLY";
 
 interface CandidateDetail {
   id: string;
@@ -42,6 +43,8 @@ interface ElectionDetail {
   orgName: string | null;
   startDate: string | null;
   endDate: string | null;
+  authMethod: AuthMethod;
+  allowedDomains: string[];
   positions: PositionDetail[];
   _count: { votes: number; enrollments: number };
 }
@@ -94,17 +97,37 @@ function getStatusActions(status: ElectionStatus): StatusAction[] {
 
 // ── Jurisdiction tree types ────────────────────────────────────────────────────
 
-type JurisdictionLevel = "NATIONAL" | "COUNTY" | "CONSTITUENCY" | "WARD";
+type JurisdictionLevel = "NATIONAL" | "COUNTY" | "CONSTITUENCY" | "WARD" | "POLLING_STATION";
+
+interface StaffSummary {
+  id: string;
+  staffRole: string;
+  jurisdictionValue: string | null;
+  voter: { nationalId: string; email: string | null };
+}
+
+interface StationSummary {
+  id: string;
+  code: string;
+  name: string;
+  county: string;
+  constituency: string;
+  ward: string;
+}
 
 interface JurisdictionNode {
-  id:         string;
-  parentId:   string | null;
-  name:       string;
-  level:      JurisdictionLevel | null;
-  depth:      number;
-  orderIndex: number;
-  _count:     { children: number; positions: number };
-  positions:  PositionDetail[];
+  id:               string;
+  parentId:         string | null;
+  name:             string;
+  level:            JurisdictionLevel | null;
+  depth:            number;
+  orderIndex:       number;
+  personInChargeId: string | null;
+  personInCharge:   StaffSummary | null;
+  pollingStationId: string | null;
+  pollingStation:   StationSummary | null;
+  _count:           { children: number; positions: number };
+  positions:        PositionDetail[];
 }
 
 type Tab = "overview" | "ballot" | "jurisdictions";
@@ -141,10 +164,26 @@ export default function ElectionDetailPage({
   const [jurisPosForm, setJurisPosForm] = useState({ title: "", description: "", scope: "NATIONAL" as PositionScope, maxVotesPerVoter: 1 });
   const [jurisPosSaving, setJurisPosSaving] = useState(false);
   const [jurisPosError, setJurisPosError] = useState("");
+  // Assign officer to node
+  const [assigningOfficerTo, setAssigningOfficerTo] = useState<string | null>(null);
+  const [officerSearch, setOfficerSearch] = useState("");
+  const [staffList, setStaffList] = useState<StaffSummary[]>([]);
+  const [officerSaving, setOfficerSaving] = useState(false);
+  // Link polling station to node
+  const [linkingStationTo, setLinkingStationTo] = useState<string | null>(null);
+  const [stationSearch, setStationSearch] = useState("");
+  const [stationList, setStationList] = useState<StationSummary[]>([]);
+  const [stationSaving, setStationSaving] = useState(false);
 
   // Status transition
   const [advancingStatus, setAdvancingStatus] = useState(false);
   const [statusError, setStatusError] = useState("");
+
+  // Auth method editing
+  const [editingAuth, setEditingAuth] = useState(false);
+  const [authMethodEdit, setAuthMethodEdit] = useState<AuthMethod>("OTP_ONLY");
+  const [domainsEdit, setDomainsEdit] = useState("");
+  const [authSaving, setAuthSaving] = useState(false);
 
   // Add Position form
   const [addingPosition, setAddingPosition] = useState(false);
@@ -251,6 +290,50 @@ export default function ElectionDetailPage({
     }
   }
 
+  async function loadStaff() {
+    if (staffList.length > 0) return;
+    try {
+      const res = await api.get<{ success: boolean; data: StaffSummary[] }>("/api/staff?isActive=true");
+      if (res.data) setStaffList(res.data);
+    } catch { /* non-fatal */ }
+  }
+
+  async function loadStations() {
+    if (stationList.length > 0) return;
+    try {
+      const res = await api.get<{ success: boolean; data: StationSummary[] }>("/api/polling-stations/all?limit=500");
+      if (res.data) setStationList(res.data);
+    } catch { /* non-fatal */ }
+  }
+
+  async function handleAssignOfficer(nodeId: string, staffId: string | null) {
+    setOfficerSaving(true);
+    try {
+      await api.patch(`/api/jurisdictions/node/${nodeId}/assign-officer`, { personInChargeId: staffId });
+      setAssigningOfficerTo(null);
+      setOfficerSearch("");
+      await fetchJurisdictions();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to assign officer");
+    } finally {
+      setOfficerSaving(false);
+    }
+  }
+
+  async function handleLinkStation(nodeId: string, pollingStationId: string | null) {
+    setStationSaving(true);
+    try {
+      await api.patch(`/api/jurisdictions/node/${nodeId}/assign-station`, { pollingStationId });
+      setLinkingStationTo(null);
+      setStationSearch("");
+      await fetchJurisdictions();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to link station");
+    } finally {
+      setStationSaving(false);
+    }
+  }
+
   async function handleAddPositionToJuris(e: React.FormEvent) {
     e.preventDefault();
     if (!addingPosToJuris) return;
@@ -277,12 +360,34 @@ export default function ElectionDetailPage({
     setLoading(true);
     try {
       const res = await api.get<ApiResponse<ElectionDetail>>(`/api/elections/${id}`);
-      if (res.success && res.data) setElection(res.data);
-      else setError(res.error ?? "Election not found");
+      if (res.success && res.data) {
+        setElection(res.data);
+        setAuthMethodEdit(res.data.authMethod);
+        setDomainsEdit((res.data.allowedDomains ?? []).join(", "));
+      } else {
+        setError(res.error ?? "Election not found");
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleSaveAuth(e: React.FormEvent) {
+    e.preventDefault();
+    setAuthSaving(true);
+    try {
+      const domains = authMethodEdit === "EMAIL_DOMAIN"
+        ? domainsEdit.split(/[,\s]+/).map(d => d.trim().replace(/^@/, "").toLowerCase()).filter(Boolean)
+        : [];
+      await api.patch(`/api/elections/${id}`, { authMethod: authMethodEdit, allowedDomains: domains });
+      setEditingAuth(false);
+      await fetchElection();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Failed to update authentication method");
+    } finally {
+      setAuthSaving(false);
     }
   }
 
@@ -522,6 +627,75 @@ export default function ElectionDetailPage({
               <dt className="text-xs font-semibold uppercase text-gray-400">Enrollments</dt>
               <dd className="mt-1 text-sm text-gray-900">{election._count.enrollments}</dd>
             </div>
+            <div className="sm:col-span-2">
+              <dt className="text-xs font-semibold uppercase text-gray-400">Voter Authentication</dt>
+              <dd className="mt-1 flex flex-wrap items-center gap-2">
+                <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                  election.authMethod === "PERSONA_KYC"  ? "bg-indigo-100 text-indigo-800" :
+                  election.authMethod === "EMAIL_DOMAIN" ? "bg-blue-100 text-blue-800" :
+                                                           "bg-gray-100 text-gray-700"
+                }`}>
+                  {election.authMethod === "PERSONA_KYC"  ? "Persona KYC" :
+                   election.authMethod === "EMAIL_DOMAIN" ? "Institutional Email" :
+                                                            "OTP Only"}
+                </span>
+                {election.authMethod === "EMAIL_DOMAIN" && (election.allowedDomains ?? []).length > 0 && (
+                  <span className="text-xs text-gray-500">
+                    Domains: {(election.allowedDomains ?? []).join(", ")}
+                  </span>
+                )}
+                {canEdit && canWrite && (
+                  <button
+                    type="button"
+                    onClick={() => setEditingAuth((v) => !v)}
+                    className="text-xs text-green-700 hover:underline"
+                  >
+                    Edit
+                  </button>
+                )}
+              </dd>
+              {editingAuth && canEdit && (
+                <form
+                  onSubmit={handleSaveAuth}
+                  className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-3"
+                >
+                  <p className="text-xs font-semibold text-gray-700">Change Authentication Method</p>
+                  {(["PERSONA_KYC", "EMAIL_DOMAIN", "OTP_ONLY"] as AuthMethod[]).map((m) => (
+                    <label key={m} className="flex cursor-pointer items-center gap-2 text-sm">
+                      <input
+                        type="radio"
+                        name="authMethodEdit"
+                        value={m}
+                        checked={authMethodEdit === m}
+                        onChange={() => setAuthMethodEdit(m)}
+                        className="h-4 w-4 text-green-700 focus:ring-green-700"
+                      />
+                      <span className="font-medium">
+                        {m === "PERSONA_KYC" ? "Persona KYC" : m === "EMAIL_DOMAIN" ? "Institutional Email" : "OTP Only"}
+                      </span>
+                    </label>
+                  ))}
+                  {authMethodEdit === "EMAIL_DOMAIN" && (
+                    <div>
+                      <label className="mb-1 block text-xs font-semibold text-gray-700">Allowed Domains</label>
+                      <input
+                        type="text"
+                        value={domainsEdit}
+                        onChange={(e) => setDomainsEdit(e.target.value)}
+                        placeholder="e.g. uon.ac.ke, ku.ac.ke"
+                        className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-green-700 focus:outline-none focus:ring-1 focus:ring-green-700"
+                      />
+                    </div>
+                  )}
+                  <div className="flex gap-2">
+                    <button type="submit" disabled={authSaving} className="rounded-lg bg-green-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-800 disabled:opacity-50">
+                      {authSaving ? "Saving…" : "Save"}
+                    </button>
+                    <button type="button" onClick={() => setEditingAuth(false)} className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium hover:bg-gray-100">Cancel</button>
+                  </div>
+                </form>
+              )}
+            </div>
             {election.startDate && (
               <div>
                 <dt className="text-xs font-semibold uppercase text-gray-400">Voting Opens</dt>
@@ -617,6 +791,7 @@ export default function ElectionDetailPage({
                     <option value="COUNTY">County</option>
                     <option value="CONSTITUENCY">Constituency</option>
                     <option value="WARD">Ward</option>
+                    <option value="POLLING_STATION">Polling Station</option>
                   </select>
                 </div>
                 <div className="relative">
@@ -712,43 +887,190 @@ export default function ElectionDetailPage({
                   style={{ marginLeft: `${node.depth * 24}px` }}
                   className="rounded-xl border border-gray-200 bg-white shadow-sm"
                 >
-                  <div className="flex items-center justify-between px-5 py-3 bg-gray-50 rounded-t-xl border-b border-gray-100">
-                    <div>
-                      <span className="font-semibold text-gray-900">
-                        {node.depth > 0 && <span className="mr-1 text-gray-400">↳</span>}
-                        {node.name}
-                        {node.level && (
-                          <span className="ml-2 rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700">
-                            {node.level.charAt(0) + node.level.slice(1).toLowerCase()}
+                  <div className="px-5 py-3 bg-gray-50 rounded-t-xl border-b border-gray-100">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <span className="font-semibold text-gray-900">
+                          {node.depth > 0 && <span className="mr-1 text-gray-400">↳</span>}
+                          {node.name}
+                          {node.level && (
+                            <span className="ml-2 rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700">
+                              {node.level.charAt(0) + node.level.slice(1).toLowerCase()}
+                            </span>
+                          )}
+                        </span>
+                        <span className="ml-3 text-xs text-gray-400">
+                          depth {node.depth} · {node._count.children} child{node._count.children !== 1 ? "ren" : ""} · {node._count.positions} position{node._count.positions !== 1 ? "s" : ""}
+                        </span>
+                        {/* Officer badge */}
+                        {node.personInCharge && (
+                          <span className="ml-3 inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-800">
+                            <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
+                            {node.personInCharge.voter.email ?? node.personInCharge.voter.nationalId}
+                            <span className="text-amber-500">({node.personInCharge.staffRole.replace(/_/g, " ")})</span>
                           </span>
                         )}
-                      </span>
-                      <span className="ml-3 text-xs text-gray-400">
-                        depth {node.depth} · {node._count.children} child{node._count.children !== 1 ? "ren" : ""} · {node._count.positions} position{node._count.positions !== 1 ? "s" : ""}
-                      </span>
-                    </div>
-                    {canEdit && canWrite && (
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setAddingPosToJuris(addingPosToJuris === node.id ? null : node.id);
-                            setJurisPosForm({ title: "", description: "", scope: "NATIONAL", maxVotesPerVoter: 1 });
-                            setJurisPosError("");
-                          }}
-                          className="rounded-md px-3 py-1.5 text-xs font-medium text-green-700 hover:bg-green-50"
-                        >
-                          + Position
-                        </button>
-                        {node._count.children === 0 && (
+                        {/* Station badge (leaf nodes) */}
+                        {node.pollingStation && (
+                          <span className="ml-3 inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-xs text-blue-800">
+                            <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                            {node.pollingStation.name}
+                          </span>
+                        )}
+                      </div>
+                      {canWrite && (
+                        <div className="flex flex-shrink-0 items-center gap-2">
+                          {canEdit && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setAddingPosToJuris(addingPosToJuris === node.id ? null : node.id);
+                                setJurisPosForm({ title: "", description: "", scope: "NATIONAL", maxVotesPerVoter: 1 });
+                                setJurisPosError("");
+                              }}
+                              className="rounded-md px-3 py-1.5 text-xs font-medium text-green-700 hover:bg-green-50"
+                            >
+                              + Position
+                            </button>
+                          )}
+                          {/* Assign officer button */}
                           <button
                             type="button"
-                            onClick={() => handleDeleteJurisdiction(node.id, node.name)}
-                            className="rounded-md px-2 py-1.5 text-xs font-medium text-red-500 hover:bg-red-50"
+                            onClick={() => {
+                              setAssigningOfficerTo(assigningOfficerTo === node.id ? null : node.id);
+                              setLinkingStationTo(null);
+                              setOfficerSearch("");
+                              loadStaff();
+                            }}
+                            className={`rounded-md px-2 py-1.5 text-xs font-medium hover:bg-amber-50 ${node.personInCharge ? "text-amber-700" : "text-gray-500"}`}
+                            title="Assign person in charge"
                           >
-                            Delete
+                            {node.personInCharge ? "Change Officer" : "Assign Officer"}
                           </button>
-                        )}
+                          {/* Link station button — only for leaf nodes */}
+                          {node._count.children === 0 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setLinkingStationTo(linkingStationTo === node.id ? null : node.id);
+                                setAssigningOfficerTo(null);
+                                setStationSearch("");
+                                loadStations();
+                              }}
+                              className={`rounded-md px-2 py-1.5 text-xs font-medium hover:bg-blue-50 ${node.pollingStation ? "text-blue-700" : "text-gray-500"}`}
+                              title="Link polling station"
+                            >
+                              {node.pollingStation ? "Change Station" : "Link Station"}
+                            </button>
+                          )}
+                          {canEdit && node._count.children === 0 && (
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteJurisdiction(node.id, node.name)}
+                              className="rounded-md px-2 py-1.5 text-xs font-medium text-red-500 hover:bg-red-50"
+                            >
+                              Delete
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Assign officer inline panel */}
+                    {assigningOfficerTo === node.id && (
+                      <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 space-y-2">
+                        <p className="text-xs font-semibold text-amber-800">Assign Person in Charge</p>
+                        <input
+                          type="text"
+                          placeholder="Search by email, national ID, or role…"
+                          value={officerSearch}
+                          onChange={(e) => setOfficerSearch(e.target.value)}
+                          className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                        />
+                        <div className="max-h-40 overflow-auto space-y-1">
+                          {node.personInCharge && (
+                            <button
+                              type="button"
+                              disabled={officerSaving}
+                              onClick={() => handleAssignOfficer(node.id, null)}
+                              className="w-full rounded-md border border-red-200 px-3 py-1.5 text-left text-xs text-red-600 hover:bg-red-50 disabled:opacity-50"
+                            >
+                              Remove current officer ({node.personInCharge.voter.email ?? node.personInCharge.voter.nationalId})
+                            </button>
+                          )}
+                          {staffList
+                            .filter(s => {
+                              const q = officerSearch.toLowerCase();
+                              return !q || (s.voter.email ?? "").toLowerCase().includes(q)
+                                || s.voter.nationalId.toLowerCase().includes(q)
+                                || s.staffRole.toLowerCase().includes(q)
+                                || (s.jurisdictionValue ?? "").toLowerCase().includes(q);
+                            })
+                            .map(s => (
+                              <button
+                                key={s.id}
+                                type="button"
+                                disabled={officerSaving}
+                                onClick={() => handleAssignOfficer(node.id, s.id)}
+                                className="w-full rounded-md border border-gray-200 px-3 py-1.5 text-left text-xs hover:bg-amber-100 disabled:opacity-50"
+                              >
+                                <span className="font-medium">{s.voter.email ?? s.voter.nationalId}</span>
+                                <span className="ml-2 text-gray-500">{s.staffRole.replace(/_/g, " ")}</span>
+                                {s.jurisdictionValue && <span className="ml-1 text-gray-400">· {s.jurisdictionValue}</span>}
+                              </button>
+                            ))}
+                          {staffList.length === 0 && <p className="text-xs text-gray-400 italic px-1">Loading staff…</p>}
+                        </div>
+                        <button type="button" onClick={() => setAssigningOfficerTo(null)} className="text-xs text-gray-400 hover:text-gray-600">Cancel</button>
+                      </div>
+                    )}
+
+                    {/* Link station inline panel */}
+                    {linkingStationTo === node.id && (
+                      <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50 p-3 space-y-2">
+                        <p className="text-xs font-semibold text-blue-800">Link Polling Station</p>
+                        <input
+                          type="text"
+                          placeholder="Search by name, code, or ward…"
+                          value={stationSearch}
+                          onChange={(e) => setStationSearch(e.target.value)}
+                          className="w-full rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        />
+                        <div className="max-h-40 overflow-auto space-y-1">
+                          {node.pollingStation && (
+                            <button
+                              type="button"
+                              disabled={stationSaving}
+                              onClick={() => handleLinkStation(node.id, null)}
+                              className="w-full rounded-md border border-red-200 px-3 py-1.5 text-left text-xs text-red-600 hover:bg-red-50 disabled:opacity-50"
+                            >
+                              Unlink current station ({node.pollingStation.name})
+                            </button>
+                          )}
+                          {stationList
+                            .filter(s => {
+                              const q = stationSearch.toLowerCase();
+                              return !q || s.name.toLowerCase().includes(q)
+                                || s.code.toLowerCase().includes(q)
+                                || s.ward.toLowerCase().includes(q)
+                                || s.constituency.toLowerCase().includes(q);
+                            })
+                            .map(s => (
+                              <button
+                                key={s.id}
+                                type="button"
+                                disabled={stationSaving}
+                                onClick={() => handleLinkStation(node.id, s.id)}
+                                className="w-full rounded-md border border-gray-200 px-3 py-1.5 text-left text-xs hover:bg-blue-100 disabled:opacity-50"
+                              >
+                                <span className="font-medium">{s.name}</span>
+                                <span className="ml-2 text-gray-500">{s.code}</span>
+                                <span className="ml-1 text-gray-400">· {s.ward}, {s.constituency}</span>
+                              </button>
+                            ))}
+                          {stationList.length === 0 && <p className="text-xs text-gray-400 italic px-1">Loading stations…</p>}
+                        </div>
+                        <button type="button" onClick={() => setLinkingStationTo(null)} className="text-xs text-gray-400 hover:text-gray-600">Cancel</button>
                       </div>
                     )}
                   </div>

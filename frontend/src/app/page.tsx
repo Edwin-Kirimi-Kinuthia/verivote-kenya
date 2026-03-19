@@ -155,7 +155,7 @@ export default function Home() {
       <main className="max-w-6xl mx-auto px-4 py-8 space-y-8">
         {/* Nav cards */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <NavCard href="/register" label="Register" sub="Create voter account" cls="border-green-200 hover:border-green-600 hover:bg-green-50" textCls="text-green-700" />
+          <NavCard href="/elections" label="Elections" sub="Browse &amp; participate" cls="border-green-200 hover:border-green-600 hover:bg-green-50" textCls="text-green-700" />
           <NavCard href="/vote" label="Vote" sub="Cast your ballot" cls="border-blue-200 hover:border-blue-600 hover:bg-blue-50" textCls="text-blue-700" />
           <NavCard href="/verify" label="Verify Vote" sub="Check your receipt" cls="border-amber-200 hover:border-amber-600 hover:bg-amber-50" textCls="text-amber-700" />
           <NavCard href="/explorer" label="Explorer" sub="Blockchain audit trail" cls="border-purple-200 hover:border-purple-600 hover:bg-purple-50" textCls="text-purple-700" />

@@ -12,7 +12,7 @@ import { logger } from '../lib/logger.js';
 export class VoterService {
   async registerVoter(
     nationalId: string,
-    pollingStationId: string,
+    pollingStationId: string | undefined,
     contactInfo?: {
       phoneNumber?: string;
       email?: string;
@@ -23,15 +23,35 @@ export class VoterService {
       electionId?: string;
     }
   ) {
-    // Determine whether this election requires Persona KYC.
-    // GOVERNMENT elections require full KYC by default; all others use OTP-only.
-    let kycRequired = true;
+    // Determine auth method for this election.
+    // Defaults to PERSONA_KYC (most restrictive) when no electionId is provided.
+    type AuthMethodType = 'PERSONA_KYC' | 'EMAIL_DOMAIN' | 'OTP_ONLY';
+    let authMethod: AuthMethodType = 'PERSONA_KYC';
+    let allowedDomains: string[] = [];
     if (contactInfo?.electionId) {
       const election = await prisma.election.findUnique({
-        where: { id: contactInfo.electionId },
-        select: { requiresKyc: true },
+        where:  { id: contactInfo.electionId },
+        select: { authMethod: true, allowedDomains: true },
       });
-      if (election) kycRequired = election.requiresKyc;
+      if (election) {
+        authMethod     = election.authMethod as AuthMethodType;
+        allowedDomains = election.allowedDomains as string[];
+      }
+    }
+    const kycRequired = authMethod === 'PERSONA_KYC';
+
+    // EMAIL_DOMAIN: validate that the voter's email ends with one of the allowed domains
+    if (authMethod === 'EMAIL_DOMAIN' && allowedDomains.length > 0) {
+      const email = contactInfo?.email ?? '';
+      const domain = email.split('@')[1]?.toLowerCase() ?? '';
+      const allowed = allowedDomains.some(d => domain === d.toLowerCase() || domain.endsWith('.' + d.toLowerCase()));
+      if (!allowed) {
+        throw new ServiceError(
+          `Your email domain (@${domain || '?'}) is not authorised for this election. ` +
+          `Allowed domain${allowedDomains.length === 1 ? '' : 's'}: ${allowedDomains.join(', ')}`,
+          403,
+        );
+      }
     }
 
     // Check if a record already exists for this national ID
@@ -70,13 +90,13 @@ export class VoterService {
       if (!kycRequired) {
         // Non-KYC election: clear any stale persona inquiry, OTP verify is sufficient
         await voterRepository.update(existing.id, { personaInquiryId: null, personaStatus: null });
-        return { voterId: existing.id, kycRequired: false };
+        return { voterId: existing.id, kycRequired: false, authMethod };
       }
 
       // KYC election: issue a fresh Persona inquiry
       const { inquiryId, url } = await personaService.createInquiry(nationalId, existing.id);
       await voterRepository.updatePersonaStatus(existing.id, inquiryId, 'created');
-      return { voterId: existing.id, kycRequired: true, inquiryId, personaUrl: url };
+      return { voterId: existing.id, kycRequired: true, authMethod, inquiryId, personaUrl: url };
     }
 
     // New voter — hash password if provided, then create record
@@ -94,13 +114,13 @@ export class VoterService {
 
     if (!kycRequired) {
       // Non-KYC election: voter created, OTP verify will complete registration
-      return { voterId: voter.id, kycRequired: false };
+      return { voterId: voter.id, kycRequired: false, authMethod };
     }
 
     // KYC election: create Persona inquiry for identity verification
     const { inquiryId, url } = await personaService.createInquiry(nationalId, voter.id);
     await voterRepository.updatePersonaStatus(voter.id, inquiryId, 'created');
-    return { voterId: voter.id, kycRequired: true, inquiryId, personaUrl: url };
+    return { voterId: voter.id, kycRequired: true, authMethod, inquiryId, personaUrl: url };
   }
 
   /**

@@ -1,9 +1,11 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
+import crypto from 'crypto';
 import { voterService, ServiceError } from '../services/voter.service.js';
 import { personaService } from '../services/persona.service.js';
 import { voterRepository } from '../repositories/index.js';
 import { authService } from '../services/auth.service.js';
+import { prisma } from '../database/client.js';
 import { registrationRateLimiter, requireAuth, requireAdmin, requireSelf, adminRateLimiter } from '../middleware/index.js';
 import { passwordSchema } from './auth.routes.js';
 import type { AuthenticatedRequest } from '../types/auth.types.js';
@@ -20,9 +22,9 @@ function validateDocumentNumber(id: string, type: typeof ID_DOCUMENT_TYPES[numbe
 }
 
 const registerSchema = z.object({
-  nationalId: z.string().min(1).max(20),
+  nationalId: z.string().min(1).max(20).optional(),
   idDocumentType: z.enum(ID_DOCUMENT_TYPES).default('NATIONAL_ID'),
-  pollingStationId: z.string().uuid('Invalid polling station ID'),
+  pollingStationId: z.string().uuid('Invalid polling station ID').optional(),
   electionId: z.string().uuid('Invalid election ID').optional(),
   phoneNumber: z.string().regex(/^\+254\d{9,10}$|^\+(?!254)\d{8,15}$/, 'For Kenya (+254): 9–10 digits. Other countries: 8–15 digits. E.g. +254712345678').optional(),
   email: z.string().email('Invalid email address').optional(),
@@ -30,9 +32,11 @@ const registerSchema = z.object({
   fingerprintHash: z.string().regex(/^[a-f0-9]{64}$/, 'Must be a 64-char hex SHA-256').optional(),
   password: passwordSchema.optional(),
 }).superRefine((data, ctx) => {
-  const idError = validateDocumentNumber(data.nationalId, data.idDocumentType);
-  if (idError) {
-    ctx.addIssue({ path: ['nationalId'], code: z.ZodIssueCode.custom, message: idError });
+  if (data.nationalId) {
+    const idError = validateDocumentNumber(data.nationalId, data.idDocumentType);
+    if (idError) {
+      ctx.addIssue({ path: ['nationalId'], code: z.ZodIssueCode.custom, message: idError });
+    }
   }
   if (data.preferredContact === 'SMS' && !data.phoneNumber) {
     ctx.addIssue({
@@ -63,7 +67,39 @@ router.post('/register', registrationRateLimiter, async (req: Request, res: Resp
     }
 
     const { nationalId, idDocumentType, pollingStationId, electionId, phoneNumber, email, preferredContact, fingerprintHash, password } = parsed.data;
-    const result = await voterService.registerVoter(nationalId, pollingStationId, {
+
+    // Determine election auth method to decide whether nationalId/pollingStation are required
+    let electionAuthMethod: 'PERSONA_KYC' | 'EMAIL_DOMAIN' | 'OTP_ONLY' = 'PERSONA_KYC';
+    if (electionId) {
+      const election = await prisma.election.findUnique({ where: { id: electionId }, select: { authMethod: true } });
+      if (election) electionAuthMethod = election.authMethod as typeof electionAuthMethod;
+    }
+
+    let effectiveNationalId = nationalId;
+
+    if (electionAuthMethod === 'PERSONA_KYC') {
+      // KYC elections require national ID and polling station
+      if (!effectiveNationalId) {
+        res.status(400).json({ success: false, error: 'nationalId is required for government (KYC) elections' });
+        return;
+      }
+      if (!pollingStationId) {
+        res.status(400).json({ success: false, error: 'pollingStationId is required for government (KYC) elections' });
+        return;
+      }
+    } else {
+      // Non-KYC elections: derive a deterministic synthetic ID from the voter's email
+      if (!email) {
+        res.status(400).json({ success: false, error: 'email is required for institutional/custom elections' });
+        return;
+      }
+      if (!effectiveNationalId) {
+        const hash = crypto.createHash('sha256').update(email.toLowerCase()).digest('hex');
+        effectiveNationalId = `E-${hash.slice(0, 16)}`; // 18 chars, fits VarChar(20)
+      }
+    }
+
+    const result = await voterService.registerVoter(effectiveNationalId, pollingStationId, {
       phoneNumber,
       email,
       preferredContact,
@@ -324,14 +360,34 @@ router.get('/', adminRateLimiter, requireAuth, requireAdmin, async (req: Request
 // Completes registration for non-KYC elections after the voter has verified their contact via OTP.
 // No JWT required — the voter proves their identity by the fact that markContactVerified was called.
 // Returns { setupToken } so the frontend can immediately call WebAuthn + PIN setup endpoints.
+// Optionally accepts electionId to auto-enroll the voter in a non-GOVERNMENT election.
 router.post('/complete-contact-verification', registrationRateLimiter, async (req: Request, res: Response) => {
-  const parsed = z.object({ voterId: z.string().uuid() }).safeParse(req.body);
+  const parsed = z.object({
+    voterId:    z.string().uuid(),
+    electionId: z.string().uuid().optional(),
+  }).safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ success: false, error: parsed.error.errors[0].message });
     return;
   }
   try {
     const result = await voterService.completeContactVerification(parsed.data.voterId);
+
+    // Auto-enroll voter in the election (non-GOVERNMENT elections use enrollment-based eligibility)
+    if (parsed.data.electionId) {
+      const election = await prisma.election.findUnique({
+        where:  { id: parsed.data.electionId },
+        select: { type: true },
+      });
+      if (election && election.type !== 'GOVERNMENT') {
+        await prisma.electionEnrollment.upsert({
+          where:  { electionId_voterId: { electionId: parsed.data.electionId, voterId: parsed.data.voterId } },
+          create: { electionId: parsed.data.electionId, voterId: parsed.data.voterId },
+          update: {},
+        });
+      }
+    }
+
     res.json({ success: true, data: result });
   } catch (error) {
     if (error instanceof ServiceError) {

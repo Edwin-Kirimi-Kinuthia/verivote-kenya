@@ -8,6 +8,73 @@ import { prisma } from '../database/client.js';
 import type { AuthenticatedRequest } from '../types/auth.types.js';
 
 const router: Router = Router();
+
+// ── PUBLIC endpoints (no auth required) ───────────────────────────────────────
+// Returns limited fields for non-DRAFT elections (public-facing voter portal)
+
+router.get('/public', async (req: Request, res: Response) => {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = await svc.listElections({ status: req.query.status as string | undefined as any });
+    // Filter to non-DRAFT and expose only public-safe fields
+    const publicElections = result.items
+      .filter(e => e.status !== 'DRAFT')
+      .map(e => ({
+        id:            e.id,
+        name:          e.name,
+        description:   e.description,
+        type:          e.type,
+        status:        e.status,
+        orgName:       e.orgName,
+        authMethod:    (e as Record<string, unknown>).authMethod,
+        allowedDomains:(e as Record<string, unknown>).allowedDomains,
+        startDate:     e.startDate,
+        endDate:       e.endDate,
+        _count:        e._count,
+      }));
+    res.json({ success: true, data: publicElections });
+  } catch (e) { handleError(e, res); }
+});
+
+router.get('/public/:id', async (req: Request, res: Response) => {
+  try {
+    const election = await svc.getElection(req.params.id);
+    if (election.status === 'DRAFT') {
+      res.status(404).json({ success: false, error: 'Election not found' });
+      return;
+    }
+    // Expose only public-safe fields (no internal position/candidate admin data)
+    const e = election as Record<string, unknown>;
+    res.json({
+      success: true,
+      data: {
+        id:            election.id,
+        name:          election.name,
+        description:   election.description,
+        type:          election.type,
+        status:        election.status,
+        orgName:       election.orgName,
+        authMethod:    e.authMethod,
+        allowedDomains:e.allowedDomains,
+        startDate:     election.startDate,
+        endDate:       election.endDate,
+        positions:     election.positions?.map((p: Record<string, unknown>) => ({
+          id:       p.id,
+          title:    p.title,
+          scope:    p.scope,
+          candidates: (p.candidates as Record<string, unknown>[])?.map(c => ({
+            id:   c.id,
+            name: c.name,
+            party: c.party,
+          })),
+        })),
+        _count: election._count,
+      },
+    });
+  } catch (e) { handleError(e, res); }
+});
+
+// All following routes require admin auth
 router.use(adminRateLimiter, requireAuth, requireAdmin);
 
 // Commission-only: election lifecycle (create, status, delete)
@@ -81,12 +148,14 @@ function checkScopePermission(
 // ── Validation schemas ────────────────────────────────────────────────────────
 
 const electionSchema = z.object({
-  name:        z.string().min(3).max(255),
-  description: z.string().optional(),
-  type:        z.enum(['GOVERNMENT', 'INSTITUTIONAL', 'CORPORATE', 'CUSTOM']),
-  orgName:     z.string().optional(),
-  startDate:   z.string().datetime({ offset: true }).optional(),
-  endDate:     z.string().datetime({ offset: true }).optional(),
+  name:           z.string().min(3).max(255),
+  description:    z.string().optional(),
+  type:           z.enum(['GOVERNMENT', 'INSTITUTIONAL', 'CORPORATE', 'CUSTOM']),
+  orgName:        z.string().optional(),
+  startDate:      z.string().datetime({ offset: true }).optional(),
+  endDate:        z.string().datetime({ offset: true }).optional(),
+  authMethod:     z.enum(['PERSONA_KYC', 'EMAIL_DOMAIN', 'OTP_ONLY']).optional(),
+  allowedDomains: z.array(z.string().min(1).max(255)).optional(),
 });
 
 const positionSchema = z.object({
@@ -142,7 +211,17 @@ router.get('/:id', async (req: Request, res: Response) => {
 });
 
 router.patch('/:id', commissionOnly, async (req: Request, res: Response) => {
-  try { res.json({ success: true, data: await svc.updateElection(req.params.id, req.body) }); }
+  const parsed = z.object({
+    name:           z.string().min(3).max(255).optional(),
+    description:    z.string().nullable().optional(),
+    orgName:        z.string().nullable().optional(),
+    startDate:      z.string().datetime({ offset: true }).nullable().optional(),
+    endDate:        z.string().datetime({ offset: true }).nullable().optional(),
+    authMethod:     z.enum(['PERSONA_KYC', 'EMAIL_DOMAIN', 'OTP_ONLY']).optional(),
+    allowedDomains: z.array(z.string().min(1).max(255)).optional(),
+  }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ success: false, error: parsed.error.errors[0].message }); return; }
+  try { res.json({ success: true, data: await svc.updateElection(req.params.id, parsed.data) }); }
   catch (e) { handleError(e, res); }
 });
 

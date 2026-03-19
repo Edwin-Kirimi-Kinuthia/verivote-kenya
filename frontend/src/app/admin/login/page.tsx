@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, type FormEvent, type KeyboardEvent } from "react";
+import { useState, useRef, Suspense, type FormEvent, type KeyboardEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { startAuthentication } from "@simplewebauthn/browser";
 import { useAuth } from "@/contexts/auth-context";
@@ -115,7 +115,7 @@ function StepBar({ current }: { current: number }) {
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
-export default function AdminLoginPage() {
+function AdminLoginPageContent() {
   const router       = useRouter();
   const searchParams = useSearchParams();
   const idleLogout   = searchParams.get("reason") === "idle";
@@ -433,3 +433,5 @@ export default function AdminLoginPage() {
     </div>
   );
 }
+
+export default function AdminLoginPage() { return <Suspense><AdminLoginPageContent /></Suspense>; }

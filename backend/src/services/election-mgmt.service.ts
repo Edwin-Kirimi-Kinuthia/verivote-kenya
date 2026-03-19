@@ -12,6 +12,7 @@ import type {
   ElectionType,
   ElectionStatus,
   PositionScope,
+  AuthMethod,
 } from '@prisma/client';
 
 // ── Status transition graph ───────────────────────────────────────────────────
@@ -34,16 +35,20 @@ export interface CreateElectionInput {
   orgName?: string;
   startDate?: string;
   endDate?: string;
-  /** Override KYC requirement. Defaults true for GOVERNMENT, false otherwise. */
-  requiresKyc?: boolean;
+  /** How voters verify identity. Defaults: GOVERNMENT→PERSONA_KYC, others→OTP_ONLY. */
+  authMethod?: AuthMethod;
+  /** Required email domains for EMAIL_DOMAIN method (e.g. ["uon.ac.ke"]). */
+  allowedDomains?: string[];
 }
 
 export interface UpdateElectionInput {
   name?: string;
-  description?: string;
-  orgName?: string;
-  startDate?: string;
-  endDate?: string;
+  description?: string | null;
+  orgName?: string | null;
+  startDate?: string | null;
+  endDate?: string | null;
+  authMethod?: AuthMethod;
+  allowedDomains?: string[];
 }
 
 export interface CreatePositionInput {
@@ -87,18 +92,27 @@ export interface UpdateCandidateInput {
 // ── Election CRUD ─────────────────────────────────────────────────────────────
 
 export async function createElection(input: CreateElectionInput) {
-  // GOVERNMENT elections require KYC by default; all other types do not.
-  // The caller may explicitly override this (e.g. a government pilot with no KYC).
-  const requiresKyc = input.requiresKyc ?? (input.type === 'GOVERNMENT');
+  // Default auth method by election type if not explicitly provided:
+  //   GOVERNMENT          → PERSONA_KYC (full identity scan)
+  //   INSTITUTIONAL/CORPORATE → EMAIL_DOMAIN (institutional email verification)
+  //   CUSTOM              → OTP_ONLY (any email or phone)
+  const defaultMethod = (): AuthMethod => {
+    if (input.type === 'GOVERNMENT') return 'PERSONA_KYC';
+    if (input.type === 'INSTITUTIONAL' || input.type === 'CORPORATE') return 'EMAIL_DOMAIN';
+    return 'OTP_ONLY';
+  };
+  const authMethod = input.authMethod ?? defaultMethod();
+
   return prisma.election.create({
     data: {
-      name:        input.name,
-      description: input.description,
-      type:        input.type,
-      orgName:     input.orgName,
-      startDate:   input.startDate ? new Date(input.startDate) : undefined,
-      endDate:     input.endDate   ? new Date(input.endDate)   : undefined,
-      requiresKyc,
+      name:          input.name,
+      description:   input.description,
+      type:          input.type,
+      orgName:       input.orgName,
+      startDate:     input.startDate ? new Date(input.startDate) : undefined,
+      endDate:       input.endDate   ? new Date(input.endDate)   : undefined,
+      authMethod,
+      allowedDomains: input.allowedDomains ?? [],
     },
   });
 }
@@ -163,11 +177,13 @@ export async function updateElection(id: string, input: UpdateElectionInput) {
   return prisma.election.update({
     where: { id },
     data: {
-      ...(input.name        !== undefined && { name:        input.name        }),
-      ...(input.description !== undefined && { description: input.description }),
-      ...(input.orgName     !== undefined && { orgName:     input.orgName     }),
-      ...(input.startDate   !== undefined && { startDate:   input.startDate ? new Date(input.startDate) : null }),
-      ...(input.endDate     !== undefined && { endDate:     input.endDate   ? new Date(input.endDate)   : null }),
+      ...(input.name           !== undefined && { name:           input.name           }),
+      ...(input.description    !== undefined && { description:    input.description    }),
+      ...(input.orgName        !== undefined && { orgName:        input.orgName        }),
+      ...(input.startDate      !== undefined && { startDate:      input.startDate ? new Date(input.startDate) : null }),
+      ...(input.endDate        !== undefined && { endDate:        input.endDate   ? new Date(input.endDate)   : null }),
+      ...(input.authMethod     !== undefined && { authMethod:     input.authMethod     }),
+      ...(input.allowedDomains !== undefined && { allowedDomains: input.allowedDomains }),
     },
   });
 }

@@ -34,6 +34,60 @@ export async function createDeclaration(
     throw new ServiceError('Position does not belong to this election', 400);
   }
 
+  // ── Jurisdiction hierarchy enforcement ──────────────────────────────────────
+  // If the position is linked to a jurisdiction node, the declaring officer must
+  // either be the personInCharge of that node (or an ancestor), or hold a
+  // commission-tier / NATIONAL_RO role that supersedes all geographic scoping.
+  if (position.jurisdictionId) {
+    const staff = await prisma.iebcStaff.findUnique({
+      where:  { id: input.staffId },
+      select: { staffRole: true, jurisdictionLevel: true, jurisdictionValue: true },
+    });
+    if (!staff) throw new ServiceError('Staff record not found', 404);
+
+    const commissionTier = new Set([
+      'CHAIRPERSON', 'COMMISSIONER', 'COMMISSION_SECRETARY', 'DEPUTY_COMMISSION_SECRETARY',
+    ]);
+
+    if (!commissionTier.has(staff.staffRole) && staff.staffRole !== 'NATIONAL_RO') {
+      // Walk up the node tree checking if this officer is personInCharge of any ancestor
+      let nodeId: string | null = position.jurisdictionId;
+      let authorized = false;
+      while (nodeId && !authorized) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const node: { personInChargeId: string | null; parentId: string | null; level: string; name: string } | null = await (prisma as any).electionJurisdiction.findUnique({
+          where:  { id: nodeId },
+          select: { personInChargeId: true, parentId: true, level: true, name: true },
+        });
+        if (!node) break;
+        if (node.personInChargeId === input.staffId) {
+          authorized = true;
+        } else {
+          nodeId = node.parentId;
+        }
+      }
+
+      if (!authorized) {
+        // Fallback: allow if officer's jurisdictionLevel + jurisdictionValue covers the position scope
+        const levelOrder = ['NATIONAL', 'COUNTY', 'CONSTITUENCY', 'WARD', 'POLLING_STATION'];
+        const officerIdx = levelOrder.indexOf(staff.jurisdictionLevel ?? 'NATIONAL');
+        const posScope   = position.scope; // NATIONAL | COUNTY | CONSTITUENCY | WARD | CUSTOM
+        const posScopeIdx = levelOrder.indexOf(posScope);
+        const scopeMatches = !position.scopeValue
+          || !staff.jurisdictionValue
+          || position.scopeValue.toLowerCase() === staff.jurisdictionValue.toLowerCase();
+
+        if (officerIdx > posScopeIdx || !scopeMatches) {
+          throw new ServiceError(
+            'You are not authorized to declare results for this position. ' +
+            'Only the person-in-charge of the position\'s jurisdiction node (or a higher-level officer) may declare.',
+            403,
+          );
+        }
+      }
+    }
+  }
+
   // Check for duplicate (same officer + position + election)
   const dup = await prisma.resultDeclaration.findUnique({
     where: { electionId_positionId_staffId: {
