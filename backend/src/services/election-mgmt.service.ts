@@ -34,6 +34,8 @@ export interface CreateElectionInput {
   orgName?: string;
   startDate?: string;
   endDate?: string;
+  /** Override KYC requirement. Defaults true for GOVERNMENT, false otherwise. */
+  requiresKyc?: boolean;
 }
 
 export interface UpdateElectionInput {
@@ -85,6 +87,9 @@ export interface UpdateCandidateInput {
 // ── Election CRUD ─────────────────────────────────────────────────────────────
 
 export async function createElection(input: CreateElectionInput) {
+  // GOVERNMENT elections require KYC by default; all other types do not.
+  // The caller may explicitly override this (e.g. a government pilot with no KYC).
+  const requiresKyc = input.requiresKyc ?? (input.type === 'GOVERNMENT');
   return prisma.election.create({
     data: {
       name:        input.name,
@@ -93,6 +98,7 @@ export async function createElection(input: CreateElectionInput) {
       orgName:     input.orgName,
       startDate:   input.startDate ? new Date(input.startDate) : undefined,
       endDate:     input.endDate   ? new Date(input.endDate)   : undefined,
+      requiresKyc,
     },
   });
 }
@@ -310,33 +316,48 @@ export async function deleteCandidate(id: string) {
 
 // ── Jurisdiction tree ─────────────────────────────────────────────────────────
 
+type JurisdictionLevel = 'NATIONAL' | 'COUNTY' | 'CONSTITUENCY' | 'WARD' | 'POLLING_STATION';
+
 export interface CreateJurisdictionInput {
-  name:       string;
-  level?:     'NATIONAL' | 'COUNTY' | 'CONSTITUENCY' | 'WARD';
-  parentId?:  string;
-  orderIndex?: number;
+  name:             string;
+  level?:           JurisdictionLevel;
+  parentId?:        string;
+  orderIndex?:      number;
+  personInChargeId?: string | null;
+  pollingStationId?: string | null;
 }
 
 export interface UpdateJurisdictionInput {
-  name?:       string;
-  level?:      'NATIONAL' | 'COUNTY' | 'CONSTITUENCY' | 'WARD' | null;
-  orderIndex?: number;
+  name?:             string;
+  level?:            JurisdictionLevel | null;
+  orderIndex?:       number;
+  personInChargeId?: string | null;
+  pollingStationId?: string | null;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const jurisdictionModel = () => (prisma as any).electionJurisdiction;
-
-/** Returns the full tree for an election as a flat array (sorted depth-first by depth, then orderIndex). */
+/** Returns the full tree for an election, including person-in-charge and polling station. */
 export async function listJurisdictions(electionId: string) {
   const election = await prisma.election.findUnique({ where: { id: electionId } });
   if (!election) throw new ServiceError('Election not found', 404);
 
-  return jurisdictionModel().findMany({
+  return prisma.electionJurisdiction.findMany({
     where:   { electionId },
     orderBy: [{ depth: 'asc' }, { orderIndex: 'asc' }, { name: 'asc' }],
     include: {
-      _count:    { select: { children: true, positions: true } },
-      positions: { orderBy: { orderIndex: 'asc' }, include: { candidates: { where: { isActive: true } } } },
+      _count:         { select: { children: true, positions: true } },
+      personInCharge: {
+        select: {
+          id: true, staffRole: true, jurisdictionLevel: true, jurisdictionValue: true,
+          voter: { select: { nationalId: true, email: true } },
+        },
+      },
+      pollingStation: {
+        select: { id: true, code: true, name: true, county: true, constituency: true, ward: true, latitude: true, longitude: true },
+      },
+      positions: {
+        orderBy: { orderIndex: 'asc' },
+        include: { candidates: { where: { isActive: true }, orderBy: { ballotNumber: 'asc' } } },
+      },
     },
   });
 }
@@ -351,26 +372,28 @@ export async function createJurisdiction(electionId: string, input: CreateJurisd
   // Determine depth from parent
   let depth = 0;
   if (input.parentId) {
-    const parent = await jurisdictionModel().findUnique({ where: { id: input.parentId } });
+    const parent = await prisma.electionJurisdiction.findUnique({ where: { id: input.parentId } });
     if (!parent) throw new ServiceError('Parent jurisdiction not found', 404);
     if (parent.electionId !== electionId) throw new ServiceError('Parent belongs to a different election', 400);
     depth = parent.depth + 1;
   }
 
-  return jurisdictionModel().create({
+  return prisma.electionJurisdiction.create({
     data: {
       electionId,
-      parentId:   input.parentId ?? null,
-      name:       input.name,
-      level:      input.level ?? null,
+      parentId:         input.parentId         ?? null,
+      name:             input.name,
+      level:            input.level             ?? null,
       depth,
-      orderIndex: input.orderIndex ?? 0,
+      orderIndex:       input.orderIndex        ?? 0,
+      personInChargeId: input.personInChargeId  ?? null,
+      pollingStationId: input.pollingStationId  ?? null,
     },
   });
 }
 
 export async function updateJurisdiction(id: string, input: UpdateJurisdictionInput) {
-  const node = await jurisdictionModel().findUnique({
+  const node = await prisma.electionJurisdiction.findUnique({
     where:   { id },
     include: { election: true },
   });
@@ -379,18 +402,20 @@ export async function updateJurisdiction(id: string, input: UpdateJurisdictionIn
     throw new ServiceError('Cannot modify jurisdictions on an active or completed election', 409);
   }
 
-  return jurisdictionModel().update({
+  return prisma.electionJurisdiction.update({
     where: { id },
     data: {
-      ...(input.name       !== undefined && { name:       input.name       }),
-      ...(input.level      !== undefined && { level:      input.level      }),
-      ...(input.orderIndex !== undefined && { orderIndex: input.orderIndex }),
+      ...(input.name             !== undefined && { name:             input.name             }),
+      ...(input.level            !== undefined && { level:            input.level            }),
+      ...(input.orderIndex       !== undefined && { orderIndex:       input.orderIndex       }),
+      ...(input.personInChargeId !== undefined && { personInChargeId: input.personInChargeId }),
+      ...(input.pollingStationId !== undefined && { pollingStationId: input.pollingStationId }),
     },
   });
 }
 
 export async function deleteJurisdiction(id: string) {
-  const node = await jurisdictionModel().findUnique({
+  const node = await prisma.electionJurisdiction.findUnique({
     where:   { id },
     include: { election: true, _count: { select: { children: true } } },
   });
@@ -401,7 +426,7 @@ export async function deleteJurisdiction(id: string) {
   if (node._count.children > 0) {
     throw new ServiceError('Cannot delete a jurisdiction that has children. Delete children first.', 409);
   }
-  await jurisdictionModel().delete({ where: { id } });
+  await prisma.electionJurisdiction.delete({ where: { id } });
 }
 
 /** Create a position linked to a jurisdiction node (in addition to the election). */
@@ -415,12 +440,11 @@ export async function createPositionInJurisdiction(
   if (['ACTIVE', 'CLOSED', 'TALLIED', 'ARCHIVED'].includes(election.status)) {
     throw new ServiceError('Cannot add positions to an active or completed election', 409);
   }
-  const node = await jurisdictionModel().findUnique({ where: { id: jurisdictionId } });
+  const node = await prisma.electionJurisdiction.findUnique({ where: { id: jurisdictionId } });
   if (!node) throw new ServiceError('Jurisdiction not found', 404);
   if (node.electionId !== electionId) throw new ServiceError('Jurisdiction belongs to a different election', 400);
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (prisma.position as any).create({
+  return prisma.position.create({
     data: {
       electionId,
       jurisdictionId,

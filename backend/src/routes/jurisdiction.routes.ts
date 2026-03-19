@@ -1,11 +1,13 @@
 /**
  * VeriVote Kenya — Election Jurisdiction Tree Routes
  *
- * GET    /api/jurisdictions/:electionId           — flat tree list
- * POST   /api/jurisdictions/:electionId           — create node
- * PATCH  /api/jurisdictions/node/:jid             — update node
- * DELETE /api/jurisdictions/node/:jid             — delete leaf node
- * POST   /api/jurisdictions/:electionId/:jid/positions — add position to node
+ * GET    /api/jurisdictions/:electionId                  — full tree for an election
+ * POST   /api/jurisdictions/:electionId                  — create a tree node
+ * PATCH  /api/jurisdictions/node/:jid                    — update node (name, level, order, person-in-charge, polling station)
+ * DELETE /api/jurisdictions/node/:jid                    — delete leaf node
+ * POST   /api/jurisdictions/:electionId/:jid/positions   — add a position to a node
+ * PATCH  /api/jurisdictions/node/:jid/assign-officer     — assign/remove person in charge
+ * PATCH  /api/jurisdictions/node/:jid/assign-station     — link a PollingStation to a leaf node
  */
 
 import { Router, type Request, type Response } from 'express';
@@ -14,8 +16,7 @@ import { requireAuth, requireAdmin, requireStaffRole } from '../middleware/auth.
 import { adminRateLimiter } from '../middleware/rate-limit.middleware.js';
 import { ServiceError } from '../services/voter.service.js';
 import * as svc from '../services/election-mgmt.service.js';
-import type { AuthenticatedRequest } from '../types/auth.types.js';
-import type { StaffRole } from '../types/auth.types.js';
+import type { AuthenticatedRequest, StaffRole } from '../types/auth.types.js';
 
 const router: Router = Router();
 router.use(adminRateLimiter, requireAuth, requireAdmin);
@@ -79,11 +80,15 @@ function handleError(err: unknown, res: Response) {
   res.status(500).json({ success: false, error: 'Internal server error' });
 }
 
+const JURISDICTION_LEVELS = ['NATIONAL', 'COUNTY', 'CONSTITUENCY', 'WARD', 'POLLING_STATION'] as const;
+
 const nodeSchema = z.object({
-  name:       z.string().min(1).max(255),
-  level:      z.enum(['NATIONAL', 'COUNTY', 'CONSTITUENCY', 'WARD']).optional(),
-  parentId:   z.string().uuid().optional(),
-  orderIndex: z.number().int().min(0).optional(),
+  name:             z.string().min(1).max(255),
+  level:            z.enum(JURISDICTION_LEVELS).optional(),
+  parentId:         z.string().uuid().optional(),
+  orderIndex:       z.number().int().min(0).optional(),
+  personInChargeId: z.string().uuid().nullable().optional(),
+  pollingStationId: z.string().uuid().nullable().optional(),
 });
 
 const positionSchema = z.object({
@@ -95,39 +100,71 @@ const positionSchema = z.object({
   orderIndex:       z.number().int().min(0).default(0),
 });
 
-// GET /api/jurisdictions/:electionId
+// GET /api/jurisdictions/:electionId — full tree including person-in-charge and polling station
 router.get('/:electionId', async (req: Request, res: Response) => {
-  try { res.json({ success: true, data: await svc.listJurisdictions(req.params.electionId) }); }
-  catch (e) { handleError(e, res); }
+  try {
+    res.json({ success: true, data: await svc.listJurisdictions(req.params.electionId) });
+  } catch (e) { handleError(e, res); }
 });
 
-// POST /api/jurisdictions/:electionId
+// POST /api/jurisdictions/:electionId — create node
 router.post('/:electionId', ballotWrite, async (req: Request, res: Response) => {
   const parsed = nodeSchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ success: false, error: parsed.error.errors[0].message }); return; }
-  try { res.status(201).json({ success: true, data: await svc.createJurisdiction(req.params.electionId, parsed.data) }); }
-  catch (e) { handleError(e, res); }
+  try {
+    res.status(201).json({ success: true, data: await svc.createJurisdiction(req.params.electionId, parsed.data) });
+  } catch (e) { handleError(e, res); }
 });
 
-// PATCH /api/jurisdictions/node/:jid
+// PATCH /api/jurisdictions/node/:jid — update name, level, order, person-in-charge, or polling station link
 router.patch('/node/:jid', ballotWrite, async (req: Request, res: Response) => {
   const parsed = z.object({
-    name:       z.string().min(1).max(255).optional(),
-    level:      z.enum(['NATIONAL','COUNTY','CONSTITUENCY','WARD']).nullable().optional(),
-    orderIndex: z.number().int().min(0).optional(),
+    name:             z.string().min(1).max(255).optional(),
+    level:            z.enum(JURISDICTION_LEVELS).nullable().optional(),
+    orderIndex:       z.number().int().min(0).optional(),
+    personInChargeId: z.string().uuid().nullable().optional(),
+    pollingStationId: z.string().uuid().nullable().optional(),
   }).safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ success: false, error: parsed.error.errors[0].message }); return; }
-  try { res.json({ success: true, data: await svc.updateJurisdiction(req.params.jid, parsed.data) }); }
-  catch (e) { handleError(e, res); }
+  try {
+    res.json({ success: true, data: await svc.updateJurisdiction(req.params.jid, parsed.data) });
+  } catch (e) { handleError(e, res); }
 });
 
-// DELETE /api/jurisdictions/node/:jid
+// PATCH /api/jurisdictions/node/:jid/assign-officer — assign or remove person in charge
+router.patch('/node/:jid/assign-officer', ballotWrite, async (req: Request, res: Response) => {
+  const parsed = z.object({
+    // null = remove assignment, string UUID = assign this staff member
+    personInChargeId: z.string().uuid().nullable(),
+  }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ success: false, error: parsed.error.errors[0].message }); return; }
+  try {
+    const node = await svc.updateJurisdiction(req.params.jid, { personInChargeId: parsed.data.personInChargeId });
+    res.json({ success: true, data: node });
+  } catch (e) { handleError(e, res); }
+});
+
+// PATCH /api/jurisdictions/node/:jid/assign-station — link a PollingStation to a leaf node
+router.patch('/node/:jid/assign-station', ballotWrite, async (req: Request, res: Response) => {
+  const parsed = z.object({
+    pollingStationId: z.string().uuid().nullable(),
+  }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ success: false, error: parsed.error.errors[0].message }); return; }
+  try {
+    const node = await svc.updateJurisdiction(req.params.jid, { pollingStationId: parsed.data.pollingStationId });
+    res.json({ success: true, data: node });
+  } catch (e) { handleError(e, res); }
+});
+
+// DELETE /api/jurisdictions/node/:jid — delete leaf node (must have no children or positions)
 router.delete('/node/:jid', ballotWrite, async (req: Request, res: Response) => {
-  try { await svc.deleteJurisdiction(req.params.jid); res.json({ success: true }); }
-  catch (e) { handleError(e, res); }
+  try {
+    await svc.deleteJurisdiction(req.params.jid);
+    res.json({ success: true });
+  } catch (e) { handleError(e, res); }
 });
 
-// POST /api/jurisdictions/:electionId/:jid/positions
+// POST /api/jurisdictions/:electionId/:jid/positions — add position to a node
 router.post('/:electionId/:jid/positions', ballotWrite, async (req: Request, res: Response) => {
   const parsed = positionSchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ success: false, error: parsed.error.errors[0].message }); return; }
@@ -138,8 +175,7 @@ router.post('/:electionId/:jid/positions', ballotWrite, async (req: Request, res
       success: true,
       data: await svc.createPositionInJurisdiction(req.params.electionId, req.params.jid, parsed.data),
     });
-  }
-  catch (e) { handleError(e, res); }
+  } catch (e) { handleError(e, res); }
 });
 
 export default router;

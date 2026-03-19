@@ -176,6 +176,10 @@ model Election {
   endDate     DateTime?      @map("end_date")
   tallyResultJson String?    @map("tally_result_json") @db.Text
 
+  // Whether voters must complete KYC (Persona scan) before they can vote.
+  // Defaults true for GOVERNMENT elections, false for all others.
+  requiresKyc Boolean        @default(false) @map("requires_kyc")
+
   positions    Position[]
   votes        Vote[]
   enrollments  ElectionEnrollment[]
@@ -207,9 +211,20 @@ model ElectionJurisdiction {
   children ElectionJurisdiction[] @relation("JurisdictionTree")
 
   name       String             @db.VarChar(255)
-  level      JurisdictionLevel?                   // NATIONAL | COUNTY | CONSTITUENCY | WARD
+  level      JurisdictionLevel?   // NATIONAL | COUNTY | CONSTITUENCY | WARD | POLLING_STATION
   depth      Int                @default(0)
   orderIndex Int                @default(0) @map("order_index")
+
+  // The IEBC officer responsible for this node.
+  // They can view results for this node and all descendants,
+  // and may declare results for positions attached directly to this node.
+  personInChargeId String?    @map("person_in_charge_id") @db.Uuid
+  personInCharge   IebcStaff? @relation("JurisdictionInCharge", fields: [personInChargeId], references: [id])
+
+  // For POLLING_STATION-level leaf nodes: link to the physical PollingStation record.
+  // Provides geolocation, device counts, and voter-to-station matching.
+  pollingStationId String?        @map("polling_station_id") @db.Uuid
+  pollingStation   PollingStation? @relation("JurisdictionStation", fields: [pollingStationId], references: [id])
 
   positions Position[]
 
@@ -218,6 +233,8 @@ model ElectionJurisdiction {
 
   @@index([electionId])
   @@index([parentId])
+  @@index([personInChargeId])
+  @@index([pollingStationId])
   @@index([electionId, name])
   @@map("election_jurisdictions")
 }
@@ -743,6 +760,8 @@ model PollingStation {
   printQueue      PrintQueue[]
   manualReviewAppointments ManualReviewAppointment[]
   iebcStaff       IebcStaff[]
+  // Jurisdiction tree leaf nodes that represent this physical station
+  jurisdictionNodes ElectionJurisdiction[] @relation("JurisdictionStation")
 
   // --------------------------------------------------------------------------
   // INDEXES
@@ -785,6 +804,9 @@ model IebcStaff {
   createdByStaffId  String?           @map("created_by_staff_id") @db.Uuid
   createdByStaff    IebcStaff?        @relation("StaffHierarchy", fields: [createdByStaffId], references: [id])
   staffCreated      IebcStaff[]       @relation("StaffHierarchy")
+
+  // Jurisdiction nodes where this staff member is the person in charge
+  jurisdictionsInCharge ElectionJurisdiction[] @relation("JurisdictionInCharge")
 
   declarations      ResultDeclaration[]
 
