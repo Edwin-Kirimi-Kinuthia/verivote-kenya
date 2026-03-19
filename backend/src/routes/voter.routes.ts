@@ -23,6 +23,7 @@ const registerSchema = z.object({
   nationalId: z.string().min(1).max(20),
   idDocumentType: z.enum(ID_DOCUMENT_TYPES).default('NATIONAL_ID'),
   pollingStationId: z.string().uuid('Invalid polling station ID'),
+  electionId: z.string().uuid('Invalid election ID').optional(),
   phoneNumber: z.string().regex(/^\+254\d{9,10}$|^\+(?!254)\d{8,15}$/, 'For Kenya (+254): 9–10 digits. Other countries: 8–15 digits. E.g. +254712345678').optional(),
   email: z.string().email('Invalid email address').optional(),
   preferredContact: z.enum(['SMS', 'EMAIL']).optional(),
@@ -61,7 +62,7 @@ router.post('/register', registrationRateLimiter, async (req: Request, res: Resp
       return;
     }
 
-    const { nationalId, idDocumentType, pollingStationId, phoneNumber, email, preferredContact, fingerprintHash, password } = parsed.data;
+    const { nationalId, idDocumentType, pollingStationId, electionId, phoneNumber, email, preferredContact, fingerprintHash, password } = parsed.data;
     const result = await voterService.registerVoter(nationalId, pollingStationId, {
       phoneNumber,
       email,
@@ -69,11 +70,12 @@ router.post('/register', registrationRateLimiter, async (req: Request, res: Resp
       fingerprintHash,
       password,
       idDocumentType,
+      electionId,
     });
 
-    // In mock mode, Persona completes inline and returns notificationSent (201)
-    // In live mode, returns inquiry info for the frontend to redirect (202)
-    const statusCode = personaService.isMockMode() ? 201 : 202;
+    // Non-KYC elections return 201 (voter created, OTP verify next).
+    // KYC elections: mock mode = 201 (Persona completed inline); live = 202 (redirect to Persona).
+    const statusCode = !result.kycRequired || personaService.isMockMode() ? 201 : 202;
 
     res.status(statusCode).json({
       success: true,
@@ -315,6 +317,28 @@ router.get('/', adminRateLimiter, requireAuth, requireAdmin, async (req: Request
       success: false,
       error: error instanceof Error ? error.message : 'Failed to fetch voters',
     });
+  }
+});
+
+// POST /api/voters/complete-contact-verification
+// Completes registration for non-KYC elections after the voter has verified their contact via OTP.
+// No JWT required — the voter proves their identity by the fact that markContactVerified was called.
+// Returns { setupToken } so the frontend can immediately call WebAuthn + PIN setup endpoints.
+router.post('/complete-contact-verification', registrationRateLimiter, async (req: Request, res: Response) => {
+  const parsed = z.object({ voterId: z.string().uuid() }).safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+    return;
+  }
+  try {
+    const result = await voterService.completeContactVerification(parsed.data.voterId);
+    res.json({ success: true, data: result });
+  } catch (error) {
+    if (error instanceof ServiceError) {
+      res.status(error.statusCode).json({ success: false, error: error.message });
+      return;
+    }
+    res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'Registration completion failed' });
   }
 });
 

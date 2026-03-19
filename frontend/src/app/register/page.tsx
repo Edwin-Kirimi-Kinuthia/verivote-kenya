@@ -27,8 +27,10 @@ type View =
 
 interface RegistrationData {
   voterId: string;
-  inquiryId: string;
-  personaUrl: string;
+  kycRequired: boolean;
+  // Only present when kycRequired = true
+  inquiryId?: string;
+  personaUrl?: string;
 }
 
 export default function RegisterPage() {
@@ -343,6 +345,24 @@ export default function RegisterPage() {
         setError((res as ApiResponse<unknown> & { error?: string }).error || "Invalid code");
         return;
       }
+
+      // Non-KYC election: complete registration via contact verification, no Persona needed
+      if (regData && !regData.kycRequired) {
+        const completeRes = await api.post<ApiResponse<{ setupToken?: string }>>("/api/voters/complete-contact-verification", {
+          voterId: regData.voterId,
+        });
+        if (!completeRes.success) {
+          setError((completeRes as ApiResponse<unknown> & { error?: string }).error || "Registration failed");
+          return;
+        }
+        if (completeRes.data?.setupToken) {
+          localStorage.setItem("token", completeRes.data.setupToken);
+        }
+        setView("webauthn");
+        return;
+      }
+
+      // KYC election: proceed to Persona verification
       setView("options");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Verification failed");

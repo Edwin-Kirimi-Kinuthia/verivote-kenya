@@ -2,9 +2,11 @@ import argon2 from 'argon2';
 import { randomInt } from 'crypto';
 import { ethers } from 'ethers';
 import { voterRepository } from '../repositories/index.js';
+import { prisma } from '../database/client.js';
 import { blockchainService } from './blockchain.service.js';
 import { notificationService } from './notification.service.js';
 import { personaService } from './persona.service.js';
+import { authService } from './auth.service.js';
 import { logger } from '../lib/logger.js';
 
 export class VoterService {
@@ -18,8 +20,20 @@ export class VoterService {
       fingerprintHash?: string;
       password?: string;
       idDocumentType?: string;
+      electionId?: string;
     }
   ) {
+    // Determine whether this election requires Persona KYC.
+    // GOVERNMENT elections require full KYC by default; all others use OTP-only.
+    let kycRequired = true;
+    if (contactInfo?.electionId) {
+      const election = await prisma.election.findUnique({
+        where: { id: contactInfo.electionId },
+        select: { requiresKyc: true },
+      });
+      if (election) kycRequired = election.requiresKyc;
+    }
+
     // Check if a record already exists for this national ID
     const existing = await voterRepository.findByNationalId(nationalId);
     if (existing) {
@@ -34,7 +48,6 @@ export class VoterService {
       }
 
       // PENDING_VERIFICATION or PENDING_MANUAL_REVIEW: allow the voter to retry.
-      // Reset to PENDING_VERIFICATION so a Persona webhook can fire correctly.
       const updates: Record<string, unknown> = { status: 'PENDING_VERIFICATION' };
       if (pollingStationId && pollingStationId !== existing.pollingStationId) {
         updates.pollingStationId = pollingStationId;
@@ -54,19 +67,20 @@ export class VoterService {
       }
       await voterRepository.update(existing.id, updates);
 
-      // Issue a fresh Persona inquiry so they can re-attempt online verification
+      if (!kycRequired) {
+        // Non-KYC election: clear any stale persona inquiry, OTP verify is sufficient
+        await voterRepository.update(existing.id, { personaInquiryId: null, personaStatus: null });
+        return { voterId: existing.id, kycRequired: false };
+      }
+
+      // KYC election: issue a fresh Persona inquiry
       const { inquiryId, url } = await personaService.createInquiry(nationalId, existing.id);
       await voterRepository.updatePersonaStatus(existing.id, inquiryId, 'created');
-
-      return {
-        voterId: existing.id,
-        inquiryId,
-        personaUrl: url,
-      };
+      return { voterId: existing.id, kycRequired: true, inquiryId, personaUrl: url };
     }
 
     // New voter — hash password if provided, then create record
-    const { password, ...restContact } = contactInfo ?? {};
+    const { password, electionId: _eid, ...restContact } = contactInfo ?? {};
     const passwordHash = password
       ? await argon2.hash(password, { type: argon2.argon2id })
       : undefined;
@@ -78,16 +92,78 @@ export class VoterService {
       passwordHash,
     });
 
-    // Create Persona inquiry for identity verification
-    const { inquiryId, url } = await personaService.createInquiry(nationalId, voter.id);
+    if (!kycRequired) {
+      // Non-KYC election: voter created, OTP verify will complete registration
+      return { voterId: voter.id, kycRequired: false };
+    }
 
-    // Store the Persona inquiry ID on the voter
+    // KYC election: create Persona inquiry for identity verification
+    const { inquiryId, url } = await personaService.createInquiry(nationalId, voter.id);
     await voterRepository.updatePersonaStatus(voter.id, inquiryId, 'created');
+    return { voterId: voter.id, kycRequired: true, inquiryId, personaUrl: url };
+  }
+
+  /**
+   * Complete registration for a non-KYC election after the voter has verified
+   * their contact (OTP). Marks the voter REGISTERED and mints their SBT.
+   */
+  async completeContactVerification(voterId: string) {
+    const voter = await voterRepository.findById(voterId);
+    if (!voter) throw new ServiceError('Voter not found', 404);
+
+    if (voter.status === 'REGISTERED') {
+      // Idempotent — already registered; just return a fresh setup token
+      const setupToken = authService.generateToken({
+        sub: voter.id, nationalId: voter.nationalId, status: voter.status, role: voter.role, isDistress: false,
+      });
+      return { voterId: voter.id, status: 'REGISTERED', setupToken };
+    }
+
+    if (voter.status !== 'PENDING_VERIFICATION') {
+      throw new ServiceError('Voter is not in a state that allows contact-only registration', 409);
+    }
+
+    // Non-KYC voters must NOT have a persona inquiry (they took the OTP path)
+    if (voter.personaInquiryId) {
+      throw new ServiceError('This voter requires full identity verification (Persona KYC)', 409);
+    }
+
+    // Contact must have been verified via OTP before we mark them registered
+    if (!voter.phoneVerifiedAt && !voter.emailVerifiedAt) {
+      throw new ServiceError('Please verify your contact (email or phone) before completing registration', 400);
+    }
+
+    // Mint SBT (non-fatal: registration succeeds even if blockchain is offline)
+    const wallet = ethers.Wallet.createRandom();
+    let tokenId = `pending-sbt-${Date.now()}`;
+    let txHash   = '0x' + '0'.repeat(64);
+    try {
+      const sbtResult = await blockchainService.mintSBT(wallet.address, voter.nationalId);
+      tokenId = sbtResult.tokenId;
+      txHash  = sbtResult.txHash;
+    } catch (blockchainErr) {
+      logger.warn('SBT mint failed — blockchain unavailable, proceeding with pending token', {
+        voterId: voter.id,
+        error: blockchainErr instanceof Error ? blockchainErr.message : String(blockchainErr),
+      });
+    }
+
+    await voterRepository.registerWithSbt(voter.id, wallet.address, tokenId);
+    await voterRepository.update(voter.id, { status: 'REGISTERED' });
+
+    const setupToken = authService.generateToken({
+      sub: voter.id, nationalId: voter.nationalId, status: 'REGISTERED', role: voter.role, isDistress: false,
+    });
 
     return {
       voterId: voter.id,
-      inquiryId,
-      personaUrl: url,
+      nationalId: voter.nationalId,
+      walletAddress: wallet.address,
+      sbtTokenId: tokenId,
+      txHash,
+      status: 'REGISTERED',
+      setupToken,
+      nextStep: 'enroll_fingerprint',
     };
   }
 

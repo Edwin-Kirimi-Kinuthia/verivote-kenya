@@ -281,8 +281,8 @@ export interface UpdateVoterInput {
   normalPinHash?: string | null;
   distressPinHash?: string | null;
   pinSetAt?: Date;
-  personaInquiryId?: string;
-  personaStatus?: string;
+  personaInquiryId?: string | null;
+  personaStatus?: string | null;
   personaVerifiedAt?: Date;
   verificationFailureReason?: string;
   manualReviewRequestedAt?: Date;
