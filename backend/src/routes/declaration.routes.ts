@@ -26,9 +26,11 @@ router.get('/public/:electionId', async (req: Request, res: Response) => {
   try {
     const declarations = await listDeclarations({
       electionId: req.params.electionId,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       status:     'DECLARED' as any,
     });
     // Return minimal public-safe fields: position title, scope, candidates, tally
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const publicData = declarations.map((d: any) => ({
       id:                d.id,
       positionId:        d.positionId,
@@ -54,6 +56,7 @@ router.get('/', async (req: Request, res: Response) => {
   try {
     const { electionId, positionId, status, jurisdictionValue } = req.query as Record<string, string | undefined>;
     const staffId   = req.query.staffId as string | undefined;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const list = await listDeclarations({ electionId, positionId, staffId, status: status as any, jurisdictionValue });
     res.json({ success: true, data: list });
   } catch (err) {
@@ -154,7 +157,10 @@ router.post(
   },
 );
 
-// GET /api/declarations/pending/:electionId — positions this officer can declare
+// GET /api/declarations/pending/:electionId
+// Returns positions visible to this officer for the given election.
+// canDeclare=true  → officer is personInCharge of the position's node (or commission-tier)
+// canDeclare=false → position belongs to a descendant node (read-only visibility)
 router.get(
   '/pending/:electionId',
   requireStaffRole('COMMISSIONER', 'NATIONAL_RO', 'COUNTY_RO', 'CONSTITUENCY_RO', 'PRESIDING_OFFICER'),
@@ -168,8 +174,6 @@ router.get(
       const pending = await getPendingDeclarations(
         req.params.electionId,
         authReq.voter.staffId,
-        authReq.voter.jurisdictionLevel ?? 'NATIONAL',
-        authReq.voter.jurisdictionValue ?? null,
       );
       res.json({ success: true, data: pending });
     } catch (err) {

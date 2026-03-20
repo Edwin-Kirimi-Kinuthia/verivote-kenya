@@ -175,8 +175,9 @@ export default function Home() {
 
       <main className="max-w-6xl mx-auto px-4 py-8 space-y-8">
         {/* Nav cards */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <NavCard href="/elections" label="Elections" sub="Browse elections &amp; results" cls="border-green-200 hover:border-green-600 hover:bg-green-50" textCls="text-green-700" />
+          <NavCard href="/vote" label="Vote" sub="Login to cast your ballot" cls="border-green-300 hover:border-green-700 hover:bg-green-50 bg-green-50" textCls="text-green-800" />
           <NavCard href="/verify" label="Verify Vote" sub="Check your receipt" cls="border-amber-200 hover:border-amber-600 hover:bg-amber-50" textCls="text-amber-700" />
           <NavCard href="/explorer" label="Explorer" sub="Blockchain audit trail" cls="border-purple-200 hover:border-purple-600 hover:bg-purple-50" textCls="text-purple-700" />
         </div>
@@ -191,10 +192,16 @@ export default function Home() {
               </div>
               <div className="flex items-center gap-3">
                 <Link
+                  href="/vote"
+                  className="rounded-lg bg-green-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-400 transition-colors"
+                >
+                  Login to Vote
+                </Link>
+                <Link
                   href="/register"
                   className="rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-green-800 hover:bg-green-50 transition-colors"
                 >
-                  Register to Vote
+                  Register
                 </Link>
                 <Link href="/elections" className="text-xs text-green-200 hover:text-white underline underline-offset-2">
                   View all →

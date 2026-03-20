@@ -222,7 +222,7 @@ export default function PublicElectionDetailPage({ params }: { params: Promise<{
           </div>
         </div>
 
-        {/* Register CTA — only for open elections */}
+        {/* Register / Vote CTA — only for open elections */}
         {(election.status === "ACTIVE" || election.status === "NOMINATIONS") && (
           <div className="rounded-xl border border-green-200 bg-green-50 p-5 flex flex-col sm:flex-row items-center justify-between gap-4">
             <div>
@@ -230,16 +230,27 @@ export default function PublicElectionDetailPage({ params }: { params: Promise<{
                 {election.status === "ACTIVE" ? "Voting is open" : "Nominations are open"}
               </h2>
               <p className="text-xs text-green-700 mt-0.5">
-                Register to participate in this election.
+                Already registered? Login to cast your ballot. New voter? Register first.
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => router.push(`/register?electionId=${election.id}`)}
-              className="shrink-0 rounded-lg bg-green-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-green-800 transition-colors"
-            >
-              Register to Vote
-            </button>
+            <div className="flex shrink-0 gap-2">
+              {election.status === "ACTIVE" && (
+                <button
+                  type="button"
+                  onClick={() => router.push(`/vote?electionId=${election.id}`)}
+                  className="rounded-lg bg-green-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-green-800 transition-colors"
+                >
+                  Login to Vote
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => router.push(`/register?electionId=${election.id}`)}
+                className="rounded-lg border border-green-700 bg-white px-5 py-2.5 text-sm font-semibold text-green-700 hover:bg-green-50 transition-colors"
+              >
+                Register to Vote
+              </button>
+            </div>
           </div>
         )}
 
