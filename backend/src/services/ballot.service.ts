@@ -194,14 +194,22 @@ export async function getVoterBallot(voterId: string, electionId: string): Promi
 
   // ── Jurisdiction-tree ballot (new path) ─────────────────────────────────────
   // If the election has a jurisdiction tree AND at least one position is linked to
-  // a jurisdiction node, use top-down hierarchical matching to build the ballot.
+  // a jurisdiction node, use station-linked node traversal as the PRIMARY algorithm,
+  // falling back to string-name matching when no station links exist in the tree.
   //
-  // Algorithm (prevents false matches across unrelated branches):
+  // PRIMARY algorithm (station-linked traversal):
+  //   1. Find the ElectionJurisdiction node whose pollingStationId === voter.pollingStationId
+  //      → this is the voter's "home node" (leaf, typically POLLING_STATION or WARD level)
+  //   2. Build a parentOf map (nodeId → parentId) from allNodes in memory
+  //   3. Walk UP: homeNode → parent → grandparent … until root (parentId = null)
+  //      Collect ALL ancestor node IDs including the home node itself
+  //   4. Positions attached to any of those IDs are on this voter's ballot
+  //
+  // FALLBACK algorithm (string-name matching) — used when no station-linked node found:
   //   1. Root nodes (depth 0) are always included — hold national positions.
   //   2. Among children of each root, find the one whose name matches voter.county.
   //   3. Among children of the matched county node, find the one matching voter.constituency.
   //   4. Among children of the matched constituency node, find the one matching voter.ward.
-  //   Each match adds only that specific node to eligibleNodeIds — never a sibling.
   //
   // Diaspora voters (isDiaspora=true) only receive national positions (depth-0 nodes).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -214,53 +222,91 @@ export async function getVoterBallot(voterId: string, electionId: string): Promi
     // Build children map: parentId → child nodes
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const childrenOf = new Map<string | null, any[]>();
+    // Build parentOf map: nodeId → parentId (used for upward traversal)
+    const parentOf = new Map<string, string | null>();
     // Build depth lookup: nodeId → depth (used for ballot ordering)
     const nodeDepth = new Map<string, number>();
     for (const node of allNodes) {
       const key = node.parentId ?? null;
       if (!childrenOf.has(key)) childrenOf.set(key, []);
       childrenOf.get(key)!.push(node);
+      parentOf.set(node.id, node.parentId ?? null);
       nodeDepth.set(node.id, node.depth);
     }
 
     const eligibleNodeIds = new Set<string>();
 
-    // Step 1: always include root nodes (depth 0)
-    const rootNodes = childrenOf.get(null) ?? [];
-    for (const root of rootNodes) {
-      eligibleNodeIds.add(root.id);
-    }
+    // ── PRIMARY PATH: station-linked traversal ─────────────────────────────
+    // voter.pollingStationId must be non-null and at least one node in this
+    // election must have a pollingStationId linking to a physical station.
+    const voterStationId = voter.pollingStationId ?? null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const homeNode: any | undefined = voterStationId
+      ? allNodes.find((n: any) => n.pollingStationId === voterStationId)
+      : undefined;
 
-    if (!isDiaspora) {
-      // Step 2: find the county node under any root that matches voter.county
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let countyNode: any | undefined;
-      for (const root of rootNodes) {
-        const match = (childrenOf.get(root.id) ?? []).find(
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (n: any) => n.name.toLowerCase() === county.toLowerCase(),
-        );
-        if (match) { countyNode = match; break; }
+    if (homeNode && !isDiaspora) {
+      // Walk up from homeNode to root, collecting all ancestors
+      let cur: string | null = homeNode.id;
+      while (cur != null) {
+        eligibleNodeIds.add(cur);
+        cur = parentOf.get(cur) ?? null;
       }
-      if (countyNode) {
-        eligibleNodeIds.add(countyNode.id);
-
-        // Step 3: find the constituency node under the matched county
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const constituencyNode = (childrenOf.get(countyNode.id) ?? []).find(
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (n: any) => n.name.toLowerCase() === constituency.toLowerCase(),
+    } else if (homeNode && isDiaspora) {
+      // Diaspora: only root nodes (national positions)
+      const rootNodes = childrenOf.get(null) ?? [];
+      for (const root of rootNodes) eligibleNodeIds.add(root.id);
+    } else {
+      // ── FALLBACK PATH: string-name matching ───────────────────────────────
+      // Used when: no station links exist in the tree, voter has no polling
+      // station, or the voter's station isn't linked to any node in this election.
+      if (homeNode === undefined && voterStationId) {
+        // Log a warning so operators know this voter's station is not linked
+        console.warn(
+          `[ballot] WARN: Voter ${voterId} has pollingStationId=${voterStationId} ` +
+          `but no ElectionJurisdiction node in election ${electionId} is linked to it. ` +
+          `Falling back to string-name matching. Link the station to a jurisdiction node ` +
+          `via PATCH /api/elections/${electionId}/jurisdictions/:nodeId/link-station`,
         );
-        if (constituencyNode) {
-          eligibleNodeIds.add(constituencyNode.id);
+      }
 
-          // Step 4: find the ward node under the matched constituency
-          const wardNode = (childrenOf.get(constituencyNode.id) ?? []).find(
+      // Step 1: always include root nodes (depth 0)
+      const rootNodes = childrenOf.get(null) ?? [];
+      for (const root of rootNodes) {
+        eligibleNodeIds.add(root.id);
+      }
+
+      if (!isDiaspora) {
+        // Step 2: find the county node under any root that matches voter.county
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let countyNode: any | undefined;
+        for (const root of rootNodes) {
+          const match = (childrenOf.get(root.id) ?? []).find(
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (n: any) => n.name.toLowerCase() === ward.toLowerCase(),
+            (n: any) => n.name.toLowerCase() === county.toLowerCase(),
           );
-          if (wardNode) {
-            eligibleNodeIds.add(wardNode.id);
+          if (match) { countyNode = match; break; }
+        }
+        if (countyNode) {
+          eligibleNodeIds.add(countyNode.id);
+
+          // Step 3: find the constituency node under the matched county
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const constituencyNode = (childrenOf.get(countyNode.id) ?? []).find(
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (n: any) => n.name.toLowerCase() === constituency.toLowerCase(),
+          );
+          if (constituencyNode) {
+            eligibleNodeIds.add(constituencyNode.id);
+
+            // Step 4: find the ward node under the matched constituency
+            const wardNode = (childrenOf.get(constituencyNode.id) ?? []).find(
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              (n: any) => n.name.toLowerCase() === ward.toLowerCase(),
+            );
+            if (wardNode) {
+              eligibleNodeIds.add(wardNode.id);
+            }
           }
         }
       }

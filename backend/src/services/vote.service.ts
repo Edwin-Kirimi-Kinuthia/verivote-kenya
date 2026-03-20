@@ -1,5 +1,6 @@
 import { randomBytes } from 'crypto';
 import argon2 from 'argon2';
+import { prisma } from '../database/client.js';
 import { voterRepository, voteRepository, pollingStationRepository } from '../repositories/index.js';
 import { blockchainService } from './blockchain.service.js';
 import { encryptionService } from './encryption.service.js';
@@ -115,8 +116,11 @@ export class VoteService {
       throw new ServiceError('Invalid PIN', 401);
     }
 
-    // For dynamic elections: validate selections against the ballot service
+    // For dynamic elections: validate election status and selections
     if (input.electionId) {
+      const election = await prisma.election.findUnique({ where: { id: input.electionId }, select: { status: true } });
+      if (!election) throw new ServiceError('Election not found', 404);
+      if (election.status !== 'ACTIVE') throw new ServiceError('This election is not currently accepting votes', 400);
       await validateSelections(voter.sub, input.electionId, input.selections);
     }
 

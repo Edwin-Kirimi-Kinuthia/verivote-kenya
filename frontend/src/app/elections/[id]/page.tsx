@@ -29,6 +29,20 @@ interface PublicElectionDetail {
   endDate: string | null;
   positions: PublicPosition[];
   _count: { votes: number; enrollments: number };
+  countryCode: string | null;
+  eligibilityNote: string | null;
+}
+
+interface DeclaredResult {
+  id: string;
+  positionId: string;
+  positionTitle: string | null;
+  positionScope: string | null;
+  positionScopeValue: string | null;
+  tallySnapshot: Record<string, number> | null;
+  declaredAt: string | null;
+  jurisdictionLevel: string | null;
+  jurisdictionValue: string | null;
 }
 
 const TYPE_LABELS: Record<ElectionType, string> = {
@@ -67,7 +81,6 @@ const STATUS_LABELS: Record<ElectionStatus, { label: string; color: string }> = 
   ARCHIVED:    { label: "Archived",               color: "bg-gray-100 text-gray-500" },
 };
 
-const CAN_PARTICIPATE: ElectionStatus[] = ["NOMINATIONS", "ACTIVE"];
 
 export default function PublicElectionDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -75,6 +88,7 @@ export default function PublicElectionDetailPage({ params }: { params: Promise<{
   const [election, setElection] = useState<PublicElectionDetail | null>(null);
   const [loading, setLoading]   = useState(true);
   const [error, setError]       = useState("");
+  const [declarations, setDeclarations] = useState<DeclaredResult[]>([]);
 
   useEffect(() => {
     api
@@ -85,6 +99,14 @@ export default function PublicElectionDetailPage({ params }: { params: Promise<{
       })
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
+
+    // Fetch declared results (public endpoint — no auth required)
+    api
+      .get<ApiResponse<DeclaredResult[]>>(`/api/declarations/public/${id}`)
+      .then((res) => {
+        if (res.success && res.data) setDeclarations(res.data);
+      })
+      .catch(() => {}); // silently ignore — results may not be available yet
   }, [id]);
 
   if (loading) {
@@ -112,7 +134,6 @@ export default function PublicElectionDetailPage({ params }: { params: Promise<{
 
   const authInfo = AUTH_INFO[election.authMethod];
   const statusInfo = STATUS_LABELS[election.status];
-  const canParticipate = CAN_PARTICIPATE.includes(election.status);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -166,6 +187,25 @@ export default function PublicElectionDetailPage({ params }: { params: Promise<{
           </div>
         </div>
 
+        {/* Eligibility note (country-specific requirements) */}
+        {(election.countryCode || election.eligibilityNote) && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-5">
+            <div className="flex items-start gap-3">
+              {election.countryCode && (
+                <span className="shrink-0 rounded-md bg-amber-100 border border-amber-300 px-2 py-1 text-xs font-bold text-amber-800 tracking-wider">
+                  {election.countryCode}
+                </span>
+              )}
+              <div>
+                <h2 className="text-sm font-semibold text-amber-900">Eligibility Requirements</h2>
+                {election.eligibilityNote && (
+                  <p className="mt-1 text-sm text-amber-800">{election.eligibilityNote}</p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Authentication requirement */}
         <div className={`rounded-xl border p-5 ${authInfo.color}`}>
           <div className="flex items-start gap-3">
@@ -182,36 +222,103 @@ export default function PublicElectionDetailPage({ params }: { params: Promise<{
           </div>
         </div>
 
-        {/* Participate CTA */}
-        {canParticipate && (
-          <div className="rounded-xl border border-green-200 bg-green-50 p-6 text-center">
-            <h2 className="text-base font-semibold text-green-900 mb-1">Ready to participate?</h2>
-            <p className="text-sm text-green-700 mb-4">
-              Register and authenticate to cast your vote in this election.
-            </p>
+        {/* Register CTA — only for open elections */}
+        {(election.status === "ACTIVE" || election.status === "NOMINATIONS") && (
+          <div className="rounded-xl border border-green-200 bg-green-50 p-5 flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div>
+              <h2 className="font-semibold text-green-900 text-sm">
+                {election.status === "ACTIVE" ? "Voting is open" : "Nominations are open"}
+              </h2>
+              <p className="text-xs text-green-700 mt-0.5">
+                Register to participate in this election.
+              </p>
+            </div>
             <button
               type="button"
               onClick={() => router.push(`/register?electionId=${election.id}`)}
-              className="rounded-lg bg-green-700 px-6 py-2.5 text-sm font-semibold text-white hover:bg-green-800 focus:outline-none focus:ring-2 focus:ring-green-700 focus:ring-offset-2"
+              className="shrink-0 rounded-lg bg-green-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-green-800 transition-colors"
             >
-              Register &amp; Participate
+              Register to Vote
             </button>
-            <p className="mt-2 text-xs text-green-600">
-              Already registered?{" "}
-              <button
-                type="button"
-                onClick={() => router.push("/vote")}
-                className="font-medium underline hover:no-underline"
-              >
-                Sign in to vote
-              </button>
-            </p>
           </div>
         )}
 
-        {!canParticipate && (
-          <div className="rounded-xl border border-gray-200 bg-white p-5 text-center text-sm text-gray-500">
-            This election is not currently accepting participation ({statusInfo.label}).
+
+        {/* Declared results (TALLIED elections) */}
+        {declarations.length > 0 && (
+          <div className="rounded-xl border border-blue-200 bg-white shadow-sm overflow-hidden">
+            <div className="bg-blue-700 text-white px-5 py-3 flex items-center justify-between">
+              <div>
+                <h2 className="font-semibold text-sm">Official Declared Results</h2>
+                <p className="text-xs text-blue-200 mt-0.5">
+                  {declarations.length} position{declarations.length !== 1 ? "s" : ""} declared
+                </p>
+              </div>
+              <span className="text-xl">🏛️</span>
+            </div>
+            <div className="divide-y divide-gray-100">
+              {declarations.map((decl) => {
+                const tally = decl.tallySnapshot;
+                const entries = tally ? Object.entries(tally) : [];
+                const total = entries.reduce((s, [, v]) => s + v, 0);
+                const sorted = [...entries].sort(([, a], [, b]) => b - a);
+                const winner = sorted[0];
+                return (
+                  <div key={decl.id} className="p-4">
+                    <div className="flex flex-wrap items-center gap-2 mb-3">
+                      <h3 className="text-sm font-semibold text-gray-900">
+                        {decl.positionTitle ?? "Position"}
+                      </h3>
+                      {decl.positionScope && (
+                        <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-500">
+                          {decl.positionScope}
+                        </span>
+                      )}
+                      {decl.jurisdictionValue && (
+                        <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs text-blue-700">
+                          {decl.jurisdictionValue}
+                        </span>
+                      )}
+                      {decl.declaredAt && (
+                        <span className="ml-auto text-xs text-gray-400">
+                          Declared {new Date(decl.declaredAt).toLocaleDateString("en-KE", { day: "numeric", month: "short", year: "numeric" })}
+                        </span>
+                      )}
+                    </div>
+                    {sorted.length > 0 ? (
+                      <div className="space-y-2">
+                        {sorted.map(([name, votes], i) => {
+                          const pct = total > 0 ? Math.round((votes / total) * 100) : 0;
+                          return (
+                            <div key={name}>
+                              <div className="flex justify-between text-xs mb-1">
+                                <span className={`font-medium ${i === 0 ? "text-green-700" : "text-gray-600"}`}>
+                                  {name} {i === 0 ? "🏆" : ""}
+                                </span>
+                                <span className="text-gray-500">{votes.toLocaleString()} ({pct}%)</span>
+                              </div>
+                              <div className="w-full bg-gray-100 rounded-full h-1.5">
+                                <div
+                                  className={`h-1.5 rounded-full ${i === 0 ? "bg-green-500" : "bg-blue-400"}`}
+                                  style={{ width: `${pct}%` }}
+                                />
+                              </div>
+                            </div>
+                          );
+                        })}
+                        {winner && (
+                          <p className="text-xs text-green-700 font-medium pt-1 border-t border-green-100">
+                            Winner: <strong>{winner[0]}</strong> — {winner[1].toLocaleString()} of {total.toLocaleString()} votes
+                          </p>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-gray-400">No tally data available.</p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
 

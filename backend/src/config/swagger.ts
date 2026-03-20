@@ -38,7 +38,7 @@ Hybrid Electronic Voting System API for IEBC Kenya.
     },
     servers: [
       {
-        url: 'http://localhost:3000',
+        url: 'http://localhost:3005',
         description: 'Local development server',
       },
       {
@@ -48,14 +48,20 @@ Hybrid Electronic Voting System API for IEBC Kenya.
     ],
     tags: [
       { name: 'Health', description: 'Server status and health checks' },
+      { name: 'Admin Auth', description: 'Multi-step admin authentication (password → OTP/WebAuthn)' },
       { name: 'Voters', description: 'Voter registration, login, and profile management' },
-      { name: 'Votes', description: 'Vote casting and verification' },
+      { name: 'Elections', description: 'Election management — lifecycle, positions, candidates, enrollments' },
+      { name: 'Votes', description: 'Vote casting, ballot retrieval, and verification' },
+      { name: 'Declarations', description: 'Formal result declarations by Returning Officers' },
+      { name: 'Paper Ballots', description: 'Form 34A-style audit manifests and print event logging' },
+      { name: 'Staff', description: 'IEBC staff management — roles, jurisdictions, dashboard' },
       { name: 'Receipts', description: 'Cryptographic vote receipt verification' },
       { name: 'Print Queue', description: 'Centralized vote printing system (Admin only)' },
-      { name: 'Admin', description: 'IEBC manual verification review (Admin only)' },
+      { name: 'Admin', description: 'IEBC manual verification, tally ceremony, and distress management' },
       { name: 'Appointments', description: 'Polling station appointment scheduling' },
-      { name: 'Blockchain', description: 'Blockchain record queries' },
-      { name: 'Stations', description: 'Polling station directory' },
+      { name: 'Blockchain', description: 'Blockchain record queries and vote anchoring' },
+      { name: 'Stations', description: 'Polling station directory and geographic hierarchy' },
+      { name: 'AI', description: 'On-premise AI fraud detection and reporting service' },
     ],
     components: {
       securitySchemes: {
@@ -952,11 +958,786 @@ Hybrid Electronic Voting System API for IEBC Kenya.
         },
       },
       // ── Blockchain ──────────────────────────────────────────────
-      '/api/blockchain/status': {
+      '/api/blockchain/verify-vote/{serialNumber}': {
         get: {
           tags: ['Blockchain'],
-          summary: 'Get blockchain connection status',
-          responses: { '200': { description: 'Blockchain status' } },
+          summary: 'Verify a vote record on the blockchain',
+          parameters: [
+            { name: 'serialNumber', in: 'path', required: true, schema: { type: 'string' } },
+          ],
+          responses: {
+            '200': { description: 'Vote blockchain record' },
+            '404': { $ref: '#/components/responses/NotFound' },
+          },
+        },
+      },
+      // ── Admin Auth (multi-step) ─────────────────────────────────
+      '/api/admin-auth/login': {
+        post: {
+          tags: ['Admin Auth'],
+          summary: 'Admin login step 1 — password',
+          description: 'Validates credentials, sends OTP, returns a 5-minute step token.',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['identifier', 'password'],
+                  properties: {
+                    identifier: { type: 'string', example: '00000001', description: 'National ID, email, or phone' },
+                    password: { type: 'string', example: 'Admin@1234' },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': {
+              description: 'Step token issued — proceed to verify-otp or webauthn-verify',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      success: { type: 'boolean' },
+                      data: {
+                        type: 'object',
+                        properties: {
+                          stepToken: { type: 'string' },
+                          contactHint: { type: 'string', example: 'ad***@iebc.go.ke' },
+                          hasWebAuthn: { type: 'boolean' },
+                          mockCode: { type: 'string', description: 'Development only — OTP code' },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            '403': { description: 'Not an ADMIN account' },
+          },
+        },
+      },
+      '/api/admin-auth/verify-otp': {
+        post: {
+          tags: ['Admin Auth'],
+          summary: 'Admin login step 2a — OTP',
+          description: 'Validates step token + 6-digit OTP → issues full session JWT with staff fields.',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['stepToken', 'code'],
+                  properties: {
+                    stepToken: { type: 'string' },
+                    code: { type: 'string', pattern: '^\\d{6}$', example: '123456' },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': { description: 'Full session JWT issued' },
+            '401': { description: 'Step token expired or invalid OTP' },
+          },
+        },
+      },
+      // ── Auth (Voter OTP login) ──────────────────────────────────
+      '/api/auth/login': {
+        post: {
+          tags: ['Voters'],
+          summary: 'Password login (voter or admin)',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['identifier', 'password'],
+                  properties: {
+                    identifier: { type: 'string', example: '12345678' },
+                    password: { type: 'string' },
+                  },
+                },
+              },
+            },
+          },
+          responses: { '200': { description: 'JWT token issued' } },
+        },
+      },
+      '/api/auth/request-otp': {
+        post: {
+          tags: ['Voters'],
+          summary: 'Request OTP for login or contact verification',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['nationalId'],
+                  properties: {
+                    nationalId: { type: 'string', example: '12345678', description: 'National ID, passport, or synthetic ID (E-xxxxxxxxxxxxxxxx)' },
+                    purpose: { type: 'string', enum: ['LOGIN', 'CONTACT_VERIFY', 'CREDENTIAL_RESET'], default: 'LOGIN' },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': { description: 'OTP sent to voter contact' },
+            '404': { description: 'Voter not found' },
+          },
+        },
+      },
+      '/api/auth/verify-otp': {
+        post: {
+          tags: ['Voters'],
+          summary: 'Verify OTP — issues JWT (LOGIN) or marks contact verified',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['nationalId', 'code'],
+                  properties: {
+                    nationalId: { type: 'string' },
+                    code: { type: 'string', pattern: '^\\d{6}$' },
+                    purpose: { type: 'string', enum: ['LOGIN', 'CONTACT_VERIFY', 'CREDENTIAL_RESET'], default: 'LOGIN' },
+                  },
+                },
+              },
+            },
+          },
+          responses: { '200': { description: 'JWT issued or contact verified' } },
+        },
+      },
+      // ── Voter registration ──────────────────────────────────────
+      '/api/voters/mock-verify': {
+        post: {
+          tags: ['Voters'],
+          summary: 'Simulate Persona KYC completion (mock mode only)',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['inquiryId'],
+                  properties: { inquiryId: { type: 'string' } },
+                },
+              },
+            },
+          },
+          responses: { '200': { description: 'KYC simulated' }, '403': { description: 'Only available in mock mode' } },
+        },
+      },
+      '/api/voters/registration-status/{inquiryId}': {
+        get: {
+          tags: ['Voters'],
+          summary: 'Poll Persona KYC status',
+          parameters: [{ name: 'inquiryId', in: 'path', required: true, schema: { type: 'string' } }],
+          responses: { '200': { description: 'Registration status and optional setupToken' } },
+        },
+      },
+      '/api/voters/set-pin': {
+        post: {
+          tags: ['Voters'],
+          summary: 'Set voter PIN (normal 4-digit PIN)',
+          security: [{ bearerAuth: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['pin'],
+                  properties: {
+                    pin: { type: 'string', pattern: '^\\d{4}$', example: '7391' },
+                    distressPin: { type: 'string', pattern: '^\\d{4}$', description: 'Optional distress PIN (server generates one if not supplied)' },
+                  },
+                },
+              },
+            },
+          },
+          responses: { '200': { description: 'PIN set successfully' } },
+        },
+      },
+      '/api/voters/complete-contact-verification': {
+        post: {
+          tags: ['Voters'],
+          summary: 'Complete contact verification → REGISTERED status + setupToken',
+          description: 'Called after OTP verify for non-KYC elections. Optionally auto-enrolls voter in the election.',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['voterId'],
+                  properties: {
+                    voterId: { type: 'string', format: 'uuid' },
+                    electionId: { type: 'string', format: 'uuid', description: 'If provided, auto-enrolls voter in this non-GOVERNMENT election' },
+                  },
+                },
+              },
+            },
+          },
+          responses: { '200': { description: 'Voter registered with setupToken for PIN/WebAuthn setup' } },
+        },
+      },
+      // ── Elections (public + admin) ──────────────────────────────
+      '/api/elections/public': {
+        get: {
+          tags: ['Elections'],
+          summary: 'List public elections (non-DRAFT, public fields only)',
+          parameters: [
+            { name: 'status', in: 'query', schema: { type: 'string', enum: ['NOMINATIONS', 'ACTIVE', 'CLOSED', 'TALLIED', 'ARCHIVED'] } },
+          ],
+          responses: { '200': { description: 'Public election list' } },
+        },
+      },
+      '/api/elections/public/{id}': {
+        get: {
+          tags: ['Elections'],
+          summary: 'Get a single public election with positions/candidates',
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+          responses: { '200': { description: 'Public election detail' }, '404': { $ref: '#/components/responses/NotFound' } },
+        },
+      },
+      '/api/elections': {
+        get: {
+          tags: ['Elections'],
+          summary: 'List all elections (admin)',
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            { $ref: '#/components/parameters/PageParam' },
+            { $ref: '#/components/parameters/LimitParam' },
+            { name: 'type', in: 'query', schema: { type: 'string', enum: ['GOVERNMENT', 'INSTITUTIONAL', 'CORPORATE', 'CUSTOM'] } },
+            { name: 'status', in: 'query', schema: { type: 'string' } },
+          ],
+          responses: { '200': { description: 'Paginated election list' } },
+        },
+        post: {
+          tags: ['Elections'],
+          summary: 'Create election (commission tier only)',
+          security: [{ bearerAuth: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['name', 'type'],
+                  properties: {
+                    name: { type: 'string', example: 'General Election 2027' },
+                    type: { type: 'string', enum: ['GOVERNMENT', 'INSTITUTIONAL', 'CORPORATE', 'CUSTOM'] },
+                    authMethod: { type: 'string', enum: ['PERSONA_KYC', 'EMAIL_DOMAIN', 'OTP_ONLY'], default: 'OTP_ONLY' },
+                    allowedDomains: { type: 'array', items: { type: 'string' }, example: ['uon.ac.ke'] },
+                    startDate: { type: 'string', format: 'date-time' },
+                    endDate: { type: 'string', format: 'date-time' },
+                    eligibilityNote: { type: 'string' },
+                    countryCode: { type: 'string', example: 'KE' },
+                  },
+                },
+              },
+            },
+          },
+          responses: { '201': { description: 'Election created' } },
+        },
+      },
+      '/api/elections/{id}': {
+        get: {
+          tags: ['Elections'],
+          summary: 'Get election detail with positions and candidates (admin)',
+          security: [{ bearerAuth: [] }],
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+          responses: { '200': { description: 'Election detail' } },
+        },
+        patch: {
+          tags: ['Elections'],
+          summary: 'Update election metadata (commission only)',
+          security: [{ bearerAuth: [] }],
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+          responses: { '200': { description: 'Updated election' } },
+        },
+        delete: {
+          tags: ['Elections'],
+          summary: 'Delete election (commission only, DRAFT status required unless force=true)',
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            { name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
+            { name: 'force', in: 'query', schema: { type: 'boolean', default: false } },
+          ],
+          responses: { '200': { description: 'Election deleted' } },
+        },
+      },
+      '/api/elections/{id}/status': {
+        patch: {
+          tags: ['Elections'],
+          summary: 'Transition election status (commission only)',
+          security: [{ bearerAuth: [] }],
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['status'],
+                  properties: { status: { type: 'string', enum: ['DRAFT', 'NOMINATIONS', 'ACTIVE', 'CLOSED', 'TALLIED', 'ARCHIVED'] } },
+                },
+              },
+            },
+          },
+          responses: { '200': { description: 'Status updated' } },
+        },
+      },
+      // ── Staff ────────────────────────────────────────────────────
+      '/api/staff': {
+        get: {
+          tags: ['Staff'],
+          summary: 'List IEBC staff (admin)',
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            { name: 'staffRole', in: 'query', schema: { type: 'string' } },
+            { name: 'jurisdictionLevel', in: 'query', schema: { type: 'string', enum: ['NATIONAL', 'COUNTY', 'CONSTITUENCY', 'WARD', 'POLLING_STATION'] } },
+            { name: 'jurisdictionValue', in: 'query', schema: { type: 'string' } },
+            { name: 'isActive', in: 'query', schema: { type: 'boolean' } },
+          ],
+          responses: { '200': { description: 'Staff list' } },
+        },
+        post: {
+          tags: ['Staff'],
+          summary: 'Create staff record (commission or field officers for subordinate roles)',
+          security: [{ bearerAuth: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['nationalId', 'staffRole', 'jurisdictionLevel'],
+                  properties: {
+                    nationalId: { type: 'string', example: '12345678' },
+                    staffRole: { type: 'string', example: 'COUNTY_RO' },
+                    jurisdictionLevel: { type: 'string', enum: ['NATIONAL', 'COUNTY', 'CONSTITUENCY', 'WARD', 'POLLING_STATION'] },
+                    jurisdictionValue: { type: 'string', example: 'Nairobi' },
+                    department: { type: 'string', example: 'ICT' },
+                    pollingStationId: { type: 'string', format: 'uuid' },
+                  },
+                },
+              },
+            },
+          },
+          responses: { '201': { description: 'Staff created' } },
+        },
+      },
+      '/api/staff/me': {
+        get: {
+          tags: ['Staff'],
+          summary: 'Get current user\'s staff record',
+          security: [{ bearerAuth: [] }],
+          responses: { '200': { description: 'Staff record or null if not a staff member' } },
+        },
+      },
+      '/api/staff/dashboard': {
+        get: {
+          tags: ['Staff'],
+          summary: 'Role-scoped dashboard data for logged-in staff',
+          security: [{ bearerAuth: [] }],
+          responses: { '200': { description: 'Dashboard data filtered to officer\'s jurisdiction' } },
+        },
+      },
+      '/api/staff/{id}': {
+        get: {
+          tags: ['Staff'],
+          summary: 'Get staff record by ID',
+          security: [{ bearerAuth: [] }],
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+          responses: { '200': { description: 'Staff record' }, '404': { $ref: '#/components/responses/NotFound' } },
+        },
+        patch: {
+          tags: ['Staff'],
+          summary: 'Update staff role/jurisdiction',
+          security: [{ bearerAuth: [] }],
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+          responses: { '200': { description: 'Updated' } },
+        },
+        delete: {
+          tags: ['Staff'],
+          summary: 'Deactivate staff member',
+          security: [{ bearerAuth: [] }],
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+          responses: { '200': { description: 'Deactivated' } },
+        },
+      },
+      // ── Declarations ─────────────────────────────────────────────
+      '/api/declarations/public/{electionId}': {
+        get: {
+          tags: ['Declarations'],
+          summary: 'Get public declared results for an election',
+          parameters: [{ name: 'electionId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+          responses: { '200': { description: 'DECLARED declarations with tally snapshots' } },
+        },
+      },
+      '/api/declarations': {
+        get: {
+          tags: ['Declarations'],
+          summary: 'List declarations (admin)',
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            { name: 'electionId', in: 'query', schema: { type: 'string', format: 'uuid' } },
+            { name: 'positionId', in: 'query', schema: { type: 'string', format: 'uuid' } },
+            { name: 'status', in: 'query', schema: { type: 'string', enum: ['DRAFT', 'DECLARED', 'CONTESTED', 'ANNULLED'] } },
+          ],
+          responses: { '200': { description: 'Declaration list' } },
+        },
+        post: {
+          tags: ['Declarations'],
+          summary: 'Create draft declaration (RO roles)',
+          security: [{ bearerAuth: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['electionId', 'positionId'],
+                  properties: {
+                    electionId: { type: 'string', format: 'uuid' },
+                    positionId: { type: 'string', format: 'uuid' },
+                    tallySnapshot: { type: 'object', additionalProperties: { type: 'number' }, example: { 'Alice Wanjiku': 1547, 'John Kamau': 1203 } },
+                  },
+                },
+              },
+            },
+          },
+          responses: { '201': { description: 'Draft declaration created' } },
+        },
+      },
+      '/api/declarations/{id}/declare': {
+        post: {
+          tags: ['Declarations'],
+          summary: 'Formally declare results (RO roles)',
+          security: [{ bearerAuth: [] }],
+          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+          responses: { '200': { description: 'Declaration formally declared' } },
+        },
+      },
+      // ── Paper Ballots ────────────────────────────────────────────
+      '/api/paper-ballots/manifest/{electionId}': {
+        get: {
+          tags: ['Paper Ballots'],
+          summary: 'Generate Form 34A-style ballot manifest for printing',
+          description: 'Returns blockchain-verified vote commitments and declared results. Scoped to officer\'s jurisdiction.',
+          security: [{ bearerAuth: [] }],
+          parameters: [{ name: 'electionId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+          responses: {
+            '200': {
+              description: 'Ballot manifest with blockchain verification section',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      success: { type: 'boolean' },
+                      data: {
+                        type: 'object',
+                        properties: {
+                          election: { type: 'object' },
+                          officer: { type: 'object' },
+                          voteStats: { type: 'object' },
+                          blockchainVerification: { type: 'object' },
+                          positions: { type: 'array' },
+                          formReference: { type: 'string', example: 'VV-E9013500-NATIONAL-1773933234755' },
+                          generatedAt: { type: 'string', format: 'date-time' },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      '/api/paper-ballots/print-log': {
+        post: {
+          tags: ['Paper Ballots'],
+          summary: 'Record a manifest print event (persisted to audit log)',
+          security: [{ bearerAuth: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['electionId', 'formReference'],
+                  properties: {
+                    electionId: { type: 'string', format: 'uuid' },
+                    formReference: { type: 'string', example: 'VV-E9013500-NATIONAL-1773933234755' },
+                    pageCount: { type: 'integer', default: 1 },
+                    blockchainVerifiedCount: { type: 'integer', default: 0 },
+                  },
+                },
+              },
+            },
+          },
+          responses: { '201': { description: 'Print log created' } },
+        },
+      },
+      '/api/paper-ballots/print-logs/{electionId}': {
+        get: {
+          tags: ['Paper Ballots'],
+          summary: 'List manifest print events for an election',
+          security: [{ bearerAuth: [] }],
+          parameters: [{ name: 'electionId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+          responses: { '200': { description: 'Print log list' } },
+        },
+      },
+      // ── Election-specific station endpoints ─────────────────────
+      '/api/elections/{id}/stations': {
+        get: {
+          tags: ['Elections', 'Stations'],
+          summary: 'Get polling stations linked to this election\'s jurisdiction tree',
+          description: 'Returns stations that have been explicitly linked to jurisdiction nodes via pollingStationId. Supports geographic filtering.',
+          parameters: [
+            { name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' }, description: 'Election ID' },
+            { name: 'county', in: 'query', schema: { type: 'string' }, description: 'Filter by county name' },
+            { name: 'constituency', in: 'query', schema: { type: 'string' }, description: 'Filter by constituency name' },
+            { name: 'lat', in: 'query', schema: { type: 'number' }, description: 'Latitude for proximity filter' },
+            { name: 'lng', in: 'query', schema: { type: 'number' }, description: 'Longitude for proximity filter' },
+            { name: 'radius', in: 'query', schema: { type: 'number', default: 10 }, description: 'Search radius in km (default: 10)' },
+          ],
+          responses: {
+            '200': {
+              description: 'Linked stations with hierarchy path',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      success: { type: 'boolean' },
+                      data: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            stationId:    { type: 'string', format: 'uuid' },
+                            stationCode:  { type: 'string', example: 'NAI-WL-001' },
+                            stationName:  { type: 'string', example: 'Westlands Primary School' },
+                            county:       { type: 'string', example: 'Nairobi' },
+                            constituency: { type: 'string', example: 'Westlands' },
+                            ward:         { type: 'string', example: 'Parklands/Highridge' },
+                            latitude:     { type: 'number', nullable: true, example: -1.26 },
+                            longitude:    { type: 'number', nullable: true, example: 36.80 },
+                            nodeId:       { type: 'string', format: 'uuid' },
+                            nodePath:     { type: 'array', items: { type: 'string' }, example: ['Kenya', 'Nairobi', 'Westlands', 'Westlands Primary School'] },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      '/api/elections/{id}/jurisdictions/{nodeId}/link-station': {
+        patch: {
+          tags: ['Elections'],
+          summary: 'Link a physical polling station to a jurisdiction node',
+          description: 'Explicitly links a PollingStation record to a jurisdiction node so that voters at that station receive the correct ballot via ancestor traversal. A station can only be linked to one node per election.',
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            { name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' }, description: 'Election ID' },
+            { name: 'nodeId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' }, description: 'Jurisdiction node ID' },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['pollingStationId'],
+                  properties: {
+                    pollingStationId: { type: 'string', format: 'uuid', description: 'ID of the PollingStation to link' },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': { description: 'Node updated with station link' },
+            '400': { $ref: '#/components/responses/BadRequest' },
+            '401': { $ref: '#/components/responses/Unauthorized' },
+            '403': { $ref: '#/components/responses/Forbidden' },
+            '404': { $ref: '#/components/responses/NotFound' },
+            '409': { description: 'Station is already linked to another node in this election' },
+          },
+        },
+      },
+      // ── Ballot (voter) ───────────────────────────────────────────
+      '/api/ballot/active': {
+        get: {
+          tags: ['Votes'],
+          summary: 'List active elections this voter is eligible for',
+          security: [{ bearerAuth: [] }],
+          responses: { '200': { description: 'Active elections list' } },
+        },
+      },
+      '/api/ballot/{electionId}': {
+        get: {
+          tags: ['Votes'],
+          summary: 'Get personalised ballot for voter (positions + eligible candidates)',
+          security: [{ bearerAuth: [] }],
+          parameters: [{ name: 'electionId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+          responses: { '200': { description: 'Voter\'s personalised ballot' } },
+        },
+      },
+      // ── Tally ────────────────────────────────────────────────────
+      '/api/tally/start': {
+        post: {
+          tags: ['Admin'],
+          summary: 'Run decryption ceremony for an election (admin only)',
+          description: 'Decrypts all CONFIRMED votes for the election, tallies using DB positions/candidates, stores result in election.tallyResultJson, and transitions election to TALLIED.',
+          security: [{ bearerAuth: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['electionId'],
+                  properties: { electionId: { type: 'string', format: 'uuid' } },
+                },
+              },
+            },
+          },
+          responses: { '200': { description: 'Tally result with per-position candidate tallies and ceremony log' }, '400': { description: 'electionId missing or election not in CLOSED/ACTIVE state' } },
+        },
+      },
+      '/api/tally/results/{electionId}': {
+        get: {
+          tags: ['Admin'],
+          summary: 'Get cached tally results for an election (admin only)',
+          security: [{ bearerAuth: [] }],
+          parameters: [{ name: 'electionId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+          responses: { '200': { description: 'Tally results' }, '404': { description: 'No tally run yet for this election' } },
+        },
+      },
+      '/api/tally/publish': {
+        post: {
+          tags: ['Admin'],
+          summary: 'Publish tally hash on-chain (admin only)',
+          security: [{ bearerAuth: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: { type: 'object', required: ['electionId'], properties: { electionId: { type: 'string', format: 'uuid' } } },
+              },
+            },
+          },
+          responses: { '200': { description: 'Transaction hash + results hash' } },
+        },
+      },
+      '/api/tally/audit-report/{electionId}': {
+        get: {
+          tags: ['Admin'],
+          summary: 'Full audit report for an election (admin only)',
+          security: [{ bearerAuth: [] }],
+          parameters: [{ name: 'electionId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+          responses: { '200': { description: 'Full tally data with NIRU compliance notes' }, '404': { description: 'No tally run yet' } },
+        },
+      },
+      // ── AI Service ───────────────────────────────────────────────
+      '/api/ai/health': {
+        get: {
+          tags: ['AI'],
+          summary: 'AI fraud detection service health',
+          responses: { '200': { description: 'AI service status and model loaded state' } },
+        },
+      },
+      '/api/ai/analyze-voting-pattern': {
+        post: {
+          tags: ['AI'],
+          summary: 'Analyze voting pattern for fraud detection (admin only)',
+          description: 'All fields use snake_case. Values must be normalized 0.0–1.0 floats.',
+          security: [{ bearerAuth: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['station_code','voting_velocity','temporal_deviation','geographic_cluster_score','repeat_attempt_rate','distress_correlation'],
+                  properties: {
+                    station_code:             { type: 'string', description: 'IEBC polling station code', example: 'NBI-001' },
+                    voting_velocity:          { type: 'number', minimum: 0, maximum: 1, description: 'Normalised votes/hour rate', example: 0.85 },
+                    temporal_deviation:       { type: 'number', minimum: 0, maximum: 1, description: 'Deviation from expected voting time distribution', example: 0.3 },
+                    geographic_cluster_score: { type: 'number', minimum: 0, maximum: 1, description: 'Geographic clustering anomaly score', example: 0.6 },
+                    repeat_attempt_rate:      { type: 'number', minimum: 0, maximum: 1, description: 'Rate of repeated authentication attempts', example: 0.1 },
+                    distress_correlation:     { type: 'number', minimum: 0, maximum: 1, description: 'Correlation with distress PIN usage', example: 0.0 },
+                  },
+                },
+              },
+            },
+          },
+          responses: { '200': { description: 'Anomaly score, alert level, triggered rules and LLM explanation' }, '503': { description: 'AI service unavailable' } },
+        },
+      },
+      '/api/ai/reports/fraud': {
+        get: {
+          tags: ['AI'],
+          summary: 'Fraud activity report (admin only)',
+          security: [{ bearerAuth: [] }],
+          parameters: [{ name: 'hours', in: 'query', schema: { type: 'integer', default: 24, maximum: 168 } }],
+          responses: { '200': { description: 'Fraud report' } },
+        },
+      },
+      '/api/ai/reports/integrity': {
+        get: {
+          tags: ['AI'],
+          summary: 'Blockchain vs tally integrity report (admin only)',
+          security: [{ bearerAuth: [] }],
+          responses: { '200': { description: 'Integrity report' } },
+        },
+      },
+      // ── Geo ──────────────────────────────────────────────────────
+      '/api/geo/counties': {
+        get: {
+          tags: ['Stations'],
+          summary: 'List all 47 counties (admin)',
+          security: [{ bearerAuth: [] }],
+          responses: { '200': { description: 'Array of county names' } },
+        },
+      },
+      '/api/geo/constituencies': {
+        get: {
+          tags: ['Stations'],
+          summary: 'List constituencies (admin)',
+          security: [{ bearerAuth: [] }],
+          parameters: [{ name: 'county', in: 'query', schema: { type: 'string' } }],
+          responses: { '200': { description: 'Constituencies with county' } },
+        },
+      },
+      '/api/geo/wards': {
+        get: {
+          tags: ['Stations'],
+          summary: 'List wards (admin)',
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            { name: 'county', in: 'query', schema: { type: 'string' } },
+            { name: 'constituency', in: 'query', schema: { type: 'string' } },
+          ],
+          responses: { '200': { description: 'Wards with county and constituency' } },
         },
       },
     },

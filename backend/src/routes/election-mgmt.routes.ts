@@ -26,11 +26,13 @@ router.get('/public', async (req: Request, res: Response) => {
         type:          e.type,
         status:        e.status,
         orgName:       e.orgName,
-        authMethod:    (e as Record<string, unknown>).authMethod,
-        allowedDomains:(e as Record<string, unknown>).allowedDomains,
-        startDate:     e.startDate,
-        endDate:       e.endDate,
-        _count:        e._count,
+        authMethod:      (e as Record<string, unknown>).authMethod,
+        allowedDomains:  (e as Record<string, unknown>).allowedDomains,
+        countryCode:     (e as Record<string, unknown>).countryCode,
+        eligibilityNote: (e as Record<string, unknown>).eligibilityNote,
+        startDate:       e.startDate,
+        endDate:         e.endDate,
+        _count:          e._count,
       }));
     res.json({ success: true, data: publicElections });
   } catch (e) { handleError(e, res); }
@@ -48,17 +50,19 @@ router.get('/public/:id', async (req: Request, res: Response) => {
     res.json({
       success: true,
       data: {
-        id:            election.id,
-        name:          election.name,
-        description:   election.description,
-        type:          election.type,
-        status:        election.status,
-        orgName:       election.orgName,
-        authMethod:    e.authMethod,
-        allowedDomains:e.allowedDomains,
-        startDate:     election.startDate,
-        endDate:       election.endDate,
-        positions:     election.positions?.map((p: Record<string, unknown>) => ({
+        id:              election.id,
+        name:            election.name,
+        description:     election.description,
+        type:            election.type,
+        status:          election.status,
+        orgName:         election.orgName,
+        authMethod:      e.authMethod,
+        allowedDomains:  e.allowedDomains,
+        countryCode:     e.countryCode,
+        eligibilityNote: e.eligibilityNote,
+        startDate:       election.startDate,
+        endDate:         election.endDate,
+        positions:       election.positions?.map((p: Record<string, unknown>) => ({
           id:       p.id,
           title:    p.title,
           scope:    p.scope,
@@ -71,6 +75,96 @@ router.get('/public/:id', async (req: Request, res: Response) => {
         _count: election._count,
       },
     });
+  } catch (e) { handleError(e, res); }
+});
+
+// GET /api/elections/:id/stations — polling stations linked to this election's jurisdiction tree
+// Returns stations that have been explicitly linked to a node via pollingStationId.
+// Supports filtering by county, constituency, and proximity (lat/lng/radius in km).
+router.get('/:id/stations', async (req: Request, res: Response) => {
+  try {
+    const electionId = req.params.id;
+    const { county, constituency, lat, lng, radius } = req.query as Record<string, string | undefined>;
+
+    // Fetch all jurisdiction nodes for this election that have a pollingStationId set
+    const nodes = await prisma.electionJurisdiction.findMany({
+      where: { electionId, pollingStationId: { not: null } },
+      include: {
+        pollingStation: {
+          select: { id: true, code: true, name: true, county: true, constituency: true, ward: true, latitude: true, longitude: true },
+        },
+      },
+      orderBy: [{ depth: 'asc' }, { orderIndex: 'asc' }, { name: 'asc' }],
+    });
+
+    // Build a nodeId → full ancestor name path for each linked node
+    // Fetch ALL nodes for this election so we can build paths
+    const allNodes = await prisma.electionJurisdiction.findMany({
+      where: { electionId },
+      select: { id: true, name: true, parentId: true, depth: true },
+      orderBy: { depth: 'asc' },
+    });
+    const nodeMap = new Map(allNodes.map(n => [n.id, n]));
+
+    function buildPath(nodeId: string): string[] {
+      const path: string[] = [];
+      let cur: string | null = nodeId;
+      while (cur) {
+        const n = nodeMap.get(cur);
+        if (!n) break;
+        path.unshift(n.name);
+        cur = n.parentId ?? null;
+      }
+      return path;
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let results: any[] = nodes
+      .filter(n => n.pollingStation != null)
+      .map(n => ({
+        stationId:     n.pollingStation!.id,
+        stationCode:   n.pollingStation!.code,
+        stationName:   n.pollingStation!.name,
+        county:        n.pollingStation!.county,
+        constituency:  n.pollingStation!.constituency,
+        ward:          n.pollingStation!.ward,
+        latitude:      n.pollingStation!.latitude ?? null,
+        longitude:     n.pollingStation!.longitude ?? null,
+        nodeId:        n.id,
+        nodePath:      buildPath(n.id),
+      }));
+
+    // Apply optional filters
+    if (county) {
+      results = results.filter(r => r.county.toLowerCase() === county.toLowerCase());
+    }
+    if (constituency) {
+      results = results.filter(r => r.constituency.toLowerCase() === constituency.toLowerCase());
+    }
+    if (lat && lng) {
+      const latNum = parseFloat(lat);
+      const lngNum = parseFloat(lng);
+      const radiusKm = radius ? parseFloat(radius) : 10;
+
+      if (!isNaN(latNum) && !isNaN(lngNum) && !isNaN(radiusKm)) {
+        // Haversine distance filter
+        results = results.filter(r => {
+          if (r.latitude == null || r.longitude == null) return false;
+          const R = 6371; // Earth radius in km
+          const dLat = ((r.latitude - latNum) * Math.PI) / 180;
+          const dLng = ((r.longitude - lngNum) * Math.PI) / 180;
+          const a =
+            Math.sin(dLat / 2) ** 2 +
+            Math.cos((latNum * Math.PI) / 180) *
+              Math.cos((r.latitude * Math.PI) / 180) *
+              Math.sin(dLng / 2) ** 2;
+          const distKm = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+          return distKm <= radiusKm;
+        });
+      }
+    }
+
+    res.json({ success: true, data: results });
   } catch (e) { handleError(e, res); }
 });
 
@@ -148,14 +242,16 @@ function checkScopePermission(
 // ── Validation schemas ────────────────────────────────────────────────────────
 
 const electionSchema = z.object({
-  name:           z.string().min(3).max(255),
-  description:    z.string().optional(),
-  type:           z.enum(['GOVERNMENT', 'INSTITUTIONAL', 'CORPORATE', 'CUSTOM']),
-  orgName:        z.string().optional(),
-  startDate:      z.string().datetime({ offset: true }).optional(),
-  endDate:        z.string().datetime({ offset: true }).optional(),
-  authMethod:     z.enum(['PERSONA_KYC', 'EMAIL_DOMAIN', 'OTP_ONLY']).optional(),
-  allowedDomains: z.array(z.string().min(1).max(255)).optional(),
+  name:            z.string().min(3).max(255),
+  description:     z.string().optional(),
+  type:            z.enum(['GOVERNMENT', 'INSTITUTIONAL', 'CORPORATE', 'CUSTOM']),
+  orgName:         z.string().optional(),
+  startDate:       z.string().datetime({ offset: true }).optional(),
+  endDate:         z.string().datetime({ offset: true }).optional(),
+  authMethod:      z.enum(['PERSONA_KYC', 'EMAIL_DOMAIN', 'OTP_ONLY']).optional(),
+  allowedDomains:  z.array(z.string().min(1).max(255)).optional(),
+  countryCode:     z.string().length(2).toUpperCase().optional(),
+  eligibilityNote: z.string().max(500).optional(),
 });
 
 const positionSchema = z.object({
@@ -212,13 +308,15 @@ router.get('/:id', async (req: Request, res: Response) => {
 
 router.patch('/:id', commissionOnly, async (req: Request, res: Response) => {
   const parsed = z.object({
-    name:           z.string().min(3).max(255).optional(),
-    description:    z.string().nullable().optional(),
-    orgName:        z.string().nullable().optional(),
-    startDate:      z.string().datetime({ offset: true }).nullable().optional(),
-    endDate:        z.string().datetime({ offset: true }).nullable().optional(),
-    authMethod:     z.enum(['PERSONA_KYC', 'EMAIL_DOMAIN', 'OTP_ONLY']).optional(),
-    allowedDomains: z.array(z.string().min(1).max(255)).optional(),
+    name:            z.string().min(3).max(255).optional(),
+    description:     z.string().nullable().optional(),
+    orgName:         z.string().nullable().optional(),
+    startDate:       z.string().datetime({ offset: true }).nullable().optional(),
+    endDate:         z.string().datetime({ offset: true }).nullable().optional(),
+    authMethod:      z.enum(['PERSONA_KYC', 'EMAIL_DOMAIN', 'OTP_ONLY']).optional(),
+    allowedDomains:  z.array(z.string().min(1).max(255)).optional(),
+    countryCode:     z.string().length(2).nullable().optional(),
+    eligibilityNote: z.string().max(500).nullable().optional(),
   }).safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ success: false, error: parsed.error.errors[0].message }); return; }
   try { res.json({ success: true, data: await svc.updateElection(req.params.id, parsed.data) }); }
@@ -232,8 +330,18 @@ router.patch('/:id/status', commissionOnly, async (req: Request, res: Response) 
   catch (e) { handleError(e, res); }
 });
 
+// Commission-only: force-reopen an election (back to DRAFT / NOMINATIONS / ACTIVE)
+// Used to correct test/demo elections or handle extraordinary circumstances.
+router.patch('/:id/reopen', commissionOnly, async (req: Request, res: Response) => {
+  const parsed = z.object({ status: z.enum(['DRAFT', 'NOMINATIONS', 'ACTIVE']) }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ success: false, error: 'status must be DRAFT, NOMINATIONS, or ACTIVE' }); return; }
+  try { res.json({ success: true, data: await svc.forceReopenElection(req.params.id, parsed.data.status) }); }
+  catch (e) { handleError(e, res); }
+});
+
 router.delete('/:id', commissionOnly, async (req: Request, res: Response) => {
-  try { await svc.deleteElection(req.params.id); res.json({ success: true }); }
+  const force = req.query.force === 'true';
+  try { await svc.deleteElection(req.params.id, force); res.json({ success: true }); }
   catch (e) { handleError(e, res); }
 });
 
@@ -329,10 +437,11 @@ router.delete('/candidates/:candId', ballotWrite, async (req: Request, res: Resp
 // ── Jurisdiction tree ─────────────────────────────────────────────────────────
 
 const jurisdictionSchema = z.object({
-  name:       z.string().min(1).max(255),
-  level:      z.enum(['NATIONAL', 'COUNTY', 'CONSTITUENCY', 'WARD']).optional(),
-  parentId:   z.string().uuid().optional(),
-  orderIndex: z.number().int().min(0).optional(),
+  name:             z.string().min(1).max(255),
+  level:            z.enum(['NATIONAL', 'COUNTY', 'CONSTITUENCY', 'WARD', 'POLLING_STATION']).optional(),
+  parentId:         z.string().uuid().optional(),
+  orderIndex:       z.number().int().min(0).optional(),
+  pollingStationId: z.string().uuid().optional(),
 });
 
 // GET /api/elections/:id/jurisdictions — full flat list
@@ -361,6 +470,48 @@ router.patch('/jurisdictions/:jid', ballotWrite, async (req: Request, res: Respo
 router.delete('/jurisdictions/:jid', ballotWrite, async (req: Request, res: Response) => {
   try { await svc.deleteJurisdiction(req.params.jid); res.json({ success: true }); }
   catch (e) { handleError(e, res); }
+});
+
+// PATCH /api/elections/:id/jurisdictions/:nodeId/link-station
+// Link a physical PollingStation to a jurisdiction node (leaf typically).
+// Prevents double-linking: a station can only be linked to one node per election.
+router.patch('/:id/jurisdictions/:nodeId/link-station', ballotWrite, async (req: Request, res: Response) => {
+  const parsed = z.object({ pollingStationId: z.string().uuid() }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ success: false, error: parsed.error.errors[0].message }); return; }
+  try {
+    const { pollingStationId } = parsed.data;
+    const electionId = req.params.id;
+    const nodeId = req.params.nodeId;
+
+    // Verify the polling station exists
+    const station = await prisma.pollingStation.findUnique({ where: { id: pollingStationId } });
+    if (!station) {
+      res.status(404).json({ success: false, error: 'Polling station not found' });
+      return;
+    }
+
+    // Verify the node exists and belongs to this election
+    const node = await prisma.electionJurisdiction.findUnique({ where: { id: nodeId } });
+    if (!node || node.electionId !== electionId) {
+      res.status(404).json({ success: false, error: 'Jurisdiction node not found in this election' });
+      return;
+    }
+
+    // Prevent double-linking: check if any OTHER node in this election is already linked to this station
+    const existingLink = await prisma.electionJurisdiction.findFirst({
+      where: { electionId, pollingStationId, NOT: { id: nodeId } },
+    });
+    if (existingLink) {
+      res.status(409).json({
+        success: false,
+        error: `Station "${station.name}" is already linked to another node (${existingLink.id}) in this election.`,
+      });
+      return;
+    }
+
+    const updated = await svc.updateJurisdiction(nodeId, { pollingStationId });
+    res.json({ success: true, data: updated });
+  } catch (e) { handleError(e, res); }
 });
 
 // POST /api/elections/:id/jurisdictions/:jid/positions — create position in jurisdiction

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import {
   BarChart,
   Bar,
@@ -40,9 +41,19 @@ interface LiveStats {
   registered: number;
 }
 
+interface PublicElection {
+  id: string;
+  name: string;
+  status: "NOMINATIONS" | "ACTIVE" | "CLOSED" | "TALLIED";
+  type: string;
+  endDate: string | null;
+  _count: { votes: number };
+}
+
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3005";
 
 export default function Home() {
+  const router = useRouter();
   const [isMounted, setIsMounted] = useState(false);
   const [live, setLive] = useState<LiveStats | null>(null);
   const [county, setCounty] = useState<CountyStat[]>([]);
@@ -50,14 +61,16 @@ export default function Home() {
   const [health, setHealth] = useState<SystemHealth | null>(null);
   const [connected, setConnected] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [elections, setElections] = useState<PublicElection[]>([]);
 
   const fetchAll = useCallback(async () => {
     try {
-      const [statsRes, turnoutRes, hourlyRes, healthRes] = await Promise.all([
+      const [statsRes, turnoutRes, hourlyRes, healthRes, electionsRes] = await Promise.all([
         fetch(`${API}/api/stats`).then((r) => r.json()),
         fetch(`${API}/api/stats/turnout`).then((r) => r.json()),
         fetch(`${API}/api/stats/hourly`).then((r) => r.json()),
         fetch(`${API}/health`).then((r) => r.json()),
+        fetch(`${API}/api/elections/public`).then((r) => r.json()),
       ]);
 
       if (statsRes.success) {
@@ -93,6 +106,14 @@ export default function Home() {
           database: healthRes.database ?? "unknown",
           blockchain: healthRes.blockchain ?? "unknown",
         });
+      }
+      if (electionsRes.success && electionsRes.data) {
+        // Show NOMINATIONS, ACTIVE, and TALLIED elections (not ARCHIVED/CLOSED)
+        setElections(
+          (electionsRes.data as PublicElection[]).filter(
+            (e) => ["NOMINATIONS", "ACTIVE", "TALLIED"].includes(e.status)
+          )
+        );
       }
     } catch {
       // backend may not be running yet
@@ -154,12 +175,68 @@ export default function Home() {
 
       <main className="max-w-6xl mx-auto px-4 py-8 space-y-8">
         {/* Nav cards */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <NavCard href="/elections" label="Elections" sub="Browse &amp; participate" cls="border-green-200 hover:border-green-600 hover:bg-green-50" textCls="text-green-700" />
-          <NavCard href="/vote" label="Vote" sub="Cast your ballot" cls="border-blue-200 hover:border-blue-600 hover:bg-blue-50" textCls="text-blue-700" />
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          <NavCard href="/elections" label="Elections" sub="Browse elections &amp; results" cls="border-green-200 hover:border-green-600 hover:bg-green-50" textCls="text-green-700" />
           <NavCard href="/verify" label="Verify Vote" sub="Check your receipt" cls="border-amber-200 hover:border-amber-600 hover:bg-amber-50" textCls="text-amber-700" />
           <NavCard href="/explorer" label="Explorer" sub="Blockchain audit trail" cls="border-purple-200 hover:border-purple-600 hover:bg-purple-50" textCls="text-purple-700" />
         </div>
+
+        {/* Elections portal */}
+        {elections.length > 0 && (
+          <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+            <div className="bg-green-800 text-white px-5 py-3 flex items-center justify-between">
+              <div>
+                <h2 className="font-semibold text-sm">Elections Portal</h2>
+                <p className="text-xs text-green-200 mt-0.5">Live elections and official results</p>
+              </div>
+              <div className="flex items-center gap-3">
+                <Link
+                  href="/register"
+                  className="rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-green-800 hover:bg-green-50 transition-colors"
+                >
+                  Register to Vote
+                </Link>
+                <Link href="/elections" className="text-xs text-green-200 hover:text-white underline underline-offset-2">
+                  View all →
+                </Link>
+              </div>
+            </div>
+            <div className="divide-y divide-gray-100">
+              {elections.slice(0, 5).map((e) => (
+                <button
+                  key={e.id}
+                  type="button"
+                  onClick={() => router.push(`/elections/${e.id}`)}
+                  className="group w-full flex items-center justify-between px-5 py-3.5 text-left hover:bg-gray-50 transition-colors"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className={`shrink-0 inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${
+                      e.status === "ACTIVE"      ? "bg-green-100 text-green-800" :
+                      e.status === "NOMINATIONS" ? "bg-yellow-100 text-yellow-800" :
+                      e.status === "TALLIED"     ? "bg-blue-100 text-blue-800" :
+                      "bg-gray-100 text-gray-600"
+                    }`}>
+                      {e.status === "ACTIVE" ? "Live" :
+                       e.status === "NOMINATIONS" ? "Nominations" :
+                       e.status === "TALLIED" ? "Results" : e.status}
+                    </span>
+                    <span className="text-sm font-medium text-gray-900 group-hover:text-green-700 truncate">
+                      {e.name}
+                    </span>
+                  </div>
+                  <div className="shrink-0 flex items-center gap-3 text-xs text-gray-400">
+                    {e._count.votes > 0 && (
+                      <span>{e._count.votes.toLocaleString()} votes</span>
+                    )}
+                    <svg className="h-4 w-4 text-gray-300 group-hover:text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                    </svg>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Live stat cards */}
         {loading ? (
@@ -234,9 +311,11 @@ export default function Home() {
         <div className="text-center text-xs text-gray-400 space-x-3 pb-4">
           <Link href="/admin" className="hover:text-gray-600">IEBC Admin Portal</Link>
           <span>·</span>
+          <Link href="/elections" className="hover:text-gray-600">Elections</Link>
+          <span>·</span>
           <Link href="/explorer" className="hover:text-gray-600">Blockchain Explorer</Link>
           <span>·</span>
-          <Link href="/verify" className="hover:text-gray-600">Verify Your Vote</Link>
+          <Link href="/verify" className="hover:text-gray-600">Verify Vote</Link>
         </div>
       </main>
     </div>

@@ -9,7 +9,9 @@ router.get('/:serialNumber', receiptRateLimiter, async (req: Request, res: Respo
   try {
     const { serialNumber } = req.params;
 
-    if (!/^[0-9A-F]{16}$/i.test(serialNumber)) {
+    const validSerial = /^[0-9A-F]{16}$/i.test(serialNumber) ||
+                        /^VV-[0-9A-Z]{8}-[0-9A-F]{8}$/i.test(serialNumber);
+    if (!validSerial) {
       res.status(400).json({
         success: false,
         error: 'Invalid serial number format',

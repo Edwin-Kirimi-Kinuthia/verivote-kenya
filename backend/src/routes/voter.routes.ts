@@ -71,20 +71,28 @@ router.post('/register', registrationRateLimiter, async (req: Request, res: Resp
     // Determine election auth method to decide whether nationalId/pollingStation are required
     let electionAuthMethod: 'PERSONA_KYC' | 'EMAIL_DOMAIN' | 'OTP_ONLY' = 'PERSONA_KYC';
     if (electionId) {
-      const election = await prisma.election.findUnique({ where: { id: electionId }, select: { authMethod: true } });
-      if (election) electionAuthMethod = election.authMethod as typeof electionAuthMethod;
+      const election = await prisma.election.findUnique({ where: { id: electionId }, select: { authMethod: true, status: true } });
+      if (!election) {
+        res.status(404).json({ success: false, error: 'Election not found' });
+        return;
+      }
+      if (!['NOMINATIONS', 'ACTIVE'].includes(election.status)) {
+        res.status(400).json({ success: false, error: 'This election is not currently accepting registrations' });
+        return;
+      }
+      electionAuthMethod = election.authMethod as typeof electionAuthMethod;
     }
 
     let effectiveNationalId = nationalId;
 
     if (electionAuthMethod === 'PERSONA_KYC') {
-      // KYC elections require national ID and polling station
+      // KYC elections require national ID; polling station only required when registering for a specific election
       if (!effectiveNationalId) {
         res.status(400).json({ success: false, error: 'nationalId is required for government (KYC) elections' });
         return;
       }
-      if (!pollingStationId) {
-        res.status(400).json({ success: false, error: 'pollingStationId is required for government (KYC) elections' });
+      if (electionId && !pollingStationId) {
+        res.status(400).json({ success: false, error: 'pollingStationId is required when registering for a government (KYC) election' });
         return;
       }
     } else {
@@ -96,6 +104,25 @@ router.post('/register', registrationRateLimiter, async (req: Request, res: Resp
       if (!effectiveNationalId) {
         const hash = crypto.createHash('sha256').update(email.toLowerCase()).digest('hex');
         effectiveNationalId = `E-${hash.slice(0, 16)}`; // 18 chars, fits VarChar(20)
+      }
+    }
+
+    // If electionId + pollingStationId both provided, verify the station is linked to the
+    // election's jurisdiction tree. If not linked, the voter can still register but will only
+    // see NATIONAL-scope positions (jurisdiction-tree scoped positions require a linked station).
+    if (electionId && pollingStationId) {
+      const linkedNode = await prisma.electionJurisdiction.findFirst({
+        where: { electionId, pollingStationId },
+        select: { id: true },
+      });
+      if (!linkedNode) {
+        // Non-fatal: log warning so operators can link the station, but allow registration
+        console.warn(
+          `[voter/register] WARN: pollingStationId=${pollingStationId} is not linked to ` +
+          `any jurisdiction node in election ${electionId}. Voter will only see NATIONAL ` +
+          `positions for jurisdiction-tree elections. Use ` +
+          `PATCH /api/elections/${electionId}/jurisdictions/:nodeId/link-station to fix this.`,
+        );
       }
     }
 

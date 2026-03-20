@@ -13,3 +13,20 @@
 .animate-shake {
   animation: shake 0.45s ease-in-out;
 }
+
+@media print {
+  /* Hide sidebar, nav, and non-printable UI when printing ballot manifests */
+  aside,
+  nav,
+  .print\:hidden {
+    display: none !important;
+  }
+  /* Expand main content to fill full page width */
+  main {
+    margin-left: 0 !important;
+  }
+  /* Ensure clean white background */
+  body {
+    background: white !important;
+  }
+}

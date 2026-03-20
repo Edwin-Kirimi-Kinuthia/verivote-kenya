@@ -26,6 +26,23 @@ const ALLOWED_TRANSITIONS: Record<ElectionStatus, ElectionStatus[]> = {
   ARCHIVED:    [],
 };
 
+/**
+ * Commission-only override: allows reopening an election regardless of current status.
+ * Used to correct test/demo elections or handle exceptional circumstances.
+ * Allowed target statuses: DRAFT, NOMINATIONS, ACTIVE.
+ */
+const COMMISSION_REOPEN_TARGETS = new Set<ElectionStatus>(['DRAFT', 'NOMINATIONS', 'ACTIVE']);
+
+export async function forceReopenElection(id: string, targetStatus: ElectionStatus) {
+  if (!COMMISSION_REOPEN_TARGETS.has(targetStatus)) {
+    throw new ServiceError(`Can only reopen to DRAFT, NOMINATIONS, or ACTIVE. Got: ${targetStatus}`, 400);
+  }
+  const election = await prisma.election.findUnique({ where: { id } });
+  if (!election) throw new ServiceError('Election not found', 404);
+  if (election.status === 'DRAFT') throw new ServiceError('Election is already in DRAFT state', 400);
+  return prisma.election.update({ where: { id }, data: { status: targetStatus } });
+}
+
 // ── Input types ───────────────────────────────────────────────────────────────
 
 export interface CreateElectionInput {
@@ -39,6 +56,10 @@ export interface CreateElectionInput {
   authMethod?: AuthMethod;
   /** Required email domains for EMAIL_DOMAIN method (e.g. ["uon.ac.ke"]). */
   allowedDomains?: string[];
+  /** ISO 3166-1 alpha-2 country code. "KE" for Kenya. Null = open to all. */
+  countryCode?: string;
+  /** Human-readable eligibility note shown in the public voter portal. */
+  eligibilityNote?: string;
 }
 
 export interface UpdateElectionInput {
@@ -49,6 +70,8 @@ export interface UpdateElectionInput {
   endDate?: string | null;
   authMethod?: AuthMethod;
   allowedDomains?: string[];
+  countryCode?: string | null;
+  eligibilityNote?: string | null;
 }
 
 export interface CreatePositionInput {
@@ -103,16 +126,27 @@ export async function createElection(input: CreateElectionInput) {
   };
   const authMethod = input.authMethod ?? defaultMethod();
 
-  return prisma.election.create({
+  // Default eligibility note for government elections if not provided
+  const defaultEligibilityNote = (): string | undefined => {
+    if (input.type === 'GOVERNMENT' && input.countryCode === 'KE') {
+      return 'Open to Kenyan citizens and diaspora registered voters. You must have a valid Kenyan National ID or Passport. Verification is conducted via Persona identity check.';
+    }
+    return undefined;
+  };
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (prisma.election as any).create({
     data: {
-      name:          input.name,
-      description:   input.description,
-      type:          input.type,
-      orgName:       input.orgName,
-      startDate:     input.startDate ? new Date(input.startDate) : undefined,
-      endDate:       input.endDate   ? new Date(input.endDate)   : undefined,
+      name:            input.name,
+      description:     input.description,
+      type:            input.type,
+      orgName:         input.orgName,
+      startDate:       input.startDate ? new Date(input.startDate) : undefined,
+      endDate:         input.endDate   ? new Date(input.endDate)   : undefined,
       authMethod,
-      allowedDomains: input.allowedDomains ?? [],
+      allowedDomains:  input.allowedDomains ?? [],
+      countryCode:     input.countryCode ?? null,
+      eligibilityNote: input.eligibilityNote ?? defaultEligibilityNote() ?? null,
     },
   });
 }
@@ -174,16 +208,19 @@ export async function updateElection(id: string, input: UpdateElectionInput) {
   if (['ACTIVE', 'CLOSED', 'TALLIED', 'ARCHIVED'].includes(election.status)) {
     throw new ServiceError('Cannot edit an election that is already active or completed', 409);
   }
-  return prisma.election.update({
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (prisma.election as any).update({
     where: { id },
     data: {
-      ...(input.name           !== undefined && { name:           input.name           }),
-      ...(input.description    !== undefined && { description:    input.description    }),
-      ...(input.orgName        !== undefined && { orgName:        input.orgName        }),
-      ...(input.startDate      !== undefined && { startDate:      input.startDate ? new Date(input.startDate) : null }),
-      ...(input.endDate        !== undefined && { endDate:        input.endDate   ? new Date(input.endDate)   : null }),
-      ...(input.authMethod     !== undefined && { authMethod:     input.authMethod     }),
-      ...(input.allowedDomains !== undefined && { allowedDomains: input.allowedDomains }),
+      ...(input.name             !== undefined && { name:             input.name             }),
+      ...(input.description      !== undefined && { description:      input.description      }),
+      ...(input.orgName          !== undefined && { orgName:          input.orgName          }),
+      ...(input.startDate        !== undefined && { startDate:        input.startDate ? new Date(input.startDate) : null }),
+      ...(input.endDate          !== undefined && { endDate:          input.endDate   ? new Date(input.endDate)   : null }),
+      ...(input.authMethod       !== undefined && { authMethod:       input.authMethod       }),
+      ...(input.allowedDomains   !== undefined && { allowedDomains:   input.allowedDomains   }),
+      ...(input.countryCode      !== undefined && { countryCode:      input.countryCode      }),
+      ...(input.eligibilityNote  !== undefined && { eligibilityNote:  input.eligibilityNote  }),
     },
   });
 }
@@ -204,11 +241,14 @@ export async function transitionElectionStatus(id: string, nextStatus: ElectionS
   return prisma.election.update({ where: { id }, data: { status: nextStatus } });
 }
 
-export async function deleteElection(id: string) {
+export async function deleteElection(id: string, force = false) {
   const election = await prisma.election.findUnique({ where: { id } });
   if (!election) throw new ServiceError('Election not found', 404);
-  if (election.status !== 'DRAFT') {
-    throw new ServiceError('Only DRAFT elections can be deleted', 409);
+  if (!force && election.status !== 'DRAFT') {
+    throw new ServiceError('Only DRAFT elections can be deleted. Use force=true to delete ARCHIVED elections.', 409);
+  }
+  if (!force && election.status === 'ARCHIVED') {
+    // same message — let force handle it
   }
   await prisma.election.delete({ where: { id } });
 }

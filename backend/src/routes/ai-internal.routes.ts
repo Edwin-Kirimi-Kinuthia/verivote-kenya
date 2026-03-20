@@ -146,8 +146,12 @@ router.get('/monitoring-data', async (_req: Request, res: Response) => {
     const talliedElectionData = await Promise.all(talliedElections.map(async election => {
       const eid = election.id;
       const [blockchainCount, totalCount, homomorphicBallotCount] = await Promise.all([
-        prisma.vote.count({ where: { electionId: eid, blockchainTxHash: { not: null } } }),
-        prisma.vote.count({ where: { electionId: eid } }),
+        // Only CONFIRMED votes — SUPERSEDED votes also carry a txHash (from before
+        // they were replaced) and must be excluded or the AI checker sees a false
+        // "blockchain > tally" discrepancy.
+        prisma.vote.count({ where: { electionId: eid, status: 'CONFIRMED', blockchainTxHash: { not: null } } }),
+        // Exclude SUPERSEDED so totalCount matches what the tally actually counted.
+        prisma.vote.count({ where: { electionId: eid, status: { not: 'SUPERSEDED' } } }),
         // Count CONFIRMED votes that actually had homomorphic ballot data —
         // the tally can only process these, so this is the correct denominator
         // for comparing against totalBallotsProcessed in the integrity check.

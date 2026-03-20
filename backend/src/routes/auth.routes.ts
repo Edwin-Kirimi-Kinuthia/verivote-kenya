@@ -51,12 +51,14 @@ const setPasswordSchema = z.object({
 });
 
 const otpRequestSchema = z.object({
-  nationalId: z.string().regex(/^[A-Za-z0-9]{5,12}$/, 'National ID (5–9 digits) or Passport number (6–12 alphanumeric characters)'),
+  // Accepts: national IDs (5–9 digits), passports (6–12 alphanumeric), and
+  // synthetic IDs for non-KYC election voters (E-<16 hex chars>, 18 chars total).
+  nationalId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9-]{3,19}$/, 'Invalid identifier format'),
   purpose: z.enum(['LOGIN', 'CONTACT_VERIFY', 'CREDENTIAL_RESET']).default('LOGIN'),
 });
 
 const otpVerifySchema = z.object({
-  nationalId: z.string().regex(/^[A-Za-z0-9]{5,12}$/, 'National ID (5–9 digits) or Passport number (6–12 alphanumeric characters)'),
+  nationalId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9-]{3,19}$/, 'Invalid identifier format'),
   code: z.string().regex(/^\d{6}$/, 'OTP must be exactly 6 digits'),
   purpose: z.enum(['LOGIN', 'CONTACT_VERIFY', 'CREDENTIAL_RESET']).default('LOGIN'),
 });

@@ -1,0 +1,49 @@
+# VeriVote Kenya — Per-Client Stack Template
+#
+# DO NOT use this file directly.
+# Use scripts/new-client.sh to spin up a named client instance:
+#
+#   bash scripts/new-client.sh acme 5500 5501
+#
+# Each client gets isolated containers, its own database, and unique ports.
+# The CLIENT_NAME variable is substituted by the deploy script.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: verivote-${CLIENT_NAME}-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: verivote_${CLIENT_NAME}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: verivote_${CLIENT_NAME}
+    ports:
+      - "${DB_PORT}:5432"
+    volumes:
+      - postgres-${CLIENT_NAME}:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U verivote_${CLIENT_NAME} -d verivote_${CLIENT_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: verivote-${CLIENT_NAME}-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT}:6379"
+    volumes:
+      - redis-${CLIENT_NAME}:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres-${CLIENT_NAME}:
+    name: verivote-${CLIENT_NAME}-postgres-data
+  redis-${CLIENT_NAME}:
+    name: verivote-${CLIENT_NAME}-redis-data

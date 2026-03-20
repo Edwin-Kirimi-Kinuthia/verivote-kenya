@@ -1,11 +1,15 @@
 import { Router, type Request, type Response } from 'express';
 import { z } from 'zod';
+import argon2 from 'argon2';
 import { adminService } from '../services/admin.service.js';
 import { ServiceError } from '../services/voter.service.js';
 import { requireAuth, requireAdmin, adminRateLimiter } from '../middleware/index.js';
 import type { AuthenticatedRequest } from '../types/auth.types.js';
 import { personaService } from '../services/persona.service.js';
 import { voterRepository } from '../repositories/index.js';
+import { prisma } from '../database/client.js';
+import { STAFF_MANAGE_ROLES } from '../types/auth.types.js';
+import { requireStaffRole } from '../middleware/auth.middleware.js';
 
 const router: Router = Router();
 
@@ -329,5 +333,73 @@ router.post('/reject/:voterId', async (req: Request, res: Response) => {
     });
   }
 });
+
+/**
+ * POST /api/admin/create-officer-account
+ *
+ * Creates a voter+staff record for an IEBC officer who does not self-register.
+ * Only commission-tier officers may use this endpoint.
+ * The voter is created with REGISTERED status and the supplied password;
+ * the officer can then log in through the normal admin-auth flow.
+ */
+router.post(
+  '/create-officer-account',
+  requireStaffRole(...STAFF_MANAGE_ROLES),
+  async (req: Request, res: Response) => {
+    const schema = z.object({
+      nationalId:        z.string().min(1).max(20),
+      fullName:          z.string().min(2).max(255),
+      email:             z.string().email(),
+      password:          z.string().min(8),
+      phoneNumber:       z.string().optional(),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+      return;
+    }
+    try {
+      const passwordHash = await argon2.hash(parsed.data.password);
+
+      // Upsert: create if new, or update status+password if the account exists but is blocked
+      const existing = await prisma.voter.findUnique({ where: { nationalId: parsed.data.nationalId } });
+      let voter;
+      if (existing) {
+        voter = await prisma.voter.update({
+          where: { nationalId: parsed.data.nationalId },
+          data: {
+            passwordHash,
+            email:          parsed.data.email,
+            emailVerifiedAt: new Date(),
+            status:         'REGISTERED' as any,
+            role:           'ADMIN' as any,
+          },
+        });
+      } else {
+        voter = await prisma.voter.create({
+          data: {
+            nationalId:      parsed.data.nationalId,
+            email:           parsed.data.email,
+            phoneNumber:     parsed.data.phoneNumber ?? null,
+            passwordHash,
+            preferredContact: 'EMAIL',
+            emailVerifiedAt: new Date(), // pre-verified — admin vouches for this account
+            status:          'REGISTERED' as any,
+            role:            'ADMIN' as any,
+          },
+        });
+      }
+
+      res.status(existing ? 200 : 201).json({
+        success: true,
+        data: { voterId: voter.id, nationalId: voter.nationalId, email: voter.email },
+      });
+    } catch (err) {
+      if (err instanceof ServiceError) { res.status(err.statusCode).json({ success: false, error: err.message }); return; }
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      res.status(500).json({ success: false, error: msg });
+    }
+  },
+);
 
 export default router;

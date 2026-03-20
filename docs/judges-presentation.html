@@ -473,16 +473,17 @@
   <ol>
     <li><a href="#startup">Starting the Application</a></li>
     <li><a href="#opening">Opening Statement</a></li>
-    <li><a href="#m1">Milestone 1 — Backend Infrastructure (Wk 1)</a></li>
-    <li><a href="#m2">Milestone 2 — Admin Panel & KYC (Wk 2)</a></li>
-    <li><a href="#m3">Milestone 3 — Voter Voting Flow (Wk 3)</a></li>
-    <li><a href="#m4">Milestone 4 — Encryption & Verification (Wk 4)</a></li>
-    <li><a href="#m5">Milestone 5 — Dual-PIN Distress System (Wk 5)</a></li>
-    <li><a href="#m6">Milestone 6 — Password Auth & OTP (Wk 6)</a></li>
-    <li><a href="#m7">Milestone 7 — WebAuthn Biometrics (Wk 7)</a></li>
-    <li><a href="#m8">Milestone 8 — KYC & UX Hardening (Wk 8)</a></li>
     <li><a href="#design">System Design — How It Works</a></li>
-    <li><a href="#demo">Full Demo Script</a></li>
+    <li><a href="#m1">Milestone 1 — Backend Infrastructure</a></li>
+    <li><a href="#m2">Milestone 2 — Admin Panel &amp; KYC</a></li>
+    <li><a href="#m3">Milestone 3 — Voter Voting Flow</a></li>
+    <li><a href="#m4">Milestone 4 — Encryption &amp; Verification</a></li>
+    <li><a href="#m5">Milestone 5 — Dual-PIN Distress System</a></li>
+    <li><a href="#m6">Milestone 6 — Password Auth &amp; OTP</a></li>
+    <li><a href="#m7">Milestone 7 — WebAuthn Biometrics</a></li>
+    <li><a href="#m8">Milestone 8 — KYC &amp; UX Hardening</a></li>
+    <li><a href="#m9">Milestone 9 — IEBC Hierarchy, Declarations &amp; Paper Ballot</a></li>
+    <li><a href="#demo">Full Demo Script (15 min)</a></li>
     <li><a href="#criteria">Judging Criteria Alignment</a></li>
     <li><a href="#implementation">Complete Implementation Plan</a></li>
     <li><a href="#closing">Closing Statement</a></li>
@@ -1131,9 +1132,90 @@ await api.post('/api/webauthn/register/verify', { credential });
 
 <hr>
 
+<!-- ══════════════════ MILESTONE 9 — ELECTION MANAGEMENT & PAPER BALLOT ══════════════════ -->
+<h2 id="m9">Milestone 9 — IEBC Hierarchy, Declarations &amp; Paper Ballot Audit</h2>
+
+<div class="rationale">
+  <strong>Rationale</strong>
+  Kenya's Elections Act requires results to be declared by the respective Returning Officer at each jurisdiction level before being aggregated upward. VeriVote now enforces this constitutional chain digitally — and prints a physical Form 34A-style audit manifest at each level for paper-trail disputes.
+</div>
+
+<h3>IEBC Constitutional Hierarchy</h3>
+<pre>CHAIRPERSON / COMMISSIONER
+      ↓  recruits
+  NATIONAL_RO           (manages all 47 counties)
+      ↓  recruits
+    COUNTY_RO           (manages one county — can add county-level positions &amp; candidates)
+      ↓  recruits
+      CONSTITUENCY_RO   (manages one constituency)
+          ↓  recruits
+          PRESIDING_OFFICER  (manages one polling station)</pre>
+
+<p>Each officer can only create jurisdiction nodes, positions, and candidates <strong>within their assigned scope</strong> — enforced server-side via an ancestor-walk check on the jurisdiction tree. A County RO cannot accidentally create content for another county.</p>
+
+<h3>Result Declaration by Rank</h3>
+<table>
+  <tr><th>Officer</th><th>Declares</th><th>Form equivalent</th></tr>
+  <tr><td>Presiding Officer</td><td>Polling station results</td><td>Form 34A</td></tr>
+  <tr><td>Constituency RO</td><td>Constituency totals</td><td>Form 34B</td></tr>
+  <tr><td>County RO</td><td>County totals</td><td>Form 34C</td></tr>
+  <tr><td>National RO / Commission</td><td>National results</td><td>Presidential declaration</td></tr>
+</table>
+<p>Declarations can be contested (COMMISSIONER-only) and annulled. Only <code>DECLARED</code> status results appear in the public portal. The system enforces that an officer can only declare results for positions within their own jurisdiction node (verified by walking the jurisdiction tree).</p>
+
+<h3>Paper Ballot Audit Manifest (Form 34A)</h3>
+<p>Admin page <code>/admin/paper-ballots</code> — available to all IEBC officers down to Presiding Officer level:</p>
+<ul>
+  <li>Fetches declared results scoped to the officer's jurisdiction</li>
+  <li>Shows: position → candidate → vote count with bar chart, winner highlighted</li>
+  <li>Counts: <strong>CONFIRMED</strong> (valid), <strong>SUPERSEDED</strong> (revoted — excluded from tally), <strong>PENDING</strong></li>
+  <li>Generates a unique Form Reference code (<code>VV-ELECTIONID-JURISDICTION-TIMESTAMP</code>)</li>
+  <li>Signature blocks for Presiding Officer and agent — ready for physical signing</li>
+  <li>Browser <strong>Print / Save PDF</strong> button — browser print API with sidebar/nav hidden</li>
+  <li>Print event logged with officer ID, jurisdiction, and form reference for the audit trail</li>
+</ul>
+
+<div class="demo-cue">
+  <strong>Demo Cue 9 — Paper Ballot</strong>
+  Log in as a Presiding Officer or Commission account.<br>
+  Navigate to <strong>Paper Ballots</strong> in the sidebar.<br>
+  Select the Kenya General Election 2027 → click <strong>Generate Manifest</strong>.<br>
+  Show the Form 34A-style tally sheet with candidate breakdowns and signature blocks.<br>
+  Click <strong>Print / Save PDF</strong> — show the browser print dialog with sidebar hidden.
+</div>
+
+<h3>Public Elections Portal (Homepage)</h3>
+<p>The homepage (<code>/</code>) is now a <strong>read-only public information portal</strong>:</p>
+<ul>
+  <li>Elections Portal widget lists ACTIVE, NOMINATIONS, and TALLIED elections with live vote counts</li>
+  <li>Clicking any election opens its detail page: eligibility requirements, positions, candidates, and — when TALLIED — declared results with winner highlights</li>
+  <li>No participation CTAs — the public portal is purely informational</li>
+  <li>Registration and voting are blocked at the backend for CLOSED/ARCHIVED elections (status guard on both <code>POST /api/voters/register</code> and <code>castVote()</code>)</li>
+</ul>
+
+<div class="demo-cue">
+  <strong>Demo Cue 10 — Public Portal</strong>
+  Open <code>http://localhost:3001</code> — show the Elections Portal widget with active elections.<br>
+  Click an election → show eligibility badge (🇰🇪 KE), positions, candidates.<br>
+  If election is TALLIED: show declared results section with winner bars.<br>
+  Try to visit <code>/register?electionId=&lt;CLOSED-ID&gt;</code> — backend returns 400 "not accepting registrations".
+</div>
+
+<h3>Per-Client Clean-Slate Deployment</h3>
+<p>Each new organisation gets a completely isolated instance:</p>
+<div class="terminal">
+  <span class="cmd">bash scripts/new-client.sh acme-sacco</span><br>
+  <span class="note"># Creates clients/acme-sacco/.env with fresh DB, Redis, JWT secret, ElGamal key</span><br>
+  <span class="note"># Starts isolated Docker containers (separate ports, separate volumes)</span><br>
+  <span class="note"># Runs Prisma migrations → seeds admin account → prints startup instructions</span>
+</div>
+<p>Each client: unique PostgreSQL database, Redis instance, and ports. No data crosses between clients. A university election and a government election can run concurrently on the same server with zero interference.</p>
+
+<hr>
+
 <!-- ══════════════════ DEMO SCRIPT ══════════════════ -->
 <h2 id="demo">Full Demo Script</h2>
-<p style="color:#6b7280; font-size:13px;">Follow this sequence for a clean 15-minute end-to-end demonstration.</p>
+<p style="color:#6b7280; font-size:13px;">8 parts — ~15 minutes total. Parts 1–5 cover core security. Parts 6–8 cover IEBC governance and public portal.</p>
 
 <h3>Pre-demo checklist</h3>
 <ul class="checklist">
@@ -1192,11 +1274,27 @@ await api.post('/api/webauthn/register/verify', { credential });
   <li>Integrity check: Prisma Studio → alter <code>voteHash</code> → re-verify → red warning</li>
 </ol>
 
-<h3>Part 6 — Biometric login (2 min)</h3>
+<h3>Part 6 — IEBC Hierarchy &amp; Declarations (3 min)</h3>
 <ol>
-  <li><code>/vote</code> → Fingerprint tab</li>
-  <li>Enter National ID → Sign In with Fingerprint / Windows Hello</li>
-  <li>Authenticate → logged in and redirected to ballot</li>
+  <li>Log in as Commission admin → go to <strong>IEBC Officials</strong></li>
+  <li>Show the constitutional hierarchy: Commission → National RO → County RO → Constituency RO → Presiding Officer</li>
+  <li>Go to <strong>Declarations</strong> → show a declared result (TALLIED election)</li>
+  <li>Show that the declaration is scoped to a jurisdiction (county/constituency/ward)</li>
+</ol>
+
+<h3>Part 7 — Paper Ballot Audit (2 min)</h3>
+<ol>
+  <li>Go to <strong>Paper Ballots</strong> in the sidebar</li>
+  <li>Select the Kenya General Election 2027 → click <strong>Generate Manifest</strong></li>
+  <li>Show Form 34A tally: position → candidate → votes, bar chart, winner badge, signature blocks</li>
+  <li>Click <strong>Print / Save PDF</strong> — sidebar disappears, form fills the page</li>
+  <li>Note the Form Reference code in the footer</li>
+</ol>
+
+<h3>Part 8 — Public Elections Portal (1 min)</h3>
+<ol>
+  <li>Open <code>http://localhost:3001</code> — show Elections Portal widget listing live elections</li>
+  <li>Click the Kenya General Election 2027 → show eligibility badge, declared results with winner bars</li>
 </ol>
 
 <hr>
@@ -1770,7 +1868,7 @@ AdminDivision     (type: COUNTY/CONSTITUENCY/WARD, name, code, parentId)</code><
   <span class="label">Read aloud</span>
   Kenya has the technology, the legal framework, and — as I have shown today — the software to run elections that no actor can tamper with. What happened in 2007 and 2017 does not have to happen again.
   <br><br>
-  VeriVote Kenya is not a research concept. It is running software. The encryption, the blockchain anchoring, the distress PIN, the biometric login, the vote verification — every one of those features is live in this repository, tested, and demonstrated in front of you today.
+  VeriVote Kenya is not a research concept. It is running software. The encryption, the blockchain anchoring, the distress PIN, the biometric login, the vote verification, the IEBC constitutional hierarchy, the paper ballot audit trail — every one of those features is live in this repository, tested, and demonstrated in front of you today.
   <br><br>
   Every citizen who registers gets a mathematically-bound digital identity. Every vote they cast is encrypted, hashed, and anchored on a public ledger. Every receipt they receive gives them independent proof — for the first time in Kenya's history — that their vote was correctly recorded.
   <br><br>

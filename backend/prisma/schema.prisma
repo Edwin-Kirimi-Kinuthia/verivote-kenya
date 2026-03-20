@@ -189,11 +189,18 @@ model Election {
   // Allowed email domains for EMAIL_DOMAIN method (e.g. ["uon.ac.ke", "ku.ac.ke"])
   allowedDomains String[]   @default([])      @map("allowed_domains")
 
+  // Eligibility scoping — who may participate.
+  // countryCode: ISO 3166-1 alpha-2 (e.g. "KE" for Kenya). Null = open to all.
+  // eligibilityNote: free-text eligibility description shown in the public portal.
+  countryCode      String? @map("country_code")      @db.VarChar(2)
+  eligibilityNote  String? @map("eligibility_note")  @db.VarChar(500)
+
   positions    Position[]
   votes        Vote[]
   enrollments  ElectionEnrollment[]
   declarations ResultDeclaration[]
   jurisdictions ElectionJurisdiction[]
+  printLogs    PaperBallotPrintLog[]
 
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt      @map("updated_at")
@@ -1013,4 +1020,39 @@ model OtpCode {
 
   @@index([voterId, purpose])
   @@map("otp_codes")
+}
+
+// ============================================================================
+// PAPER BALLOT PRINT LOG
+// ============================================================================
+// Persists every manifest print event so IEBC can audit who printed what,
+// when, and from which jurisdiction. Each row is immutable once created.
+
+model PaperBallotPrintLog {
+  id                String    @id @default(uuid()) @db.Uuid
+
+  electionId        String    @map("election_id") @db.Uuid
+  election          Election  @relation(fields: [electionId], references: [id], onDelete: Cascade)
+
+  // Unique form reference stamped on the printed document (e.g. VV-ABCD1234-NAIROBI-...)
+  formReference     String    @map("form_reference") @db.VarChar(128)
+
+  pageCount         Int       @default(1) @map("page_count")
+
+  // Officer who initiated the print
+  printedByVoterId  String    @map("printed_by_voter_id") @db.Uuid
+  staffId           String?   @map("staff_id") @db.Uuid
+
+  // Jurisdiction at print time (copied from officer's JWT)
+  jurisdictionLevel String    @map("jurisdiction_level") @db.VarChar(32)
+  jurisdictionValue String?   @map("jurisdiction_value") @db.VarChar(128)
+
+  // Number of blockchain-verified votes reported in this manifest
+  blockchainVerifiedCount Int @default(0) @map("blockchain_verified_count")
+
+  printedAt         DateTime  @default(now()) @map("printed_at")
+
+  @@index([electionId])
+  @@index([printedByVoterId])
+  @@map("paper_ballot_print_logs")
 }

@@ -16,6 +16,7 @@ import { requireAuth, requireAdmin, requireStaffRole } from '../middleware/auth.
 import { adminRateLimiter } from '../middleware/rate-limit.middleware.js';
 import { ServiceError } from '../services/voter.service.js';
 import * as svc from '../services/election-mgmt.service.js';
+import { prisma } from '../database/client.js';
 import type { AuthenticatedRequest, StaffRole } from '../types/auth.types.js';
 
 const router: Router = Router();
@@ -72,6 +73,67 @@ function checkScopePermission(req: Request, scope: string, scopeValue?: string |
   return 'Insufficient permissions for this ballot operation.';
 }
 
+/**
+ * For COUNTY_RO / CONSTITUENCY_RO: walk up the jurisdiction tree from `parentId`
+ * and confirm an ancestor node at their jurisdiction level matches their value.
+ * Commission tier and NATIONAL_RO skip this check entirely.
+ */
+async function assertParentInOfficerScope(
+  req: Request, res: Response, parentId: string | undefined,
+): Promise<boolean> {
+  const authReq = req as AuthenticatedRequest;
+  const role = authReq.voter?.staffRole ?? '';
+  const jv   = authReq.voter?.jurisdictionValue ?? null;
+
+  if (!['COUNTY_RO', 'CONSTITUENCY_RO'].includes(role)) return false; // allowed
+
+  if (!parentId) {
+    // Creating a root node — only commission / NATIONAL_RO may do this
+    res.status(403).json({
+      success: false,
+      error: `${role} must provide a parentId. Only commission or national officers may create root nodes.`,
+    });
+    return true;
+  }
+
+  if (!jv) {
+    res.status(403).json({ success: false, error: 'Your account has no jurisdiction value assigned.' });
+    return true;
+  }
+
+  const targetLevel = role === 'COUNTY_RO' ? 'COUNTY' : 'CONSTITUENCY';
+
+  // Walk up the tree from parentId to find a node at the officer's level
+  let currentId: string | null = parentId;
+  while (currentId) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const node: { id: string; name: string; level: string | null; parentId: string | null } | null
+      = await (prisma as any).electionJurisdiction.findUnique({
+        where:  { id: currentId },
+        select: { id: true, name: true, level: true, parentId: true },
+      });
+    if (!node) break;
+    if (node.level === targetLevel) {
+      if (node.name.toLowerCase() !== jv.toLowerCase()) {
+        res.status(403).json({
+          success: false,
+          error: `You can only create nodes within your assigned jurisdiction (${jv}). Found ancestor: ${node.name}.`,
+        });
+        return true;
+      }
+      return false; // authorized
+    }
+    currentId = node.parentId;
+  }
+
+  // No matching ancestor found at the required level
+  res.status(403).json({
+    success: false,
+    error: `No ${targetLevel} ancestor matching your jurisdiction (${jv}) was found in the parent chain.`,
+  });
+  return true;
+}
+
 function handleError(err: unknown, res: Response) {
   if (err instanceof ServiceError) {
     res.status(err.statusCode).json({ success: false, error: err.message });
@@ -111,6 +173,8 @@ router.get('/:electionId', async (req: Request, res: Response) => {
 router.post('/:electionId', ballotWrite, async (req: Request, res: Response) => {
   const parsed = nodeSchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ success: false, error: parsed.error.errors[0].message }); return; }
+  // County/Constituency ROs may only create nodes within their own jurisdiction tree
+  if (await assertParentInOfficerScope(req, res, parsed.data.parentId)) return;
   try {
     res.status(201).json({ success: true, data: await svc.createJurisdiction(req.params.electionId, parsed.data) });
   } catch (e) { handleError(e, res); }

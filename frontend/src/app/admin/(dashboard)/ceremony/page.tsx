@@ -655,13 +655,23 @@ export default function CeremonyPage() {
             ))}
           </div>
 
-          {/* Reset */}
-          <button
-            onClick={handleReset}
-            className="rounded-md border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
-          >
-            Reset &amp; Run Again
-          </button>
+          {/* Actions */}
+          <div className="flex flex-wrap items-center gap-3">
+            {selectedElectionId && (
+              <a
+                href={`/admin/declarations?electionId=${selectedElectionId}`}
+                className="rounded-md bg-green-700 px-5 py-2 text-sm font-semibold text-white hover:bg-green-800"
+              >
+                Declare Results →
+              </a>
+            )}
+            <button
+              onClick={handleReset}
+              className="rounded-md border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+            >
+              Reset &amp; Run Again
+            </button>
+          </div>
         </div>
       )}
     </div>

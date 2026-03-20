@@ -1,10 +1,10 @@
 /**
  * Tally routes — admin-only decryption ceremony and results endpoints.
  *
- * POST /api/tally/start        — Run decryption ceremony (idempotent rerun allowed)
- * GET  /api/tally/results      — Return cached tally (404 if not yet run)
- * POST /api/tally/publish      — Hash results + record on-chain
- * GET  /api/tally/audit-report — Full data blob for PDF generation
+ * POST /api/tally/start            — Run decryption ceremony for an election
+ * GET  /api/tally/results/:electionId — Return cached tally (404 if not yet run)
+ * POST /api/tally/publish          — Hash results + record on-chain
+ * GET  /api/tally/audit-report/:electionId — Full data blob for PDF generation
  */
 import { Router, type Router as ExpressRouter, type Request, type Response } from 'express';
 import { requireAuth, requireAdmin } from '../middleware/auth.middleware.js';
@@ -16,49 +16,59 @@ import {
 
 const router: ExpressRouter = Router();
 
-// All tally routes require admin authentication
 router.use(requireAuth, requireAdmin);
 
-// POST /api/tally/start — run (or re-run) the decryption ceremony
-router.post('/start', requireAdmin, async (_req: Request, res: Response) => {
+// POST /api/tally/start — run (or re-run) the decryption ceremony for an election
+router.post('/start', async (req: Request, res: Response) => {
+  const { electionId } = req.body;
+  if (!electionId) {
+    res.status(400).json({ success: false, error: 'electionId is required' });
+    return;
+  }
   try {
-    const result = await runDecryptionCeremony();
+    const result = await runDecryptionCeremony(electionId);
     res.json({ success: true, tally: result });
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
-    res.status(500).json({ error: 'Ceremony failed', detail: msg });
+    res.status(500).json({ success: false, error: 'Ceremony failed', detail: msg });
   }
 });
 
-// GET /api/tally/results — return cached tally or 404
-router.get('/results', requireAdmin, (_req: Request, res: Response) => {
-  const tally = getCachedTally();
+// GET /api/tally/results/:electionId — return cached tally or 404
+router.get('/results/:electionId', (req: Request, res: Response) => {
+  const tally = getCachedTally(req.params.electionId);
   if (!tally) {
-    res.status(404).json({ error: 'No tally results available. Run POST /api/tally/start first.' });
+    res.status(404).json({ success: false, error: 'No tally results for this election. Run POST /api/tally/start first.' });
     return;
   }
-  res.json({ tally });
+  res.json({ success: true, tally });
 });
 
 // POST /api/tally/publish — publish results hash on-chain
-router.post('/publish', requireAdmin, async (_req: Request, res: Response) => {
+router.post('/publish', async (req: Request, res: Response) => {
+  const { electionId } = req.body;
+  if (!electionId) {
+    res.status(400).json({ success: false, error: 'electionId is required' });
+    return;
+  }
   try {
-    const { txHash, hash } = await publishTallyHash();
+    const { txHash, hash } = await publishTallyHash(electionId);
     res.json({ success: true, txHash, resultsHash: hash });
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
-    res.status(400).json({ error: msg });
+    res.status(400).json({ success: false, error: msg });
   }
 });
 
-// GET /api/tally/audit-report — full data for PDF download
-router.get('/audit-report', requireAdmin, (_req: Request, res: Response) => {
-  const tally = getCachedTally();
+// GET /api/tally/audit-report/:electionId — full data for PDF download
+router.get('/audit-report/:electionId', (req: Request, res: Response) => {
+  const tally = getCachedTally(req.params.electionId);
   if (!tally) {
-    res.status(404).json({ error: 'No tally results. Run ceremony first.' });
+    res.status(404).json({ success: false, error: 'No tally results. Run ceremony first.' });
     return;
   }
   res.json({
+    success: true,
     reportType: 'IEBC_ELECTION_AUDIT_REPORT',
     generatedAt: new Date().toISOString(),
     tally,
