@@ -31,8 +31,12 @@ export interface PositionTally {
   positionTitle: string;
   candidates: CandidateTally[];
   totalVotes: number;
+  /** 'TIE' when two or more candidates share the highest vote count. */
   winner: string;
   winnerParty: string;
+  isTied: boolean;
+  /** All candidates sharing the highest vote count (length > 1 means a tie). */
+  tiedCandidates: string[];
 }
 
 export interface StationBreakdown {
@@ -265,15 +269,30 @@ export async function runDecryptionCeremony(electionId: string): Promise<TallyRe
       }))
       .sort((a, b) => b.votes - a.votes);
 
-    log.push(`[${ts()}] ${pos.title} winner: ${candidates[0]?.candidateName ?? 'N/A'} (${candidates[0]?.votes ?? 0} votes, ${candidates[0]?.percentage ?? 0}%)`);
+    // Detect ties — do NOT assume the first candidate alphabetically wins
+    const topVotes = candidates[0]?.votes ?? 0;
+    const tiedCandidates = topVotes > 0
+      ? candidates.filter((c) => c.votes === topVotes).map((c) => c.candidateName)
+      : [];
+    const isTied = tiedCandidates.length > 1;
+    const winner = isTied ? 'TIE' : (candidates[0]?.candidateName ?? 'N/A');
+    const winnerParty = isTied ? 'TIE' : (candidates[0]?.party ?? 'N/A');
+
+    if (isTied) {
+      log.push(`[${ts()}] ${pos.title}: TIE — ${tiedCandidates.join(' / ')} each with ${topVotes} vote(s) — no winner declared`);
+    } else {
+      log.push(`[${ts()}] ${pos.title} winner: ${winner} (${candidates[0]?.votes ?? 0} votes, ${candidates[0]?.percentage ?? 0}%)`);
+    }
 
     return {
       positionId: pos.id,
       positionTitle: pos.title,
       candidates,
       totalVotes: totalPos,
-      winner: candidates[0]?.candidateName ?? 'N/A',
-      winnerParty: candidates[0]?.party ?? 'N/A',
+      winner,
+      winnerParty,
+      isTied,
+      tiedCandidates,
     };
   });
 
@@ -306,6 +325,8 @@ export async function runDecryptionCeremony(electionId: string): Promise<TallyRe
       positionTitle: p.positionTitle,
       totalVotes: p.totalVotes,
       winner: p.winner,
+      isTied: p.isTied,
+      tiedCandidates: p.tiedCandidates,
       candidates: p.candidates.map((c) => ({ candidateId: c.candidateId, votes: c.votes })),
     })),
   };

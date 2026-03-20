@@ -269,11 +269,13 @@ export default function PublicElectionDetailPage({ params }: { params: Promise<{
             </div>
             <div className="divide-y divide-gray-100">
               {declarations.map((decl) => {
-                const tally = decl.tallySnapshot;
-                const entries = tally ? Object.entries(tally) : [];
-                const total = entries.reduce((s, [, v]) => s + v, 0);
-                const sorted = [...entries].sort(([, a], [, b]) => b - a);
-                const winner = sorted[0];
+                const tally   = decl.tallySnapshot;
+                const entries = tally ? Object.entries(tally) as [string, number][] : [];
+                const total   = entries.reduce((s, [, v]) => s + v, 0);
+                const sorted  = [...entries].sort(([, a], [, b]) => b - a);
+                const topVotes = sorted[0]?.[1] ?? 0;
+                const tied    = topVotes > 0 ? sorted.filter(([, v]) => v === topVotes) : [];
+                const isTied  = tied.length > 1;
                 return (
                   <div key={decl.id} className="p-4">
                     <div className="flex flex-wrap items-center gap-2 mb-3">
@@ -298,28 +300,33 @@ export default function PublicElectionDetailPage({ params }: { params: Promise<{
                     </div>
                     {sorted.length > 0 ? (
                       <div className="space-y-2">
-                        {sorted.map(([name, votes], i) => {
-                          const pct = total > 0 ? Math.round((votes / total) * 100) : 0;
+                        {sorted.map(([name, votes]) => {
+                          const pct   = total > 0 ? Math.round((votes / total) * 100) : 0;
+                          const isTop = votes === topVotes && topVotes > 0;
                           return (
                             <div key={name}>
                               <div className="flex justify-between text-xs mb-1">
-                                <span className={`font-medium ${i === 0 ? "text-green-700" : "text-gray-600"}`}>
-                                  {name} {i === 0 ? "🏆" : ""}
+                                <span className={`font-medium ${isTop ? (isTied ? "text-amber-700" : "text-green-700") : "text-gray-600"}`}>
+                                  {name} {isTop && !isTied ? "🏆" : isTop && isTied ? "=" : ""}
                                 </span>
                                 <span className="text-gray-500">{votes.toLocaleString()} ({pct}%)</span>
                               </div>
                               <div className="w-full bg-gray-100 rounded-full h-1.5">
                                 <div
-                                  className={`h-1.5 rounded-full ${i === 0 ? "bg-green-500" : "bg-blue-400"}`}
+                                  className={`h-1.5 rounded-full ${isTop ? (isTied ? "bg-amber-400" : "bg-green-500") : "bg-blue-400"}`}
                                   style={{ width: `${pct}%` }}
                                 />
                               </div>
                             </div>
                           );
                         })}
-                        {winner && (
+                        {isTied ? (
+                          <p className="text-xs text-amber-700 font-medium pt-1 border-t border-amber-100">
+                            TIE — {tied.map(([n]) => n).join(" / ")} each received {topVotes.toLocaleString()} of {total.toLocaleString()} votes. No winner declared.
+                          </p>
+                        ) : sorted[0] && (
                           <p className="text-xs text-green-700 font-medium pt-1 border-t border-green-100">
-                            Winner: <strong>{winner[0]}</strong> — {winner[1].toLocaleString()} of {total.toLocaleString()} votes
+                            Winner: <strong>{sorted[0][0]}</strong> — {sorted[0][1].toLocaleString()} of {total.toLocaleString()} votes
                           </p>
                         )}
                       </div>

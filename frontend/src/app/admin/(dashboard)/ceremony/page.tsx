@@ -577,9 +577,11 @@ export default function CeremonyPage() {
 
           {/* Per-position results */}
           {Object.entries(byPosition).map(([position, candidates]) => {
-            const total  = candidates.reduce((s, c) => s + c.votes, 0);
-            const sorted = [...candidates].sort((a, b) => b.votes - a.votes);
-            const winner = sorted[0];
+            const total   = candidates.reduce((s, c) => s + c.votes, 0);
+            const sorted  = [...candidates].sort((a, b) => b.votes - a.votes);
+            const topVotes = sorted[0]?.votes ?? 0;
+            const tied    = topVotes > 0 ? sorted.filter((c) => c.votes === topVotes) : [];
+            const isTied  = tied.length > 1;
             return (
               <div key={position} className="rounded-xl border border-gray-200 bg-white overflow-hidden shadow-sm">
                 <div className="bg-gray-900 text-white px-4 py-3 flex items-center justify-between">
@@ -588,18 +590,21 @@ export default function CeremonyPage() {
                 </div>
                 <div className="p-4 space-y-3">
                   {sorted.map((c, i) => {
-                    const pct = total > 0 ? Math.round((c.votes / total) * 100) : 0;
+                    const pct      = total > 0 ? Math.round((c.votes / total) * 100) : 0;
+                    const isTop    = c.votes === topVotes && topVotes > 0;
+                    const barColor = isTop ? (isTied ? "bg-amber-400" : "bg-green-500") : "bg-blue-400";
+                    const textColor = isTop ? (isTied ? "text-amber-700" : "text-green-700") : "text-gray-700";
                     return (
                       <div key={c.candidateId}>
                         <div className="flex justify-between text-sm mb-1">
-                          <span className={`font-medium ${i === 0 ? "text-green-700" : "text-gray-700"}`}>
-                            {c.candidateName} {i === 0 ? "🏆" : ""}
+                          <span className={`font-medium ${textColor}`}>
+                            {c.candidateName} {isTop && !isTied ? "🏆" : isTop && isTied ? "=" : ""}
                           </span>
                           <span className="text-gray-500">{c.votes} ({pct}%)</span>
                         </div>
                         <div className="w-full bg-gray-100 rounded-full h-2">
                           <div
-                            className={`h-2 rounded-full transition-all ${i === 0 ? "bg-green-500" : "bg-blue-400"}`}
+                            className={`h-2 rounded-full transition-all ${barColor}`}
                             style={{ width: `${pct}%` }}
                           />
                         </div>
@@ -607,9 +612,15 @@ export default function CeremonyPage() {
                     );
                   })}
                 </div>
-                <div className="bg-green-50 border-t border-green-200 px-4 py-2 text-xs text-green-700">
-                  Winner: <strong>{winner?.candidateName}</strong> with {winner?.votes} votes
-                </div>
+                {isTied ? (
+                  <div className="bg-amber-50 border-t border-amber-200 px-4 py-2 text-xs text-amber-700">
+                    <strong>TIE</strong> — {tied.map((c) => c.candidateName).join(" / ")} each with {topVotes} votes. No winner declared.
+                  </div>
+                ) : (
+                  <div className="bg-green-50 border-t border-green-200 px-4 py-2 text-xs text-green-700">
+                    Winner: <strong>{sorted[0]?.candidateName}</strong> with {sorted[0]?.votes} votes
+                  </div>
+                )}
               </div>
             );
           })}
