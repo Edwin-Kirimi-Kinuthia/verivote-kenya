@@ -44,6 +44,11 @@ export const STATUS_CONFIG: Record<
     color: "text-gray-800",
     bg: "bg-gray-200",
   },
+  DECEASED: {
+    label: "Deceased",
+    color: "text-gray-100",
+    bg: "bg-gray-700",
+  },
 };
 
 import type { StaffRole } from "./types";

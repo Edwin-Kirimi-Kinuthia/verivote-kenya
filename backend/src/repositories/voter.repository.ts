@@ -194,6 +194,17 @@ export class VoterRepository extends BaseRepository<Voter, CreateVoterInput, Upd
     }) as Promise<Voter>;
   }
 
+  async markDeceased(id: string, sbtRevokedAt: Date | null): Promise<Voter> {
+    return prisma.voter.update({
+      where: { id },
+      data: {
+        status:       'DECEASED',
+        deceasedAt:   new Date(),
+        sbtRevokedAt: sbtRevokedAt,
+      },
+    }) as Promise<Voter>;
+  }
+
   async findAdmins(page = 1, limit = 20): Promise<PaginatedResponse<Voter>> {
     const skip = (page - 1) * limit;
     const [data, total] = await Promise.all([

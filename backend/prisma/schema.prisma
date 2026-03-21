@@ -59,6 +59,7 @@ enum VoterStatus {
   REVOTED               // Voter cast a new vote, replacing their previous one
   DISTRESS_FLAGGED      // Voter used distress PIN - flagged for official review
   SUSPENDED             // Account suspended by administrators
+  DECEASED              // Voter has died — login/voting blocked, SBT revoked on-chain
 }
 
 /// Status of votes in the system
@@ -372,6 +373,11 @@ model Voter {
   
   // When the SBT was minted on the blockchain
   sbtMintedAt       DateTime?    @map("sbt_minted_at")
+
+  // Set when a voter is marked DECEASED — records time of administrative action
+  deceasedAt        DateTime?    @map("deceased_at")
+  // Set when the SBT is revoked on-chain after death notification
+  sbtRevokedAt      DateTime?    @map("sbt_revoked_at")
 
   // --------------------------------------------------------------------------
   // AUTHENTICATION

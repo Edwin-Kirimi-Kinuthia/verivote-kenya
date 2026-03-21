@@ -7,6 +7,7 @@ import { requireAuth, requireAdmin, adminRateLimiter } from '../middleware/index
 import type { AuthenticatedRequest } from '../types/auth.types.js';
 import { personaService } from '../services/persona.service.js';
 import { voterRepository } from '../repositories/index.js';
+import { blockchainService } from '../services/blockchain.service.js';
 import { prisma } from '../database/client.js';
 import { STAFF_MANAGE_ROLES } from '../types/auth.types.js';
 import { requireStaffRole } from '../middleware/auth.middleware.js';
@@ -371,7 +372,9 @@ router.post(
             passwordHash,
             email:          parsed.data.email,
             emailVerifiedAt: new Date(),
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             status:         'REGISTERED' as any,
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             role:           'ADMIN' as any,
           },
         });
@@ -384,7 +387,9 @@ router.post(
             passwordHash,
             preferredContact: 'EMAIL',
             emailVerifiedAt: new Date(), // pre-verified — admin vouches for this account
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             status:          'REGISTERED' as any,
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             role:            'ADMIN' as any,
           },
         });
@@ -393,6 +398,70 @@ router.post(
       res.status(existing ? 200 : 201).json({
         success: true,
         data: { voterId: voter.id, nationalId: voter.nationalId, email: voter.email },
+      });
+    } catch (err) {
+      if (err instanceof ServiceError) { res.status(err.statusCode).json({ success: false, error: err.message }); return; }
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      res.status(500).json({ success: false, error: msg });
+    }
+  },
+);
+
+/**
+ * POST /api/admin/voters/:voterId/mark-deceased
+ *
+ * Marks a voter as DECEASED:
+ *   1. Validates the voter exists and is not already DECEASED.
+ *   2. Revokes their SBT on-chain (if minted), which prevents any future
+ *      hasToken() check from succeeding.
+ *   3. Sets status = DECEASED + records deceasedAt / sbtRevokedAt timestamps.
+ *
+ * Votes already cast before this action are NOT touched — they remain CONFIRMED
+ * and count in the tally. Only future login and voting attempts are blocked.
+ *
+ * Restricted to COMMISSIONER and commission-equivalent roles.
+ */
+router.post(
+  '/voters/:voterId/mark-deceased',
+  requireStaffRole('COMMISSIONER', 'CHAIRPERSON', 'COMMISSION_SECRETARY'),
+  async (req: Request, res: Response) => {
+    try {
+      const voter = await voterRepository.findById(req.params.voterId);
+      if (!voter) {
+        res.status(404).json({ success: false, error: 'Voter not found' });
+        return;
+      }
+      if (voter.status === 'DECEASED') {
+        res.status(409).json({ success: false, error: 'Voter is already marked as deceased' });
+        return;
+      }
+
+      // Revoke SBT on-chain if one was minted
+      let sbtRevokedAt: Date | null = null;
+      let sbtRevokeTxHash: string | null = null;
+      if (voter.sbtTokenId) {
+        const { txHash } = await blockchainService.revokeSBT(voter.sbtTokenId);
+        sbtRevokedAt = new Date();
+        sbtRevokeTxHash = txHash;
+      }
+
+      const updated = await voterRepository.markDeceased(voter.id, sbtRevokedAt);
+
+      res.json({
+        success: true,
+        data: {
+          voterId:         updated.id,
+          nationalId:      updated.nationalId,
+          status:          updated.status,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          deceasedAt:      (updated as any).deceasedAt,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          sbtRevokedAt:    (updated as any).sbtRevokedAt,
+          sbtRevokeTxHash: sbtRevokeTxHash,
+          note:            voter.sbtTokenId
+            ? 'SBT revoked on-chain. Login and voting permanently blocked. Past votes unaffected.'
+            : 'No SBT was minted. Login and voting permanently blocked. Past votes unaffected.',
+        },
       });
     } catch (err) {
       if (err instanceof ServiceError) { res.status(err.statusCode).json({ success: false, error: err.message }); return; }

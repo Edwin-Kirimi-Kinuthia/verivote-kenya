@@ -15,7 +15,8 @@ export type VoterStatus =
   | 'VOTED'
   | 'REVOTED'
   | 'DISTRESS_FLAGGED'
-  | 'SUSPENDED';
+  | 'SUSPENDED'
+  | 'DECEASED';
 
 export type VoteStatus = 
   | 'PENDING'
