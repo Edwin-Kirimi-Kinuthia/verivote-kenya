@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>ElGamal Encryption — VeriVote Kenya</title>
+<style>
+  *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+  html, body {
+    width:100%; height:100%; overflow:hidden;
+    background:#050810; font-family:'Segoe UI',sans-serif;
+  }
+  #root {
+    width:1280px; height:720px;
+    position:absolute; top:0; left:0;
+    transform-origin:top left;
+    background:#050810; overflow:hidden;
+  }
+  canvas { position:absolute; top:0; left:0; width:1280px; height:720px; }
+  #ui    { position:absolute; top:0; left:0; width:1280px; height:720px; pointer-events:none; }
+
+  #title {
+    position:absolute; top:32px; left:50%; transform:translateX(-50%);
+    font-size:28px; font-weight:900; color:#06b6d4; letter-spacing:-.01em;
+    opacity:0; transition:opacity .8s; text-shadow:0 0 40px #06b6d480; white-space:nowrap;
+  }
+  #subtitle {
+    position:absolute; top:70px; left:50%; transform:translateX(-50%);
+    font-size:14px; color:#6b7280; opacity:0; transition:opacity .8s; white-space:nowrap;
+  }
+  .box {
+    position:absolute; border-radius:14px; border:2px solid;
+    padding:18px 22px; opacity:0; transition:opacity .6s, transform .6s;
+    transform:translateY(20px);
+  }
+  .box.show { opacity:1; transform:translateY(0); }
+  .box-title { font-size:11px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; margin-bottom:10px; }
+  .box-body  { font-family:'Courier New',monospace; font-size:13px; line-height:1.9; color:#e5e7eb; }
+  .hl        { font-weight:900; }
+  .hl-cyan   { color:#22d3ee; }
+  .hl-gold   { color:#fbbf24; }
+  .hl-green  { color:#4ade80; }
+  .hl-purple { color:#c084fc; }
+
+  .box.setup   { border-color:#06b6d4; background:#030d14; left:40px;  top:120px; width:340px; }
+  .box.encrypt { border-color:#fbbf24; background:#140d00; left:470px; top:120px; width:360px; }
+  .box.stored  { border-color:#7c3aed; background:#0e0516; left:900px; top:120px; width:340px; }
+  .box.setup   .box-title { color:#22d3ee; }
+  .box.encrypt .box-title { color:#fbbf24; }
+  .box.stored  .box-title { color:#c084fc; }
+
+  #vote-chip {
+    position:absolute; left:160px; top:360px;
+    background:#0d2818; border:2px solid #4ade80; border-radius:12px;
+    padding:16px 24px; text-align:center; opacity:0;
+    transition:opacity .6s; width:180px;
+  }
+  #vote-chip .vc-label { font-size:10px; color:#6b7280; letter-spacing:.06em; text-transform:uppercase; }
+  #vote-chip .vc-val   { font-size:18px; font-weight:900; color:#4ade80; margin-top:4px; }
+
+  #cipher-box {
+    position:absolute; left:900px; top:380px;
+    background:#0e0516; border:2px solid #7c3aed; border-radius:12px;
+    padding:16px 20px; opacity:0; transition:opacity .6s; width:340px;
+  }
+  #cipher-box .cb-label { font-size:10px; color:#6b7280; letter-spacing:.06em; text-transform:uppercase; margin-bottom:8px; }
+  #cipher-box .cb-val   { font-family:monospace; font-size:11px; color:#a78bfa; line-height:1.8; word-break:break-all; }
+
+  #math-step {
+    position:absolute; left:50%; transform:translateX(-50%); bottom:100px;
+    font-family:monospace; font-size:16px; color:#fbbf24;
+    opacity:0; transition:opacity .5s; white-space:nowrap;
+    text-shadow:0 0 20px #fbbf2460;
+  }
+  #step-indicator {
+    position:absolute; bottom:56px; left:50%; transform:translateX(-50%);
+    display:flex; gap:8px;
+  }
+  .dot { width:8px; height:8px; border-radius:50%; background:#1f2937; transition:background .4s; }
+  .dot.active { background:#06b6d4; }
+
+  #replay {
+    position:absolute; bottom:24px; left:24px;
+    background:#1f2937; color:#9ca3af; border:1px solid #374151;
+    border-radius:8px; padding:8px 16px; font-size:12px;
+    cursor:pointer; pointer-events:all; font-weight:600;
+  }
+  #replay:hover { background:#374151; color:#fff; }
+</style>
+</head>
+<body>
+<div id="root">
+  <canvas id="c"></canvas>
+  <div id="ui">
+    <div id="title">ElGamal Encryption</div>
+    <div id="subtitle">Every vote is encrypted the moment it's cast — never stored as plaintext</div>
+
+    <div class="box setup" id="box-setup">
+      <div class="box-title">① Key Generation (once per election)</div>
+      <div class="box-body">
+        prime <span class="hl hl-cyan">p</span> = 2048-bit FFDHE<br>
+        generator <span class="hl hl-cyan">g</span> = standard group gen.<br>
+        private key <span class="hl hl-gold">x</span> = random secret<br>
+        public key <span class="hl hl-green">h</span> = g<sup>x</sup> mod p
+      </div>
+    </div>
+
+    <div class="box encrypt" id="box-encrypt">
+      <div class="box-title">② Encryption (at vote time)</div>
+      <div class="box-body">
+        vote <span class="hl hl-green">m</span> = candidate index<br>
+        random <span class="hl hl-cyan">r</span> = fresh each vote<br>
+        <span class="hl hl-gold">C1</span> = g<sup>r</sup> mod p<br>
+        <span class="hl hl-gold">C2</span> = m × h<sup>r</sup> mod p
+      </div>
+    </div>
+
+    <div class="box stored" id="box-stored">
+      <div class="box-title">③ What's stored in the DB</div>
+      <div class="box-body">
+        <span class="hl hl-purple">C1</span> = opaque integer<br>
+        <span class="hl hl-purple">C2</span> = opaque integer<br><br>
+        <span style="color:#4b5563">// m unrecoverable without x</span>
+      </div>
+    </div>
+
+    <div id="vote-chip">
+      <div class="vc-label">Voter selects</div>
+      <div class="vc-val">Candidate A</div>
+    </div>
+
+    <div id="cipher-box">
+      <div class="cb-label">Ciphertext stored</div>
+      <div class="cb-val">C1: 7f3a9b2e1d48c7...<br>C2: 4c8d2f9e3a17b6...</div>
+    </div>
+
+    <div id="math-step">C1 = g<sup>r</sup> mod p &nbsp;·&nbsp; C2 = m × h<sup>r</sup> mod p</div>
+
+    <div id="step-indicator">
+      <div class="dot" id="d0"></div><div class="dot" id="d1"></div>
+      <div class="dot" id="d2"></div><div class="dot" id="d3"></div>
+      <div class="dot" id="d4"></div>
+    </div>
+
+    <button id="replay" onclick="startAnimation()">↺ Replay</button>
+  </div>
+</div>
+<script>
+  // ── Responsive scaling ──────────────────────────────────────
+  const root = document.getElementById('root');
+  function fit() {
+    const s = Math.min(window.innerWidth / 1280, window.innerHeight / 720);
+    root.style.transform = 'scale(' + s + ')';
+    root.style.left = ((window.innerWidth  - 1280 * s) / 2) + 'px';
+    root.style.top  = ((window.innerHeight - 720  * s) / 2) + 'px';
+  }
+  window.addEventListener('resize', fit);
+  fit();
+
+  // ── Canvas setup ────────────────────────────────────────────
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+  canvas.width = 1280; canvas.height = 720;
+
+  const particles = [];
+  function spawnParticles(x, y, color, n=12) {
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2, s = 1 + Math.random() * 3;
+      particles.push({ x, y, vx: Math.cos(a)*s, vy: Math.sin(a)*s,
+        life: 1, decay: 0.015 + Math.random()*0.02, size: 2 + Math.random()*4, color });
+    }
+  }
+
+  const beams = [];
+  function addBeam(x1, y1, x2, y2, color) {
+    beams.push({ x1, y1, x2, y2, color, progress: 0, life: 1 });
+  }
+
+  function loop() {
+    ctx.clearRect(0, 0, 1280, 720);
+    ctx.strokeStyle = '#0f172a'; ctx.lineWidth = 1;
+    for (let x = 0; x < 1280; x += 40) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,720); ctx.stroke(); }
+    for (let y = 0; y < 720;  y += 40) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(1280,y); ctx.stroke(); }
+
+    beams.forEach(b => {
+      b.progress = Math.min(1, b.progress + 0.018);
+      if (b.progress >= 1) b.life -= 0.008;
+      const ex = b.x1 + (b.x2 - b.x1) * b.progress;
+      const ey = b.y1 + (b.y2 - b.y1) * b.progress;
+      ctx.save();
+      ctx.shadowBlur = 16; ctx.shadowColor = b.color;
+      ctx.strokeStyle = b.color; ctx.lineWidth = 2.5; ctx.globalAlpha = b.life;
+      ctx.beginPath(); ctx.moveTo(b.x1, b.y1); ctx.lineTo(ex, ey); ctx.stroke();
+      if (b.progress > 0.97) {
+        const ang = Math.atan2(b.y2 - b.y1, b.x2 - b.x1);
+        ctx.fillStyle = b.color; ctx.beginPath();
+        ctx.moveTo(ex, ey);
+        ctx.lineTo(ex - 12*Math.cos(ang-0.4), ey - 12*Math.sin(ang-0.4));
+        ctx.lineTo(ex - 12*Math.cos(ang+0.4), ey - 12*Math.sin(ang+0.4));
+        ctx.closePath(); ctx.fill();
+      }
+      ctx.restore();
+    });
+    for (let i = beams.length-1; i >= 0; i--) if (beams[i].life <= 0) beams.splice(i,1);
+
+    particles.forEach(p => {
+      p.x += p.vx; p.y += p.vy; p.vy += 0.05; p.life -= p.decay;
+      ctx.save(); ctx.globalAlpha = p.life; ctx.fillStyle = p.color;
+      ctx.shadowBlur = 8; ctx.shadowColor = p.color;
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI*2); ctx.fill(); ctx.restore();
+    });
+    for (let i = particles.length-1; i >= 0; i--) if (particles[i].life <= 0) particles.splice(i,1);
+
+    requestAnimationFrame(loop);
+  }
+  loop();
+
+  function show(id) { const el = document.getElementById(id); if(el){ el.style.opacity='1'; el.classList.add('show'); } }
+  function setDot(n) { document.querySelectorAll('.dot').forEach((d,i) => d.classList.toggle('active', i===n)); }
+
+  const timers = [];
+  function delay(fn, ms) { timers.push(setTimeout(fn, ms)); }
+  function clearAll() { timers.forEach(clearTimeout); timers.length = 0; }
+
+  function startAnimation() {
+    clearAll(); beams.length = 0; particles.length = 0;
+    ['title','subtitle','box-setup','box-encrypt','box-stored','vote-chip','cipher-box','math-step'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) { el.style.opacity = '0'; el.classList.remove('show'); }
+    });
+    setDot(-1);
+
+    delay(() => { show('title'); show('subtitle'); }, 300);
+    delay(() => { show('box-setup');   setDot(0); spawnParticles(210, 200, '#22d3ee', 20); }, 1000);
+    delay(() => { show('box-encrypt'); setDot(1); spawnParticles(650, 200, '#fbbf24', 20); }, 2000);
+    delay(() => { show('box-stored');  setDot(2); spawnParticles(1070,200, '#c084fc', 20); }, 3000);
+    delay(() => { setDot(3); show('vote-chip'); spawnParticles(250, 400, '#4ade80', 16); }, 4000);
+    delay(() => { addBeam(340,400, 470,240, '#fbbf24'); spawnParticles(470,240,'#fbbf24',10); }, 4800);
+    delay(() => { show('math-step'); }, 5500);
+    delay(() => { addBeam(830,240, 900,240, '#7c3aed'); }, 5900);
+    delay(() => { setDot(4); show('cipher-box'); spawnParticles(1070,430,'#a78bfa',20); }, 6500);
+    delay(() => { spawnParticles(1070,200,'#c084fc',30); spawnParticles(1070,430,'#a78bfa',30); }, 7300);
+  }
+  startAnimation();
+</script>
+</body>
+</html>

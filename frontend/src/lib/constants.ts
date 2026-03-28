@@ -44,6 +44,11 @@ export const STATUS_CONFIG: Record<
     color: "text-gray-800",
     bg: "bg-gray-200",
   },
+  DECEASED: {
+    label: "Deceased",
+    color: "text-gray-100",
+    bg: "bg-gray-700",
+  },
 };
 
 import type { StaffRole } from "./types";
@@ -69,6 +74,7 @@ export const ALL_NAV_ITEMS = [
   { href: "/admin/elections",        label: "Elections",         icon: "ballot",          allowedRoles: COMMISSION },
   { href: "/admin/election-ceremony",label: "Election Ceremony", icon: "chart-bar",       allowedRoles: [...COMMISSION, "NATIONAL_RO","ICT_ADMIN"] as StaffRole[] },
   { href: "/admin/declarations",     label: "Declarations",      icon: "document-check",  allowedRoles: [...COMMISSION, "NATIONAL_RO","COUNTY_RO","CONSTITUENCY_RO"] as StaffRole[] },
+  { href: "/admin/paper-ballots",    label: "Paper Ballots",     icon: "ballot",          allowedRoles: [...COMMISSION, "NATIONAL_RO","COUNTY_RO","CONSTITUENCY_RO","PRESIDING_OFFICER"] as StaffRole[] },
   { href: "/admin/polling-stations", label: "Polling Stations",  icon: "map-pin",         allowedRoles: [...FIELD, "PRESIDING_OFFICER","DEPUTY_PRESIDING_OFFICER"] as StaffRole[] },
 ];
 

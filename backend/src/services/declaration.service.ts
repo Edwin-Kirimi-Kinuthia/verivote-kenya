@@ -6,6 +6,14 @@
  *
  * Declaration lifecycle:
  *   DRAFT → DECLARED → CONTESTED (optional) → ANNULLED (optional)
+ *
+ * Authorization rules:
+ *   - Commission tier (CHAIRPERSON, COMMISSIONER, COMMISSION_SECRETARY,
+ *     DEPUTY_COMMISSION_SECRETARY) and NATIONAL_RO may declare any position.
+ *   - All other officers may declare ONLY positions whose jurisdictionId
+ *     exactly matches a node they are personInCharge of.
+ *   - Positions with no jurisdictionId are commission-tier only.
+ *   - An officer may VIEW (but not declare) positions in descendant nodes.
  */
 
 import { prisma } from '../database/client.js';
@@ -15,23 +23,83 @@ import type {
 } from '../types/database.types.js';
 import { logger } from '../lib/logger.js';
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+const COMMISSION_TIER = new Set([
+  'CHAIRPERSON', 'COMMISSIONER', 'COMMISSION_SECRETARY', 'DEPUTY_COMMISSION_SECRETARY', 'NATIONAL_RO',
+]);
+
+/**
+ * Collect all descendant node IDs for a set of parent node IDs (BFS).
+ * Used to determine which positions are "viewable below" an officer.
+ */
+async function getDescendantNodeIds(parentIds: string[]): Promise<string[]> {
+  if (parentIds.length === 0) return [];
+  const result: string[] = [];
+  let frontier = [...parentIds];
+  while (frontier.length > 0) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const children: { id: string }[] = await (prisma as any).electionJurisdiction.findMany({
+      where:  { parentId: { in: frontier } },
+      select: { id: true },
+    });
+    frontier = children.map((c) => c.id);
+    result.push(...frontier);
+  }
+  return result;
+}
+
 // ── CRUD ─────────────────────────────────────────────────────────────────────
 
 export async function createDeclaration(
   input: CreateDeclarationInput,
 ): Promise<ResultDeclarationRecord> {
-  // Validate election exists and is in CLOSED or TALLIED state
+  // Validate election exists and is CLOSED or TALLIED
   const election = await prisma.election.findUnique({ where: { id: input.electionId } });
   if (!election) throw new ServiceError('Election not found', 404);
   if (!['CLOSED', 'TALLIED'].includes(election.status)) {
     throw new ServiceError('Declarations can only be made for CLOSED or TALLIED elections', 400);
   }
 
-  // Validate position belongs to election
+  // Validate position belongs to this election
   const position = await prisma.position.findUnique({ where: { id: input.positionId } });
   if (!position) throw new ServiceError('Position not found', 404);
   if (position.electionId !== input.electionId) {
     throw new ServiceError('Position does not belong to this election', 400);
+  }
+
+  // ── Authorization ──────────────────────────────────────────────────────────
+  const staff = await prisma.iebcStaff.findUnique({
+    where:  { id: input.staffId },
+    select: { staffRole: true },
+  });
+  if (!staff) throw new ServiceError('Staff record not found', 404);
+
+  if (!COMMISSION_TIER.has(staff.staffRole)) {
+    // Non-commission officers may only declare for positions attached to a
+    // jurisdiction node they are DIRECTLY in charge of (exact match — no
+    // ancestor walk, because an ancestor officer declares ancestor positions,
+    // not the positions of nodes below them).
+    if (!position.jurisdictionId) {
+      throw new ServiceError(
+        'This position is not attached to any jurisdiction node. Only commission-tier officers may declare it.',
+        403,
+      );
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const node: { personInChargeId: string | null } | null = await (prisma as any).electionJurisdiction.findUnique({
+      where:  { id: position.jurisdictionId },
+      select: { personInChargeId: true },
+    });
+
+    if (!node || node.personInChargeId !== input.staffId) {
+      throw new ServiceError(
+        'You are not authorised to declare results for this position. ' +
+        'Only the person-in-charge of the exact jurisdiction node this position belongs to may declare it.',
+        403,
+      );
+    }
   }
 
   // Check for duplicate (same officer + position + election)
@@ -45,14 +113,15 @@ export async function createDeclaration(
   if (dup) throw new ServiceError('You have already created a declaration for this position', 409);
 
   const decl = await prisma.resultDeclaration.create({
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     data: {
       electionId:        input.electionId,
       positionId:        input.positionId,
       staffId:           input.staffId,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       jurisdictionLevel: input.jurisdictionLevel as any,
       jurisdictionValue: input.jurisdictionValue ?? null,
       tallySnapshot:     input.tallySnapshot ?? null,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       status:            'DRAFT' as any,
     },
   });
@@ -65,7 +134,6 @@ export async function formallyDeclare(
   declarationId: string,
   staffId: string,
 ): Promise<ResultDeclarationRecord> {
-  // Single fetch — reuse result for ownership + status check
   const decl = await prisma.resultDeclaration.findUnique({ where: { id: declarationId } });
   if (!decl) throw new ServiceError('Declaration not found', 404);
   if (decl.staffId !== staffId) throw new ServiceError('You do not own this declaration', 403);
@@ -75,6 +143,7 @@ export async function formallyDeclare(
 
   const updated = await prisma.resultDeclaration.update({
     where: { id: declarationId },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     data:  { status: 'DECLARED' as any, declaredAt: new Date() },
   });
 
@@ -94,6 +163,7 @@ export async function contestDeclaration(
 
   const updated = await prisma.resultDeclaration.update({
     where: { id: declarationId },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     data:  { status: 'CONTESTED' as any, contestedAt: new Date(), contestReason: reason },
   });
 
@@ -113,10 +183,10 @@ export async function listDeclarations(filter: {
 }>> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const where: any = {};
-  if (filter.electionId)        where.electionId       = filter.electionId;
-  if (filter.positionId)        where.positionId       = filter.positionId;
-  if (filter.staffId)           where.staffId          = filter.staffId;
-  if (filter.status)            where.status           = filter.status;
+  if (filter.electionId)        where.electionId        = filter.electionId;
+  if (filter.positionId)        where.positionId        = filter.positionId;
+  if (filter.staffId)           where.staffId           = filter.staffId;
+  if (filter.status)            where.status            = filter.status;
   if (filter.jurisdictionValue) where.jurisdictionValue = { contains: filter.jurisdictionValue, mode: 'insensitive' };
 
   const records = await prisma.resultDeclaration.findMany({
@@ -145,74 +215,130 @@ export async function getDeclaration(declarationId: string) {
   return decl;
 }
 
+// ── Pending / scope view ──────────────────────────────────────────────────────
+
+interface PendingEntry {
+  positionId:    string;
+  positionTitle: string;
+  scope:         string;
+  scopeValue:    string | null;
+  jurisdictionNodeId:   string | null;
+  jurisdictionNodeName: string | null;
+  candidates:    { id: string; name: string; party: string | null }[];
+  canDeclare:    boolean; // false = read-only (position belongs to a descendant node)
+  declaration:   { id: string; positionId: string; status: string } | null;
+}
+
 /**
- * Get positions that an officer can declare for a given election.
- * Returns only positions in the officer's scope that haven't been declared yet.
+ * Returns positions visible to this officer for a given election.
+ *
+ * canDeclare = true  → position's jurisdictionNode.personInChargeId === staffId
+ *                       (or officer is commission-tier, who can declare anything)
+ * canDeclare = false → position belongs to a descendant node (read-only view)
+ *
+ * Positions with no jurisdictionId are only shown to commission-tier officers.
  */
 export async function getPendingDeclarations(
   electionId: string,
   staffId: string,
-  jurisdictionLevel: string,
-  jurisdictionValue: string | null,
-) {
-  // Fetch the election to determine whether geographic filtering applies
-  const election = await prisma.election.findUnique({
-    where:  { id: electionId },
-    select: { type: true },
-  });
+): Promise<PendingEntry[]> {
+  const election = await prisma.election.findUnique({ where: { id: electionId } });
   if (!election) throw new ServiceError('Election not found', 404);
 
-  const isGovernment = election.type === 'GOVERNMENT';
+  const staff = await prisma.iebcStaff.findUnique({
+    where:  { id: staffId },
+    select: { staffRole: true },
+  });
+  if (!staff) throw new ServiceError('Staff record not found', 404);
 
-  // Get all positions for this election
+  // Existing declarations by this officer for this election
+  const existing = await prisma.resultDeclaration.findMany({
+    where:  { electionId, staffId },
+    select: { id: true, positionId: true, status: true },
+  });
+
+  type NodeRow = { id: string; name: string; level: string };
+
+  if (COMMISSION_TIER.has(staff.staffRole)) {
+    // Commission tier: all positions, all declarable
+    const positions = await prisma.position.findMany({
+      where:   { electionId },
+      include: { candidates: { where: { isActive: true } } },
+      orderBy: { orderIndex: 'asc' },
+    });
+
+    // Fetch node names in one batch
+    const nodeIds = positions.map((p) => p.jurisdictionId).filter(Boolean) as string[];
+    const nodes: NodeRow[] = nodeIds.length > 0
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ? await (prisma as any).electionJurisdiction.findMany({
+          where:  { id: { in: nodeIds } },
+          select: { id: true, name: true, level: true },
+        })
+      : [];
+    const nodeMap = new Map(nodes.map((n) => [n.id, n]));
+
+    return positions.map((pos) => {
+      const node = pos.jurisdictionId ? nodeMap.get(pos.jurisdictionId) : undefined;
+      return {
+        positionId:           pos.id,
+        positionTitle:        pos.title,
+        scope:                pos.scope,
+        scopeValue:           pos.scopeValue,
+        jurisdictionNodeId:   pos.jurisdictionId ?? null,
+        jurisdictionNodeName: node?.name ?? null,
+        candidates:           pos.candidates.map((c) => ({ id: c.id, name: c.name, party: c.party })),
+        canDeclare:           true,
+        declaration:          existing.find((d) => d.positionId === pos.id) ?? null,
+      };
+    });
+  }
+
+  // Non-commission: derive scope from node tree
+  // Find nodes this officer is directly in charge of (within this election)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const myNodes: NodeRow[] = await (prisma as any).electionJurisdiction.findMany({
+    where:  { personInChargeId: staffId, electionId },
+    select: { id: true, name: true, level: true },
+  });
+
+  if (myNodes.length === 0) {
+    // Officer exists but has no node assignment in this election
+    return [];
+  }
+
+  const myNodeIds = myNodes.map((n) => n.id);
+  const descendantIds = await getDescendantNodeIds(myNodeIds);
+
+  // Build maps for node name lookup
+  const allNodeIds = [...myNodeIds, ...descendantIds];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const allNodes: NodeRow[] = await (prisma as any).electionJurisdiction.findMany({
+    where:  { id: { in: allNodeIds } },
+    select: { id: true, name: true, level: true },
+  });
+  const nodeMap = new Map(allNodes.map((n) => [n.id, n]));
+  const myNodeSet = new Set(myNodeIds);
+
+  // Fetch positions for own nodes (declarable) + descendant nodes (viewable)
   const positions = await prisma.position.findMany({
-    where:   { electionId },
+    where:   { electionId, jurisdictionId: { in: allNodeIds } },
     include: { candidates: { where: { isActive: true } } },
     orderBy: { orderIndex: 'asc' },
   });
 
-  // Get existing declarations by this officer
-  const existing = await prisma.resultDeclaration.findMany({
-    where: { electionId, staffId },
-    select: { positionId: true, status: true, id: true },
-  });
-
-  // For INSTITUTIONAL / CORPORATE / CUSTOM elections there is no geographic
-  // jurisdiction — every authorized officer sees all positions.
-  // For GOVERNMENT elections, apply the standard geographic scope filter.
-  const eligible = isGovernment
-    ? positions
-        .filter(pos => {
-          if (jurisdictionLevel === 'NATIONAL') return true;
-          if (jurisdictionLevel === 'COUNTY')        return pos.scope === 'NATIONAL' || pos.scope === 'COUNTY';
-          if (jurisdictionLevel === 'CONSTITUENCY')  return pos.scope === 'CONSTITUENCY';
-          if (jurisdictionLevel === 'WARD')          return pos.scope === 'WARD';
-          return false;
-        })
-        .filter(pos => {
-          if (!jurisdictionValue) return true;
-          // Template positions (no scopeValue): eligible, candidates filtered later
-          if (!pos.scopeValue) return true;
-          return pos.scopeValue === jurisdictionValue;
-        })
-    : positions; // Non-government: all positions visible to any authorized officer
-
-  return eligible.map(pos => {
-    // For GOVERNMENT template positions, narrow candidate list to officer's area
-    let candidates = pos.candidates;
-    if (isGovernment && !pos.scopeValue && jurisdictionValue) {
-      if (['COUNTY', 'CONSTITUENCY', 'WARD'].includes(jurisdictionLevel)) {
-        candidates = candidates.filter(c => !c.scopeValue || c.scopeValue === jurisdictionValue);
-      }
-    }
-    const decl = existing.find(d => d.positionId === pos.id);
+  return positions.map((pos) => {
+    const node = pos.jurisdictionId ? nodeMap.get(pos.jurisdictionId) : undefined;
     return {
-      positionId:    pos.id,
-      positionTitle: pos.title,
-      scope:         pos.scope,
-      scopeValue:    pos.scopeValue,
-      candidates:    candidates.map(c => ({ id: c.id, name: c.name, party: c.party, scopeValue: c.scopeValue })),
-      declaration:   decl ?? null,
+      positionId:           pos.id,
+      positionTitle:        pos.title,
+      scope:                pos.scope,
+      scopeValue:           pos.scopeValue,
+      jurisdictionNodeId:   pos.jurisdictionId ?? null,
+      jurisdictionNodeName: node?.name ?? null,
+      candidates:           pos.candidates.map((c) => ({ id: c.id, name: c.name, party: c.party })),
+      canDeclare:           pos.jurisdictionId ? myNodeSet.has(pos.jurisdictionId) : false,
+      declaration:          existing.find((d) => d.positionId === pos.id) ?? null,
     };
   });
 }

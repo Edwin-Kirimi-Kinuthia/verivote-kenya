@@ -169,6 +169,9 @@ export class WebAuthnService {
     const voter = await voterRepository.findByNationalId(nationalId);
     if (!voter) throw new ServiceError('Voter not found', 404);
 
+    if (voter.status === 'DECEASED') {
+      throw new ServiceError('This voter account is closed.', 403);
+    }
     if (voter.status === 'SUSPENDED') {
       throw new ServiceError('Voter account is suspended', 403);
     }

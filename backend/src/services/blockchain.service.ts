@@ -135,6 +135,16 @@ export class BlockchainService {
     return { txHash: receipt.hash };
   }
 
+  async revokeSBT(tokenId: string): Promise<{ txHash: string }> {
+    if (this.mockMode) {
+      return { txHash: '0x' + '0'.repeat(64) };
+    }
+    this.ensureConnected();
+    const tx = await this.sbtContract!.revoke(BigInt(tokenId));
+    const receipt = await tx.wait();
+    return { txHash: receipt.hash };
+  }
+
   async hasVoterToken(address: string): Promise<boolean> {
     if (this.mockMode) return true;
     this.ensureConnected();

@@ -58,6 +58,7 @@ export const CEREMONY_ROLES: StaffRole[] = [
 export const DECLARATION_ROLES: StaffRole[] = [
   'CHAIRPERSON', 'COMMISSIONER', 'COMMISSION_SECRETARY', 'DEPUTY_COMMISSION_SECRETARY',
   'NATIONAL_RO', 'COUNTY_RO', 'CONSTITUENCY_RO',
+  'PRESIDING_OFFICER',  // Declares results at polling station level
 ];
 /** Roles with read access to results */
 export const RESULTS_READ_ROLES: StaffRole[] = [

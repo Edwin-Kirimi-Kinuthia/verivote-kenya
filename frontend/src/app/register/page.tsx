@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useRef, type FormEvent } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect, useRef, Suspense, type FormEvent } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { api } from "@/lib/api-client";
 import { useTranslation } from "@/contexts/language-context";
 import { AppointmentSlotPicker } from "@/components/appointment-slot-picker";
@@ -25,20 +25,39 @@ type View =
   | "booking"
   | "confirmed";
 
+type AuthMethod = "PERSONA_KYC" | "EMAIL_DOMAIN" | "OTP_ONLY";
+
 interface RegistrationData {
   voterId: string;
-  inquiryId: string;
-  personaUrl: string;
+  kycRequired: boolean;
+  authMethod: AuthMethod;
+  // Only present when kycRequired = true (PERSONA_KYC)
+  inquiryId?: string;
+  personaUrl?: string;
 }
 
-export default function RegisterPage() {
+interface ElectionContext {
+  id: string;
+  name: string;
+  authMethod: AuthMethod;
+  allowedDomains: string[];
+  orgName: string | null;
+}
+
+function RegisterPageContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { t } = useTranslation();
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const personaAttemptsRef = useRef(0);
 
   const [view, setView] = useState<View>("form");
   const [stations, setStations] = useState<PollingStation[]>([]);
+
+  // Election-specific registration context (loaded when ?electionId=xxx is in URL)
+  const [electionCtx, setElectionCtx] = useState<ElectionContext | null>(null);
+  const [electionLoading, setElectionLoading] = useState(false);
+  const electionId = searchParams.get("electionId");
 
   // Form fields
   const [idDocumentType, setIdDocumentType] = useState<"NATIONAL_ID" | "PASSPORT">("NATIONAL_ID");
@@ -100,6 +119,26 @@ export default function RegisterPage() {
       .then((res) => { if (res.data) setStations(res.data); })
       .catch(() => {});
   }, []);
+
+  // Load election context if electionId is in the URL
+  useEffect(() => {
+    if (!electionId) return;
+    setElectionLoading(true);
+    api
+      .get<{ success: boolean; data: ElectionContext }>(`/api/elections/public/${electionId}`)
+      .then((res) => {
+        if (res.success && res.data) {
+          setElectionCtx(res.data);
+          // EMAIL_DOMAIN elections must use email
+          if (res.data.authMethod === "EMAIL_DOMAIN" || res.data.authMethod === "OTP_ONLY") {
+            setPreferredContact("EMAIL");
+          }
+        }
+      })
+      .catch(() => {})
+      .finally(() => setElectionLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [electionId]);
 
   // Close station dropdown on outside click
   useEffect(() => {
@@ -282,15 +321,20 @@ export default function RegisterPage() {
 
     setLoading(true);
     try {
-      const res = await api.post<ApiResponse<RegistrationData>>("/api/voters/register", {
-        nationalId,
-        idDocumentType,
-        pollingStationId: pollingStationId || undefined,
+      const isNonKyc = electionCtx && electionCtx.authMethod !== "PERSONA_KYC";
+      const body: Record<string, unknown> = {
         preferredContact,
         phoneNumber: preferredContact === "SMS" ? (countryCode + localPhone.replace(/\D/g, "")) : undefined,
         email: preferredContact === "EMAIL" ? email : undefined,
         password,
-      });
+      };
+      if (electionId) body.electionId = electionId;
+      if (!isNonKyc) {
+        body.nationalId = nationalId;
+        body.idDocumentType = idDocumentType;
+        if (pollingStationId) body.pollingStationId = pollingStationId;
+      }
+      const res = await api.post<ApiResponse<RegistrationData>>("/api/voters/register", body);
 
       if (!res.success) {
         setError(res.error || t("common.error"));
@@ -343,6 +387,25 @@ export default function RegisterPage() {
         setError((res as ApiResponse<unknown> & { error?: string }).error || "Invalid code");
         return;
       }
+
+      // Non-KYC election: complete registration via contact verification, no Persona needed
+      if (regData && !regData.kycRequired) {
+        const completeRes = await api.post<ApiResponse<{ setupToken?: string }>>("/api/voters/complete-contact-verification", {
+          voterId: regData.voterId,
+          ...(electionId && { electionId }),
+        });
+        if (!completeRes.success) {
+          setError((completeRes as ApiResponse<unknown> & { error?: string }).error || "Registration failed");
+          return;
+        }
+        if (completeRes.data?.setupToken) {
+          localStorage.setItem("token", completeRes.data.setupToken);
+        }
+        setView("webauthn");
+        return;
+      }
+
+      // KYC election: proceed to Persona verification
       setView("options");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Verification failed");
@@ -510,7 +573,17 @@ export default function RegisterPage() {
 
   // ── VIEWS ─────────────────────────────────────────────────────────────────
 
+  const isNonKycElection = electionCtx && electionCtx.authMethod !== "PERSONA_KYC";
+
   if (view === "form") {
+    if (electionLoading) {
+      return (
+        <div className="flex min-h-[60vh] items-center justify-center">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-green-700 border-t-transparent" />
+        </div>
+      );
+    }
+
     return (
       <div className="flex min-h-[60vh] items-center justify-center px-4 py-8">
         <div className="w-full max-w-md">
@@ -518,6 +591,20 @@ export default function RegisterPage() {
             <h1 className="text-3xl font-bold text-gray-900">{t("register.title")}</h1>
             <p className="mt-2 text-base text-gray-500">{t("register.subtitle")}</p>
           </div>
+
+          {/* Election context banner */}
+          {electionCtx && (
+            <div className="mb-4 rounded-xl border border-green-200 bg-green-50 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-green-600 mb-1">Registering for</p>
+              <p className="text-sm font-semibold text-green-900">{electionCtx.name}</p>
+              {electionCtx.orgName && <p className="text-xs text-green-700">{electionCtx.orgName}</p>}
+              {electionCtx.authMethod === "EMAIL_DOMAIN" && (electionCtx.allowedDomains ?? []).length > 0 && (
+                <p className="mt-1 text-xs text-green-700">
+                  Required domain: <strong>{electionCtx.allowedDomains.join(", ")}</strong>
+                </p>
+              )}
+            </div>
+          )}
 
           <form
             onSubmit={handleRegister}
@@ -529,8 +616,8 @@ export default function RegisterPage() {
               </div>
             )}
 
-            {/* Identity document type */}
-            <div>
+            {/* Identity document type — hidden for non-KYC elections */}
+            {!isNonKycElection && <div>
               <label className="mb-2 block text-sm font-semibold text-gray-700">
                 Identity Document Type
               </label>
@@ -562,10 +649,10 @@ export default function RegisterPage() {
                   );
                 })}
               </div>
-            </div>
+            </div>}
 
-            {/* Identity document number */}
-            <div>
+            {/* Identity document number — hidden for non-KYC elections */}
+            {!isNonKycElection && <div>
               <label htmlFor="nationalId" className="mb-2 block text-sm font-semibold text-gray-700">
                 {idDocumentType === "NATIONAL_ID" ? "National ID Number" : "Passport Number"}
               </label>
@@ -590,10 +677,10 @@ export default function RegisterPage() {
               <p className="mt-1 text-xs text-gray-500">
                 {idDocumentType === "NATIONAL_ID" ? "5–9 digits" : "6–12 alphanumeric characters"}
               </p>
-            </div>
+            </div>}
 
-            {/* Polling Station — searchable dropdown with geolocation */}
-            <div>
+            {/* Polling Station — hidden for non-KYC elections */}
+            {!isNonKycElection && <div>
               <div className="mb-2 flex items-center justify-between">
                 <label className="text-sm font-semibold text-gray-700">
                   {t("register.station")}
@@ -693,36 +780,38 @@ export default function RegisterPage() {
                   </div>
                 )}
               </div>
-            </div>
+            </div>}
 
-            {/* Contact preference */}
-            <div>
-              <p className="mb-2 text-sm font-semibold text-gray-700">How should we reach you?</p>
-              <div className="flex gap-4">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="preferredContact"
-                    value="EMAIL"
-                    checked={preferredContact === "EMAIL"}
-                    onChange={() => setPreferredContact("EMAIL")}
-                    className="accent-green-700"
-                  />
-                  <span className="text-sm text-gray-700">Email</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="preferredContact"
-                    value="SMS"
-                    checked={preferredContact === "SMS"}
-                    onChange={() => setPreferredContact("SMS")}
-                    className="accent-green-700"
-                  />
-                  <span className="text-sm text-gray-700">SMS (Phone)</span>
-                </label>
+            {/* Contact preference — EMAIL_DOMAIN elections require email */}
+            {!isNonKycElection && (
+              <div>
+                <p className="mb-2 text-sm font-semibold text-gray-700">How should we reach you?</p>
+                <div className="flex gap-4">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="preferredContact"
+                      value="EMAIL"
+                      checked={preferredContact === "EMAIL"}
+                      onChange={() => setPreferredContact("EMAIL")}
+                      className="accent-green-700"
+                    />
+                    <span className="text-sm text-gray-700">Email</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="preferredContact"
+                      value="SMS"
+                      checked={preferredContact === "SMS"}
+                      onChange={() => setPreferredContact("SMS")}
+                      className="accent-green-700"
+                    />
+                    <span className="text-sm text-gray-700">SMS (Phone)</span>
+                  </label>
+                </div>
               </div>
-            </div>
+            )}
 
             {/* Email or Phone */}
             {preferredContact === "EMAIL" ? (
@@ -873,10 +962,10 @@ export default function RegisterPage() {
 
             <button
               type="submit"
-              disabled={loading || !(
+              disabled={loading || (!isNonKycElection && !(
                 idDocumentType === "NATIONAL_ID" ? /^\d{5,9}$/.test(nationalId) :
                 /^[A-Z0-9]{6,12}$/i.test(nationalId)
-              )}
+              ))}
               className="w-full rounded-lg bg-green-700 px-6 py-3 text-base font-semibold text-white hover:bg-green-800 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {loading ? "Registering..." : t("register.submit")}
@@ -901,6 +990,7 @@ export default function RegisterPage() {
       preferredContact === "EMAIL"
         ? `your email ${email}`
         : `your phone ${countryCode}${localPhone}`;
+    const isEmailDomain = regData?.authMethod === "EMAIL_DOMAIN";
 
     return (
       <div className="flex min-h-[60vh] items-center justify-center px-4">
@@ -911,10 +1001,17 @@ export default function RegisterPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 12a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0zm0 0c0 1.657 1.007 3 2.25 3S21 13.657 21 12a9 9 0 10-2.636 6.364M16.5 12V8.25" />
               </svg>
             </div>
-            <h1 className="mt-4 text-2xl font-bold text-gray-900">Verify Your Contact</h1>
+            <h1 className="mt-4 text-2xl font-bold text-gray-900">
+              {isEmailDomain ? "Verify Institutional Email" : "Verify Your Contact"}
+            </h1>
             <p className="mt-2 text-sm text-gray-500">
               We sent a 6-digit code to {contactHint}. Enter it below to continue.
             </p>
+            {isEmailDomain && (
+              <p className="mt-1 text-xs text-indigo-700 font-medium">
+                This election requires an authorised institutional email address.
+              </p>
+            )}
           </div>
 
           <form
@@ -1499,3 +1596,5 @@ export default function RegisterPage() {
 
   return null;
 }
+
+export default function RegisterPage() { return <Suspense><RegisterPageContent /></Suspense>; }

@@ -1,13 +1,10 @@
 /**
- * VeriVote Kenya — Decryption Ceremony & Tally Service (Days 41-42)
+ * VeriVote Kenya — Decryption Ceremony & Tally Service
  *
- * Performs ElGamal batch decryption of all CONFIRMED votes, tallies results,
- * computes a SHA-256 tamper-evident hash of the results JSON, and
- * optionally records that hash on-chain as a cryptographic proof of tally.
- *
- * NOTE: ElGamal as implemented is multiplicatively homomorphic (not additively).
- *       Decryption ceremony approach is correct for this stack.
- *       SEAL/Paillier upgrade path documented for future threshold schemes.
+ * Performs ElGamal batch decryption of all CONFIRMED votes for a specific
+ * election, tallies results using the election's dynamic positions/candidates
+ * from the database, stores results in election.tallyResultJson, and
+ * transitions the election to TALLIED status.
  *
  * Sovereignty: All processing on-premise. No data leaves Kenyan infrastructure.
  */
@@ -17,43 +14,6 @@ import { v4 as uuid } from 'uuid';
 import { prisma } from '../database/client.js';
 import { encryptionService } from './encryption.service.js';
 import { blockchainService } from './blockchain.service.js';
-
-// ── Ballot structure (mirrors frontend/src/lib/candidates.ts) ─────────────────
-
-interface CandidateInfo {
-  id: string;
-  name: string;
-  party: string;
-  partyAbbreviation: string;
-}
-
-interface PositionInfo {
-  id: string;
-  title: string;
-  candidates: CandidateInfo[];
-}
-
-const BALLOT_POSITIONS: PositionInfo[] = [
-  {
-    id: 'president',
-    title: 'President',
-    candidates: [
-      { id: 'pres-1', name: 'Amina Wanjiku',  party: 'National Unity Alliance',    partyAbbreviation: 'NUA' },
-      { id: 'pres-2', name: 'James Ochieng',  party: 'Democratic Progress Party',  partyAbbreviation: 'DPP' },
-      { id: 'pres-3', name: 'Fatuma Hassan',  party: 'Kenya First Movement',       partyAbbreviation: 'KFM' },
-      { id: 'pres-4', name: 'Peter Kamau',    party: "People's Reform Coalition",  partyAbbreviation: 'PRC' },
-    ],
-  },
-  {
-    id: 'governor',
-    title: 'Governor',
-    candidates: [
-      { id: 'gov-1', name: 'Grace Muthoni',  party: 'National Unity Alliance',   partyAbbreviation: 'NUA' },
-      { id: 'gov-2', name: 'David Kiprop',   party: 'Democratic Progress Party', partyAbbreviation: 'DPP' },
-      { id: 'gov-3', name: 'Sarah Akinyi',   party: 'Kenya First Movement',      partyAbbreviation: 'KFM' },
-    ],
-  },
-];
 
 // ── Result types ──────────────────────────────────────────────────────────────
 
@@ -71,8 +31,12 @@ export interface PositionTally {
   positionTitle: string;
   candidates: CandidateTally[];
   totalVotes: number;
+  /** 'TIE' when two or more candidates share the highest vote count. */
   winner: string;
   winnerParty: string;
+  isTied: boolean;
+  /** All candidates sharing the highest vote count (length > 1 means a tie). */
+  tiedCandidates: string[];
 }
 
 export interface StationBreakdown {
@@ -94,10 +58,13 @@ export interface PrintReconciliation {
 
 export interface TallyResult {
   ceremonyId: string;
+  electionId: string;
+  electionName: string;
   startedAt: string;
   completedAt: string;
   durationMs: number;
   totalVotesDecrypted: number;
+  totalBallotsProcessed: number;   // alias for AI integrity checker compatibility
   totalVotersEligible: number;
   turnoutPercentage: number;
   positions: PositionTally[];
@@ -112,9 +79,9 @@ export interface TallyResult {
   sovereigntyNote: string;
 }
 
-// ── In-memory cache — one ceremony result per process lifetime ────────────────
+// ── In-memory cache keyed by electionId ──────────────────────────────────────
 
-let _cached: TallyResult | null = null;
+const _cache = new Map<string, TallyResult>();
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -128,28 +95,53 @@ function round2(n: number): number {
 
 // ── Ceremony ──────────────────────────────────────────────────────────────────
 
-export async function runDecryptionCeremony(): Promise<TallyResult> {
+export async function runDecryptionCeremony(electionId: string): Promise<TallyResult> {
   const log: string[] = [];
   const ceremonyId = uuid();
   const t0 = Date.now();
 
+  // ── Load election + positions + candidates from DB ────────────────────────
+  const election = await prisma.election.findUnique({
+    where: { id: electionId },
+    include: {
+      positions: {
+        include: {
+          candidates: true,
+        },
+      },
+    },
+  });
+
+  if (!election) throw new Error(`Election ${electionId} not found`);
+  if (!['CLOSED', 'ACTIVE'].includes(election.status)) {
+    throw new Error(`Election must be CLOSED or ACTIVE to run tally (current: ${election.status})`);
+  }
+
   log.push(`[${ts()}] ══════════════════════════════════════════════════════`);
   log.push(`[${ts()}] IEBC DECRYPTION CEREMONY INITIATED`);
   log.push(`[${ts()}] Ceremony ID  : ${ceremonyId}`);
+  log.push(`[${ts()}] Election     : ${election.name} (${election.id})`);
+  log.push(`[${ts()}] Type         : ${election.type} | Auth: ${election.authMethod}`);
   log.push(`[${ts()}] Authority    : Independent Electoral and Boundaries Commission of Kenya`);
   log.push(`[${ts()}] Crypto scheme: ElGamal 2048-bit FFDHE (RFC 7919)`);
   log.push(`[${ts()}] ══════════════════════════════════════════════════════`);
   log.push(`[${ts()}] [KEY CUSTODY] Loading private key from secure environment variable...`);
   log.push(`[${ts()}] [KEY CUSTODY] Key validation: group order check ✓  range check ✓  public key derivation ✓`);
-  log.push(`[${ts()}] [KEY CUSTODY] Threshold custody simulation: Key held by IEBC Commissioner`);
-  log.push(`[${ts()}] [KEY CUSTODY] Simulated key shares: Commissioner (1/1) ← single-key ceremony mode`);
-  log.push(`[${ts()}] NOTE: Production upgrade path → Shamir secret sharing (3-of-5 commissioners)`);
 
-  // ── Fetch all CONFIRMED votes ─────────────────────────────────────────────
-  log.push(`[${ts()}] Querying confirmed votes from database...`);
+  if (election.positions.length === 0) {
+    throw new Error('Election has no positions — cannot run tally');
+  }
+
+  log.push(`[${ts()}] Loaded ${election.positions.length} position(s) from database:`);
+  for (const pos of election.positions) {
+    log.push(`[${ts()}]   • ${pos.title} (${pos.candidates.length} candidates)`);
+  }
+
+  // ── Fetch CONFIRMED votes for this election ───────────────────────────────
+  log.push(`[${ts()}] Querying confirmed votes for election ${electionId}...`);
 
   const confirmedVotes = await prisma.vote.findMany({
-    where: { status: 'CONFIRMED' },
+    where: { electionId, status: 'CONFIRMED' },
     include: {
       pollingStation: {
         select: { id: true, code: true, name: true, county: true },
@@ -159,9 +151,9 @@ export async function runDecryptionCeremony(): Promise<TallyResult> {
 
   log.push(`[${ts()}] Found ${confirmedVotes.length} confirmed vote(s) to decrypt`);
 
-  // ── Initialise tally accumulators ─────────────────────────────────────────
+  // ── Initialise tally accumulators from DB positions ───────────────────────
   const tally: Record<string, Record<string, number>> = {};
-  for (const pos of BALLOT_POSITIONS) {
+  for (const pos of election.positions) {
     tally[pos.id] = {};
     for (const c of pos.candidates) tally[pos.id][c.id] = 0;
   }
@@ -194,38 +186,37 @@ export async function runDecryptionCeremony(): Promise<TallyResult> {
       continue;
     }
 
-    // Tally selections
+    // Tally selections — only count positions/candidates that belong to this election
     for (const [posId, candidateId] of Object.entries(selections)) {
       if (tally[posId]?.[candidateId] !== undefined) {
         tally[posId][candidateId]++;
       }
     }
 
-    // Station breakdown
+    // Station breakdown — handle null pollingStation gracefully (non-KYC elections)
     const st = vote.pollingStation;
-    if (!stationMap.has(st.id)) {
-      stationMap.set(st.id, { code: st.code, name: st.name, county: st.county, votes: 0, distress: 0 });
-    }
-    const entry = stationMap.get(st.id)!;
-    entry.votes++;
-    if (vote.isDistressFlagged) {
-      entry.distress++;
-      distressCount++;
+    if (st) {
+      if (!stationMap.has(st.id)) {
+        stationMap.set(st.id, { code: st.code, name: st.name, county: st.county, votes: 0, distress: 0 });
+      }
+      const entry = stationMap.get(st.id)!;
+      entry.votes++;
+      if (vote.isDistressFlagged) entry.distress++;
     }
 
+    if (vote.isDistressFlagged) distressCount++;
     decrypted++;
 
-    // Ceremony log: first 5 votes in detail, then batch summary
     if (i < 5) {
       const selStr = Object.entries(selections)
-        .map(([pos, cand]) => {
-          const posInfo = BALLOT_POSITIONS.find(p => p.id === pos);
-          const candInfo = posInfo?.candidates.find(c => c.id === cand);
-          return `${posInfo?.title ?? pos} → ${candInfo?.name ?? cand}`;
+        .map(([posId, candId]) => {
+          const pos = election.positions.find(p => p.id === posId);
+          const cand = pos?.candidates.find(c => c.id === candId);
+          return `${pos?.title ?? posId} → ${cand?.name ?? candId}`;
         })
         .join(' | ');
       const distressFlag = vote.isDistressFlagged ? ' ⚠ DISTRESS PIN' : '';
-      log.push(`[${ts()}] Vote #${idx} | Station: ${st.code} | ${selStr}${distressFlag}`);
+      log.push(`[${ts()}] Vote #${idx} | Station: ${st?.code ?? 'virtual'} | ${selStr}${distressFlag}`);
     } else if (i === 5 && confirmedVotes.length > 5) {
       log.push(`[${ts()}] ... batch processing remaining ${confirmedVotes.length - 5} vote(s) ...`);
     }
@@ -237,45 +228,71 @@ export async function runDecryptionCeremony(): Promise<TallyResult> {
   const printedCount = await prisma.printQueue.count({ where: { status: 'PRINTED' } });
   const discrepancy = printedCount - decrypted;
   const reconciliationStatus = discrepancy === 0 ? 'CLEAN' : 'DISCREPANCY';
-  log.push(`[${ts()}] Print reconciliation | Digital tally: ${decrypted} | Printed receipts: ${printedCount} | Status: ${reconciliationStatus}`);
-  if (discrepancy !== 0) {
-    log.push(`[${ts()}] ⚠ DISCREPANCY DETECTED: ${Math.abs(discrepancy)} ${discrepancy > 0 ? 'extra printed receipts' : 'unprinted votes'}`);
-  }
+  log.push(`[${ts()}] Print reconciliation | Digital: ${decrypted} | Printed: ${printedCount} | Status: ${reconciliationStatus}`);
 
-  // ── Registered voters (turnout) ───────────────────────────────────────────
-  const eligibleVoterCount = await prisma.voter.count({
-    where: {
-      status: { in: ['REGISTERED', 'VOTED', 'REVOTED', 'DISTRESS_FLAGGED'] },
-    },
+  // ── Turnout for this election ─────────────────────────────────────────────
+  const eligibleVoterCount = await prisma.electionEnrollment.count({
+    where: { electionId },
   });
   const turnoutPct = eligibleVoterCount > 0 ? round2((decrypted / eligibleVoterCount) * 100) : 0;
-  log.push(`[${ts()}] Turnout: ${decrypted}/${eligibleVoterCount} eligible voters (${turnoutPct}%)`);
+  log.push(`[${ts()}] Turnout: ${decrypted}/${eligibleVoterCount} enrolled voters (${turnoutPct}%)`);
 
-  // ── Build position tallies ────────────────────────────────────────────────
-  const positions: PositionTally[] = BALLOT_POSITIONS.map((pos) => {
-    const posVotes = tally[pos.id];
+  // ── Tally verification log: votes per position vs total decrypted ────────
+  // Helps detect ballot scope issues (e.g. a position receiving fewer votes than expected
+  // may indicate voters were incorrectly scoped out of seeing it on their ballot).
+  log.push(`[${ts()}] ── Ballot scope verification ──`);
+  for (const pos of election.positions) {
+    const posTotal = Object.values(tally[pos.id] ?? {}).reduce((a, b) => a + b, 0);
+    const pct = decrypted > 0 ? ((posTotal / decrypted) * 100).toFixed(1) : '0.0';
+    const scopeNote = posTotal === 0
+      ? ' ⚠ ZERO VOTES — check ballot scoping'
+      : posTotal < decrypted
+        ? ` (${pct}% participation — expected for scoped positions)`
+        : '';
+    log.push(`[${ts()}]   ${pos.title}: ${posTotal}/${decrypted} votes${scopeNote}`);
+  }
+  log.push(`[${ts()}] ── End of scope verification ──`);
+
+  // ── Build position tallies from DB positions ──────────────────────────────
+  const positions: PositionTally[] = election.positions.map((pos) => {
+    const posVotes = tally[pos.id] ?? {};
     const totalPos = Object.values(posVotes).reduce((a, b) => a + b, 0);
 
     const candidates: CandidateTally[] = pos.candidates
       .map((c) => ({
         candidateId: c.id,
         candidateName: c.name,
-        party: c.party,
-        partyAbbreviation: c.partyAbbreviation,
+        party: c.party ?? '',
+        partyAbbreviation: c.party ? c.party.split(' ').map((w: string) => w[0]).join('').toUpperCase().slice(0, 4) : '',
         votes: posVotes[c.id] ?? 0,
         percentage: totalPos > 0 ? round2(((posVotes[c.id] ?? 0) / totalPos) * 100) : 0,
       }))
       .sort((a, b) => b.votes - a.votes);
 
-    log.push(`[${ts()}] ${pos.title} winner: ${candidates[0]?.candidateName ?? 'N/A'} (${candidates[0]?.votes ?? 0} votes, ${candidates[0]?.percentage ?? 0}%)`);
+    // Detect ties — do NOT assume the first candidate alphabetically wins
+    const topVotes = candidates[0]?.votes ?? 0;
+    const tiedCandidates = topVotes > 0
+      ? candidates.filter((c) => c.votes === topVotes).map((c) => c.candidateName)
+      : [];
+    const isTied = tiedCandidates.length > 1;
+    const winner = isTied ? 'TIE' : (candidates[0]?.candidateName ?? 'N/A');
+    const winnerParty = isTied ? 'TIE' : (candidates[0]?.party ?? 'N/A');
+
+    if (isTied) {
+      log.push(`[${ts()}] ${pos.title}: TIE — ${tiedCandidates.join(' / ')} each with ${topVotes} vote(s) — no winner declared`);
+    } else {
+      log.push(`[${ts()}] ${pos.title} winner: ${winner} (${candidates[0]?.votes ?? 0} votes, ${candidates[0]?.percentage ?? 0}%)`);
+    }
 
     return {
       positionId: pos.id,
       positionTitle: pos.title,
       candidates,
       totalVotes: totalPos,
-      winner: candidates[0]?.candidateName ?? 'N/A',
-      winnerParty: candidates[0]?.party ?? 'N/A',
+      winner,
+      winnerParty,
+      isTied,
+      tiedCandidates,
     };
   });
 
@@ -298,14 +315,18 @@ export async function runDecryptionCeremony(): Promise<TallyResult> {
 
   const canonicalResults = {
     ceremonyId,
+    electionId,
     completedAt,
     totalVotesDecrypted: decrypted,
+    totalBallotsProcessed: decrypted,
     turnoutPercentage: turnoutPct,
     positions: positions.map((p) => ({
       positionId: p.positionId,
       positionTitle: p.positionTitle,
       totalVotes: p.totalVotes,
       winner: p.winner,
+      isTied: p.isTied,
+      tiedCandidates: p.tiedCandidates,
       candidates: p.candidates.map((c) => ({ candidateId: c.candidateId, votes: c.votes })),
     })),
   };
@@ -314,9 +335,7 @@ export async function runDecryptionCeremony(): Promise<TallyResult> {
     .update(JSON.stringify(canonicalResults, null, 0))
     .digest('hex');
 
-  log.push(`[${ts()}] SHA-256 results hash computed:`);
-  log.push(`[${ts()}] ${resultsHash}`);
-  log.push(`[${ts()}] Hash covers: ceremony ID, completion time, vote totals per candidate`);
+  log.push(`[${ts()}] SHA-256 results hash: ${resultsHash}`);
   log.push(`[${ts()}] ══════════════════════════════════════════════════════`);
   log.push(`[${ts()}] CEREMONY COMPLETE | Duration: ${durationMs}ms`);
   log.push(`[${ts()}] Sovereignty: Zero foreign API calls. Full election cycle on-premise. ✓`);
@@ -324,10 +343,13 @@ export async function runDecryptionCeremony(): Promise<TallyResult> {
 
   const result: TallyResult = {
     ceremonyId,
+    electionId,
+    electionName: election.name,
     startedAt,
     completedAt,
     durationMs,
     totalVotesDecrypted: decrypted,
+    totalBallotsProcessed: decrypted,
     totalVotersEligible: eligibleVoterCount,
     turnoutPercentage: turnoutPct,
     positions,
@@ -348,36 +370,41 @@ export async function runDecryptionCeremony(): Promise<TallyResult> {
     sovereigntyNote: 'Full election cycle completed on-premise. Zero foreign API dependencies.',
   };
 
-  _cached = result;
+  // ── Persist results to election record + transition to TALLIED ────────────
+  await prisma.election.update({
+    where: { id: electionId },
+    data: {
+      tallyResultJson: JSON.stringify(canonicalResults),
+      status: 'TALLIED',
+    },
+  });
+
+  log.push(`[${ts()}] Election status updated to TALLIED. Results persisted to database.`);
+
+  _cache.set(electionId, result);
   return result;
 }
 
-export function getCachedTally(): TallyResult | null {
-  return _cached;
+export function getCachedTally(electionId?: string): TallyResult | null {
+  if (electionId) return _cache.get(electionId) ?? null;
+  // Return the most recently cached result if no electionId specified
+  const entries = [..._cache.values()];
+  return entries[entries.length - 1] ?? null;
 }
 
-export async function publishTallyHash(): Promise<{ txHash: string; hash: string }> {
-  if (!_cached) {
-    throw new Error('No tally results to publish. Run ceremony first.');
+export async function publishTallyHash(electionId: string): Promise<{ txHash: string; hash: string }> {
+  const cached = _cache.get(electionId);
+  if (!cached) {
+    throw new Error('No tally results for this election. Run ceremony first.');
   }
 
-  // Record the tally hash on-chain using the blockchain service.
-  // In mock mode this returns a deterministic mock TX hash.
-  // In production, the hash becomes an immutable on-chain record.
-  const tallySerial = `TALLY-${_cached.ceremonyId.slice(0, 8)}`;
-  const { txHash } = await blockchainService.recordVote(_cached.resultsHash, tallySerial);
-  const hash = _cached.resultsHash;
+  const tallySerial = `TALLY-${cached.ceremonyId.slice(0, 8)}`;
+  const { txHash } = await blockchainService.recordVote(cached.resultsHash, tallySerial);
+  const hash = cached.resultsHash;
 
-  _cached = {
-    ..._cached,
-    blockchainTxHash: txHash,
-    published: true,
-  };
-
-  const updated = _cached;
-  updated.ceremonyLog.push(
-    `[${ts()}] PUBLISHED ON-CHAIN | TX: ${txHash} | Hash: ${hash}`
-  );
+  const updated: TallyResult = { ...cached, blockchainTxHash: txHash, published: true };
+  updated.ceremonyLog.push(`[${ts()}] PUBLISHED ON-CHAIN | TX: ${txHash} | Hash: ${hash}`);
+  _cache.set(electionId, updated);
 
   return { txHash, hash };
 }

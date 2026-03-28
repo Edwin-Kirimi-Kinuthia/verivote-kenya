@@ -6,6 +6,7 @@ import { api } from "@/lib/api-client";
 import type { ApiResponse } from "@/lib/types";
 
 type ElectionType = "GOVERNMENT" | "INSTITUTIONAL" | "CORPORATE" | "CUSTOM";
+type AuthMethod = "PERSONA_KYC" | "EMAIL_DOMAIN" | "OTP_ONLY";
 
 interface NewElectionResponse {
   id: string;
@@ -42,6 +43,12 @@ export default function NewElectionPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
+  const defaultAuthMethod = (type: ElectionType): AuthMethod => {
+    if (type === "GOVERNMENT") return "PERSONA_KYC";
+    if (type === "INSTITUTIONAL" || type === "CORPORATE") return "EMAIL_DOMAIN";
+    return "OTP_ONLY";
+  };
+
   const [form, setForm] = useState({
     name: "",
     description: "",
@@ -49,10 +56,17 @@ export default function NewElectionPage() {
     orgName: "",
     startDate: "",
     endDate: "",
+    authMethod: "PERSONA_KYC" as AuthMethod,
+    allowedDomains: "",   // comma-separated input, split on submit
   });
 
   function update(field: keyof typeof form, value: string) {
-    setForm((f) => ({ ...f, [field]: value }));
+    setForm((f) => {
+      const next = { ...f, [field]: value };
+      // Auto-set auth method when type changes
+      if (field === "type") next.authMethod = defaultAuthMethod(value as ElectionType);
+      return next;
+    });
     if (error) setError("");
   }
 
@@ -67,9 +81,16 @@ export default function NewElectionPage() {
 
     setSaving(true);
     try {
+      const domains = form.allowedDomains
+        .split(/[,\s]+/)
+        .map(d => d.trim().replace(/^@/, "").toLowerCase())
+        .filter(Boolean);
+
       const body: Record<string, unknown> = {
-        name: form.name.trim(),
-        type: form.type,
+        name:       form.name.trim(),
+        type:       form.type,
+        authMethod: form.authMethod,
+        ...(domains.length > 0 && { allowedDomains: domains }),
       };
       if (form.description.trim()) body.description = form.description.trim();
       if (form.orgName.trim()) body.orgName = form.orgName.trim();
@@ -133,7 +154,7 @@ export default function NewElectionPage() {
                   name="type"
                   value={opt.value}
                   checked={form.type === opt.value}
-                  onChange={(e) => update("type", e.target.value)}
+                  onChange={(e) => update("type", e.target.value as ElectionType)}
                   className="mt-0.5 h-4 w-4 text-green-700 focus:ring-green-700"
                 />
                 <div>
@@ -143,6 +164,84 @@ export default function NewElectionPage() {
               </label>
             ))}
           </div>
+        </div>
+
+        {/* Voter Authentication */}
+        <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm space-y-3">
+          <div>
+            <h2 className="mb-0.5 text-sm font-semibold uppercase tracking-wide text-gray-500">
+              Voter Authentication
+            </h2>
+            <p className="text-xs text-gray-400">How voters verify their identity to register and vote.</p>
+          </div>
+
+          {(
+            [
+              {
+                value: "PERSONA_KYC" as AuthMethod,
+                label: "Persona KYC",
+                desc: "Full identity scan — government ID or passport photo verified by Persona. Required for national government elections.",
+                badge: "Recommended for GOVERNMENT",
+                color: "indigo",
+              },
+              {
+                value: "EMAIL_DOMAIN" as AuthMethod,
+                label: "Institutional Email",
+                desc: "Voter must register with an email from an approved domain (e.g. @uon.ac.ke). Verified by OTP. Ideal for universities and corporates.",
+                badge: "Recommended for INSTITUTIONAL / CORPORATE",
+                color: "blue",
+              },
+              {
+                value: "OTP_ONLY" as AuthMethod,
+                label: "OTP Only",
+                desc: "Any email or phone number, verified by a one-time code. No document required. Suitable for open or custom elections.",
+                badge: "Recommended for CUSTOM",
+                color: "gray",
+              },
+            ] satisfies { value: AuthMethod; label: string; desc: string; badge: string; color: string }[]
+          ).map((opt) => (
+            <label
+              key={opt.value}
+              className={`flex cursor-pointer items-start gap-3 rounded-lg border-2 p-4 transition-colors ${
+                form.authMethod === opt.value ? "border-green-700 bg-green-50" : "border-gray-200 hover:border-gray-300"
+              }`}
+            >
+              <input
+                type="radio"
+                name="authMethod"
+                value={opt.value}
+                checked={form.authMethod === opt.value}
+                onChange={(e) => update("authMethod", e.target.value)}
+                className="mt-0.5 h-4 w-4 text-green-700 focus:ring-green-700"
+              />
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-sm font-semibold text-gray-900">{opt.label}</p>
+                  <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-500">{opt.badge}</span>
+                </div>
+                <p className="mt-0.5 text-xs text-gray-500">{opt.desc}</p>
+              </div>
+            </label>
+          ))}
+
+          {/* Allowed domains — only shown for EMAIL_DOMAIN */}
+          {form.authMethod === "EMAIL_DOMAIN" && (
+            <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
+              <label className="mb-1 block text-xs font-semibold text-blue-900">
+                Allowed Email Domains
+              </label>
+              <input
+                type="text"
+                value={form.allowedDomains}
+                onChange={(e) => update("allowedDomains", e.target.value)}
+                placeholder="e.g. uon.ac.ke, ku.ac.ke (comma-separated)"
+                className="w-full rounded-lg border border-blue-300 bg-white px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              />
+              <p className="mt-1 text-xs text-blue-600">
+                Leave blank to allow any email with OTP verification.
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Basic Details */}

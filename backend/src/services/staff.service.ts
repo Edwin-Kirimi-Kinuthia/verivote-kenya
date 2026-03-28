@@ -16,6 +16,8 @@ import {
   NATIONAL_TIER, REGIONAL_TIER, COUNTY_TIER, CONSTITUENCY_TIER, STATION_TIER,
 } from '../types/auth.types.js';
 import { logger } from '../lib/logger.js';
+import type { PollingStation } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 
 // ── Jurisdiction validation ───────────────────────────────────────────────────
 
@@ -61,16 +63,15 @@ export async function createStaff(
   if (existing) throw new ServiceError('This voter already has a staff record', 409);
 
   const staff = await prisma.iebcStaff.create({
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     data: {
       voterId:           input.voterId,
-      staffRole:         input.staffRole as any,
-      jurisdictionLevel: input.jurisdictionLevel as any,
+      staffRole:         input.staffRole         as Prisma.IebcStaffCreateInput['staffRole'],
+      jurisdictionLevel: input.jurisdictionLevel as Prisma.IebcStaffCreateInput['jurisdictionLevel'],
       jurisdictionValue: input.jurisdictionValue ?? null,
       pollingStationId:  input.pollingStationId ?? null,
       createdByStaffId:  input.createdByStaffId ?? null,
       department:        input.department ?? null,
-    } as any,
+    },
   });
 
   logger.info('IEBC staff record created', { staffId: staff.id, role: input.staffRole });
@@ -96,8 +97,7 @@ export async function listStaff(filter?: {
   jurisdictionValue?: string;
   isActive?: boolean;
 }): Promise<IebcStaffWithVoter[]> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const where: any = {};
+  const where: Prisma.IebcStaffWhereInput = {};
   if (filter?.staffRole)         where.staffRole         = filter.staffRole;
   if (filter?.jurisdictionLevel) where.jurisdictionLevel = filter.jurisdictionLevel;
   if (filter?.jurisdictionValue) where.jurisdictionValue = { contains: filter.jurisdictionValue, mode: 'insensitive' };
@@ -127,14 +127,13 @@ export async function updateStaff(
   const newRole  = patch.staffRole         ?? (existing.staffRole         as unknown as StaffRole);
   const newLevel = patch.jurisdictionLevel ?? (existing.jurisdictionLevel as unknown as JurisdictionLevel);
   const newValue = patch.jurisdictionValue !== undefined ? patch.jurisdictionValue : existing.jurisdictionValue;
-  const newDept  = patch.department !== undefined ? patch.department : (existing as any).department;
+  const newDept  = patch.department !== undefined ? patch.department : existing.department;
 
   validateJurisdiction(newRole, newLevel, newValue, newDept);
 
   const updated = await prisma.iebcStaff.update({
     where: { id: staffId },
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    data: patch as any,
+    data:  patch as Prisma.IebcStaffUpdateInput,
   });
   logger.info('IEBC staff record updated', { staffId });
   return updated as unknown as IebcStaffRecord;
@@ -152,8 +151,7 @@ export async function ensureAdminVoterRole(nationalId: string): Promise<string |
   const voter = await prisma.voter.findUnique({ where: { nationalId } });
   if (!voter) return null;
   if (voter.role !== 'ADMIN') {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await prisma.voter.update({ where: { nationalId }, data: { role: 'ADMIN' as any } });
+      await prisma.voter.update({ where: { nationalId }, data: { role: 'ADMIN' } });
   }
   return voter.id;
 }
@@ -198,13 +196,11 @@ export async function getStaffDashboard(
 
 async function buildNationalDashboard(role: StaffRole, department: string | null): Promise<StaffDashboard> {
   const [totalRegistered, votesCast, totalStations, activeStaff, pendingReviews, distressFlags] = await Promise.all([
-    prisma.voter.count({ where: { status: { in: ['REGISTERED', 'VOTED', 'REVOTED', 'DISTRESS_FLAGGED'] as any[] } } }),
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    prisma.vote.count({ where: { status: { notIn: ['SUPERSEDED', 'INVALIDATED'] as any[] } } }),
+    prisma.voter.count({ where: { status: { in: ['REGISTERED', 'VOTED', 'REVOTED', 'DISTRESS_FLAGGED'] } } }),
+    prisma.vote.count({ where: { status: { notIn: ['SUPERSEDED', 'INVALIDATED'] } } }),
     prisma.pollingStation.count({ where: { isActive: true } }),
     prisma.iebcStaff.count({ where: { isActive: true } }),
-    prisma.voter.count({ where: { status: 'PENDING_MANUAL_REVIEW' as any } }),
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    prisma.voter.count({ where: { status: 'PENDING_MANUAL_REVIEW' } }),
     prisma.vote.count({ where: { isDistressFlagged: true } }),
   ]);
 
@@ -411,7 +407,7 @@ async function buildConstituencyDashboard(constituency: string | null): Promise<
 }
 
 async function buildStationDashboard(role: StaffRole, pollingStationId: string | null, jurisdictionValue: string | null): Promise<StaffDashboard> {
-  let station: any = null;
+  let station: PollingStation | null = null;
 
   if (pollingStationId) {
     station = await prisma.pollingStation.findUnique({ where: { id: pollingStationId } });
@@ -466,9 +462,8 @@ async function buildStationDashboard(role: StaffRole, pollingStationId: string |
 
 async function buildObserverDashboard(): Promise<StaffDashboard> {
   const [totalRegistered, votesCast] = await Promise.all([
-    prisma.voter.count({ where: { status: { in: ['REGISTERED', 'VOTED', 'REVOTED'] as any[] } } }),
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    prisma.vote.count({ where: { status: { notIn: ['SUPERSEDED', 'INVALIDATED'] as any[] } } }),
+    prisma.voter.count({ where: { status: { in: ['REGISTERED', 'VOTED', 'REVOTED'] } } }),
+    prisma.vote.count({ where: { status: { notIn: ['SUPERSEDED', 'INVALIDATED'] } } }),
   ]);
   return {
     tier:              'observer',

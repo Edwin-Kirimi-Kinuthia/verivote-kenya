@@ -9,6 +9,7 @@ const BLOCKED_STATUSES = new Set([
   'PENDING_MANUAL_REVIEW',
   'VERIFICATION_FAILED',
   'SUSPENDED',
+  'DECEASED',
 ]);
 
 export class PasswordAuthService {

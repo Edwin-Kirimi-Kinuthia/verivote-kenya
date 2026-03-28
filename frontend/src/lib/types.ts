@@ -6,7 +6,8 @@ export type VoterStatus =
   | "VOTED"
   | "REVOTED"
   | "DISTRESS_FLAGGED"
-  | "SUSPENDED";
+  | "SUSPENDED"
+  | "DECEASED";
 
 export interface Voter {
   id: string;

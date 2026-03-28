@@ -51,6 +51,7 @@ import staffRoutes from './routes/staff.routes.js';
 import declarationRoutes from './routes/declaration.routes.js';
 import geoRoutes from './routes/geo.routes.js';
 import aiInternalRoutes from './routes/ai-internal.routes.js';
+import paperBallotRoutes from './routes/paper-ballot.routes.js';
 
 // ============================================
 // SENTRY — initialise before anything else
@@ -390,6 +391,7 @@ app.use('/api/ballot', ballotRoutes);
 app.use('/api/polling-stations', pollingStationRoutes);
 app.use('/api/staff', staffRoutes);
 app.use('/api/declarations', declarationRoutes);
+app.use('/api/paper-ballots', paperBallotRoutes);
 app.use('/api/geo', geoRoutes);
 
 // ============================================

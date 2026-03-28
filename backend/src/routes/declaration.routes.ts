@@ -18,6 +18,37 @@ import { ServiceError } from '../services/voter.service.js';
 import type { AuthenticatedRequest } from '../types/auth.types.js';
 
 const router: Router = Router();
+
+// ── PUBLIC endpoint — declared results for a given election ───────────────────
+// Returns only DECLARED declarations (not DRAFT/CONTESTED/ANNULLED).
+// Exposed without auth so the public voter portal can show official results.
+router.get('/public/:electionId', async (req: Request, res: Response) => {
+  try {
+    const declarations = await listDeclarations({
+      electionId: req.params.electionId,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      status:     'DECLARED' as any,
+    });
+    // Return minimal public-safe fields: position title, scope, candidates, tally
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const publicData = declarations.map((d: any) => ({
+      id:                d.id,
+      positionId:        d.positionId,
+      positionTitle:     d.position?.title,
+      positionScope:     d.position?.scope,
+      positionScopeValue: d.position?.scopeValue,
+      tallySnapshot:     d.tallySnapshot ? JSON.parse(d.tallySnapshot) : null,
+      declaredAt:        d.declaredAt,
+      jurisdictionLevel: d.jurisdictionLevel,
+      jurisdictionValue: d.jurisdictionValue,
+    }));
+    res.json({ success: true, data: publicData });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    res.status(500).json({ success: false, error: msg });
+  }
+});
+
 router.use(requireAuth, requireAdmin);
 
 // GET /api/declarations
@@ -25,6 +56,7 @@ router.get('/', async (req: Request, res: Response) => {
   try {
     const { electionId, positionId, status, jurisdictionValue } = req.query as Record<string, string | undefined>;
     const staffId   = req.query.staffId as string | undefined;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const list = await listDeclarations({ electionId, positionId, staffId, status: status as any, jurisdictionValue });
     res.json({ success: true, data: list });
   } catch (err) {
@@ -48,7 +80,7 @@ router.get('/:id', async (req: Request, res: Response) => {
 // POST /api/declarations
 router.post(
   '/',
-  requireStaffRole('COMMISSIONER', 'NATIONAL_RO', 'COUNTY_RO', 'CONSTITUENCY_RO'),
+  requireStaffRole('COMMISSIONER', 'NATIONAL_RO', 'COUNTY_RO', 'CONSTITUENCY_RO', 'PRESIDING_OFFICER'),
   async (req: Request, res: Response) => {
     const schema = z.object({
       electionId:    z.string().uuid(),
@@ -86,7 +118,7 @@ router.post(
 // POST /api/declarations/:id/declare
 router.post(
   '/:id/declare',
-  requireStaffRole('COMMISSIONER', 'NATIONAL_RO', 'COUNTY_RO', 'CONSTITUENCY_RO'),
+  requireStaffRole('COMMISSIONER', 'NATIONAL_RO', 'COUNTY_RO', 'CONSTITUENCY_RO', 'PRESIDING_OFFICER'),
   async (req: Request, res: Response) => {
     try {
       const authReq = req as AuthenticatedRequest;
@@ -125,10 +157,13 @@ router.post(
   },
 );
 
-// GET /api/declarations/pending/:electionId — positions this officer can declare
+// GET /api/declarations/pending/:electionId
+// Returns positions visible to this officer for the given election.
+// canDeclare=true  → officer is personInCharge of the position's node (or commission-tier)
+// canDeclare=false → position belongs to a descendant node (read-only visibility)
 router.get(
   '/pending/:electionId',
-  requireStaffRole('COMMISSIONER', 'NATIONAL_RO', 'COUNTY_RO', 'CONSTITUENCY_RO'),
+  requireStaffRole('COMMISSIONER', 'NATIONAL_RO', 'COUNTY_RO', 'CONSTITUENCY_RO', 'PRESIDING_OFFICER'),
   async (req: Request, res: Response) => {
     try {
       const authReq = req as AuthenticatedRequest;
@@ -139,8 +174,6 @@ router.get(
       const pending = await getPendingDeclarations(
         req.params.electionId,
         authReq.voter.staffId,
-        authReq.voter.jurisdictionLevel ?? 'NATIONAL',
-        authReq.voter.jurisdictionValue ?? null,
       );
       res.json({ success: true, data: pending });
     } catch (err) {

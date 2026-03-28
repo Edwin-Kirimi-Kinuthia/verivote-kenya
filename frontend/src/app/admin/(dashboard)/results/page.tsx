@@ -51,6 +51,8 @@ interface PositionTally {
   totalVotes: number;
   winner: string;
   winnerParty: string;
+  isTied: boolean;
+  tiedCandidates: string[];
 }
 
 interface StationBreakdown {
@@ -346,11 +348,20 @@ export default function ResultsPage() {
           {tally.positions.map((pos) => (
             <div key={pos.positionId} className="bg-white border border-gray-200 rounded-xl overflow-hidden">
               {/* Winner banner */}
-              <div className="bg-gradient-to-r from-green-600 to-green-700 px-5 py-3 flex items-center justify-between">
+              <div className={`px-5 py-3 flex items-center justify-between ${pos.isTied ? "bg-gradient-to-r from-amber-500 to-amber-600" : "bg-gradient-to-r from-green-600 to-green-700"}`}>
                 <div>
-                  <p className="text-green-100 text-xs font-medium uppercase tracking-wider">{pos.positionTitle}</p>
-                  <p className="text-white text-xl font-bold mt-0.5">{pos.winner}</p>
-                  <p className="text-green-200 text-sm">{pos.winnerParty}</p>
+                  <p className={`text-xs font-medium uppercase tracking-wider ${pos.isTied ? "text-amber-100" : "text-green-100"}`}>{pos.positionTitle}</p>
+                  {pos.isTied ? (
+                    <>
+                      <p className="text-white text-xl font-bold mt-0.5">TIE — No winner declared</p>
+                      <p className="text-amber-100 text-sm">{pos.tiedCandidates.join(" / ")}</p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-white text-xl font-bold mt-0.5">{pos.winner}</p>
+                      <p className="text-green-200 text-sm">{pos.winnerParty}</p>
+                    </>
+                  )}
                 </div>
                 <div className="text-right">
                   <p className="text-green-100 text-xs">Total votes cast</p>

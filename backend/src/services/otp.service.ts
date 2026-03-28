@@ -44,7 +44,7 @@ export class OtpService {
     }
 
     if (purpose === 'LOGIN') {
-      const blocked = new Set(['PENDING_VERIFICATION', 'PENDING_MANUAL_REVIEW', 'SUSPENDED', 'VERIFICATION_FAILED']);
+      const blocked = new Set(['PENDING_VERIFICATION', 'PENDING_MANUAL_REVIEW', 'SUSPENDED', 'VERIFICATION_FAILED', 'DECEASED']);
       if (blocked.has(voter.status)) {
         throw new ServiceError('Account is not eligible to vote yet', 403);
       }
