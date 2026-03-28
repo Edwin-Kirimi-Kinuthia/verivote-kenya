@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>AI Fraud Detection — VeriVote Kenya</title>
+<style>
+  *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; height:100%; overflow:hidden; background:#040810; font-family:'Segoe UI',sans-serif; }
+  #root {
+    width:1280px; height:720px; position:absolute; top:0; left:0;
+    transform-origin:top left; background:#040810; overflow:hidden;
+  }
+  canvas { position:absolute; top:0; left:0; width:1280px; height:720px; }
+  #ui    { position:absolute; top:0; left:0; width:1280px; height:720px; pointer-events:none; }
+
+  #title {
+    position:absolute; top:28px; left:50%; transform:translateX(-50%);
+    font-size:30px; font-weight:900; color:#22d3ee; white-space:nowrap;
+    text-shadow:0 0 40px #06b6d480; opacity:0; transition:opacity .8s;
+  }
+  #subtitle {
+    position:absolute; top:70px; left:50%; transform:translateX(-50%);
+    font-size:14px; color:#6b7280; white-space:nowrap; opacity:0; transition:opacity .8s;
+  }
+
+  #signal-panel {
+    position:absolute; left:40px; top:110px; width:260px;
+    background:#0a0f1a; border:1px solid #1f2937; border-radius:14px;
+    padding:18px; opacity:0; transition:opacity .6s;
+  }
+  .sp-title { font-size:11px; font-weight:700; letter-spacing:.07em; text-transform:uppercase; color:#22d3ee; margin-bottom:14px; }
+  .sig-row   { margin-bottom:12px; }
+  .sig-label { display:flex; justify-content:space-between; font-size:11px; color:#9ca3af; margin-bottom:4px; }
+  .sig-val   { font-weight:700; }
+  .sig-track { background:#1f2937; border-radius:3px; height:7px; overflow:hidden; }
+  .sig-fill  { height:100%; border-radius:3px; transition:width 1s ease; }
+
+  #score-panel {
+    position:absolute; left:40px; top:460px; width:260px;
+    opacity:0; transition:opacity .6s;
+  }
+  #score-big   { font-size:64px; font-weight:900; color:#f87171; text-shadow:0 0 30px #dc262680; }
+  #score-label { font-size:13px; color:#f87171; font-weight:700; letter-spacing:.04em; }
+  #score-sub   { font-size:11px; color:#4b5563; margin-top:4px; }
+
+  #alert-panel {
+    position:absolute; right:40px; top:110px; width:400px;
+    background:#1a0505; border:2px solid #dc2626; border-radius:14px;
+    padding:20px; opacity:0; transition:opacity .6s;
+  }
+  .ap-title { font-size:12px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; color:#f87171; margin-bottom:12px; }
+  #alert-text { font-size:13px; color:#d1d5db; line-height:1.7; min-height:90px; }
+  #alert-cursor { display:inline-block; width:2px; height:14px; background:#f87171; animation:blink .7s infinite; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+  .llm-badge { margin-top:14px; padding:8px 14px; background:#0a0a0a;
+    border:1px solid #374151; border-radius:8px; font-size:11px; color:#6b7280; }
+  .llm-badge span { color:#22d3ee; font-weight:700; }
+
+  #sovereignty {
+    position:absolute; bottom:36px; left:50%; transform:translateX(-50%);
+    background:#071a0f; border:1px solid #4ade80; border-radius:8px;
+    padding:10px 24px; font-size:12px; color:#4ade80; font-weight:600;
+    letter-spacing:.04em; white-space:nowrap; opacity:0; transition:opacity .6s;
+  }
+
+  .sdots { position:absolute; bottom:22px; left:50%; transform:translateX(-50%);
+    display:flex; gap:8px; }
+  .sdot { width:8px; height:8px; border-radius:50%; background:#1f2937; transition:background .4s; }
+  .sdot.on { background:#22d3ee; }
+  #replay {
+    position:absolute; bottom:16px; left:20px;
+    background:#1f2937; color:#9ca3af; border:1px solid #374151;
+    border-radius:8px; padding:8px 16px; font-size:12px;
+    cursor:pointer; pointer-events:all; font-weight:600;
+  }
+</style>
+</head>
+<body>
+<div id="root">
+  <canvas id="c"></canvas>
+  <div id="ui">
+    <div id="title">AI Fraud Detection</div>
+    <div id="subtitle">Isolation Forest + Llama 3.2 — watching every station, every 60 seconds</div>
+
+    <div id="signal-panel">
+      <div class="sp-title">📡 Station NAI-001 Signals</div>
+      <div class="sig-row"><div class="sig-label"><span>Voting Velocity</span><span class="sig-val" id="sv0" style="color:#f87171">0.00</span></div><div class="sig-track"><div class="sig-fill" id="sf0" style="width:0%;background:#f87171"></div></div></div>
+      <div class="sig-row"><div class="sig-label"><span>Temporal Deviation</span><span class="sig-val" id="sv1" style="color:#fb923c">0.00</span></div><div class="sig-track"><div class="sig-fill" id="sf1" style="width:0%;background:#fb923c"></div></div></div>
+      <div class="sig-row"><div class="sig-label"><span>Geographic Cluster</span><span class="sig-val" id="sv2" style="color:#4ade80">0.00</span></div><div class="sig-track"><div class="sig-fill" id="sf2" style="width:0%;background:#4ade80"></div></div></div>
+      <div class="sig-row"><div class="sig-label"><span>Repeat PIN Attempts</span><span class="sig-val" id="sv3" style="color:#fbbf24">0.00</span></div><div class="sig-track"><div class="sig-fill" id="sf3" style="width:0%;background:#fbbf24"></div></div></div>
+      <div class="sig-row"><div class="sig-label"><span>Distress Correlation</span><span class="sig-val" id="sv4" style="color:#4ade80">0.00</span></div><div class="sig-track"><div class="sig-fill" id="sf4" style="width:0%;background:#4ade80"></div></div></div>
+    </div>
+
+    <div id="score-panel">
+      <div id="score-big">0</div>
+      <div id="score-label">HIGH ALERT</div>
+      <div id="score-sub">Anomaly Score / 100 · Threshold: 70</div>
+    </div>
+
+    <div id="alert-panel">
+      <div class="ap-title">🦙 Llama 3.2 — Security Briefing</div>
+      <div id="alert-text"><span id="alert-cursor"></span></div>
+      <div class="llm-badge">Model: <span>llama3.2:3b</span> · Host: <span>localhost:11434</span> · <span>Zero cloud calls</span></div>
+    </div>
+
+    <div id="sovereignty">🛡️ All inference on Kenyan infrastructure — sovereign AI, zero data egress</div>
+
+    <div class="sdots">
+      <div class="sdot" id="sd0"></div><div class="sdot" id="sd1"></div>
+      <div class="sdot" id="sd2"></div><div class="sdot" id="sd3"></div>
+    </div>
+    <button id="replay" onclick="init()">↺ Replay</button>
+  </div>
+</div>
+<script>
+  const root=document.getElementById('root');
+  function fit(){
+    const s=Math.min(window.innerWidth/1280,window.innerHeight/720);
+    root.style.transform='scale('+s+')';
+    root.style.left=((window.innerWidth-1280*s)/2)+'px';
+    root.style.top=((window.innerHeight-720*s)/2)+'px';
+  }
+  window.addEventListener('resize',fit); fit();
+
+  const W=1280,H=720;
+  const canvas=document.getElementById('c');
+  const ctx=canvas.getContext('2d');
+  canvas.width=W; canvas.height=H;
+
+  const stations=[
+    {x:640,y:290,name:'NAI-001',score:0,alert:false},
+    {x:580,y:330,name:'NAI-002',score:0,alert:false},
+    {x:700,y:310,name:'NAI-003',score:0,alert:false},
+    {x:820,y:390,name:'MOM-001',score:0,alert:false},
+    {x:860,y:430,name:'MOM-002',score:0,alert:false},
+    {x:400,y:350,name:'KIS-001',score:0,alert:false},
+    {x:360,y:390,name:'KIS-002',score:0,alert:false},
+    {x:520,y:250,name:'NAK-001',score:0,alert:false},
+    {x:460,y:210,name:'ELD-001',score:0,alert:false},
+    {x:720,y:250,name:'THK-001',score:0,alert:false},
+    {x:580,y:410,name:'MAC-001',score:0,alert:false},
+    {x:440,y:300,name:'NYR-001',score:0,alert:false},
+  ];
+
+  const particles=[];
+  function spawnP(x,y,color,n=12){
+    for(let i=0;i<n;i++){
+      const a=Math.random()*Math.PI*2,s=1+Math.random()*4;
+      particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:1,decay:.015+Math.random()*.02,size:2+Math.random()*3,color});
+    }
+  }
+
+  function scoreColor(s){ return s>80?'#f87171':s>60?'#fb923c':s>40?'#fbbf24':'#4ade80'; }
+
+  let mapAlpha=0,t=0;
+
+  function drawStation(s){
+    const r=s.alert?16:10;
+    ctx.save();
+    ctx.shadowBlur=s.alert?28:8; ctx.shadowColor=scoreColor(s.score); ctx.fillStyle=scoreColor(s.score);
+    if(s.alert){
+      const pulse=0.35+0.35*Math.abs(Math.sin(Date.now()*.004));
+      ctx.globalAlpha=pulse*0.5; ctx.strokeStyle='#f87171'; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.arc(s.x,s.y,r+14,0,Math.PI*2); ctx.stroke(); ctx.globalAlpha=1;
+    }
+    ctx.beginPath(); ctx.arc(s.x,s.y,r,0,Math.PI*2); ctx.fill();
+    if(s.alert){ ctx.fillStyle='#fff'; ctx.font='bold 10px monospace'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.shadowBlur=0; ctx.fillText(Math.round(s.score),s.x,s.y); }
+    ctx.fillStyle='#4b5563'; ctx.font='9px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='alphabetic'; ctx.shadowBlur=0;
+    ctx.fillText(s.name,s.x,s.y+r+10);
+    ctx.restore();
+  }
+
+  const SIG_VALS=[0.93,0.72,0.21,0.58,0.14];
+  function animSig(idx,target,dur){
+    const f=document.getElementById('sf'+idx), v=document.getElementById('sv'+idx);
+    const t0=Date.now();
+    function step(){ const p=Math.min(1,(Date.now()-t0)/dur); f.style.width=(p*target*100)+'%'; v.textContent=(p*target).toFixed(2); if(p<1) requestAnimationFrame(step); }
+    requestAnimationFrame(step);
+  }
+  function animScore(target,dur){
+    const el=document.getElementById('score-big'); const t0=Date.now();
+    function step(){ const p=Math.min(1,(Date.now()-t0)/dur); el.textContent=Math.round((1-Math.pow(1-p,3))*target); if(p<1) requestAnimationFrame(step); }
+    requestAnimationFrame(step);
+  }
+
+  const ALERT_MSG="HIGH ALERT — Station NAI-001: Abnormally high voting velocity detected (3.8× the station hourly average). Temporal deviation also elevated, suggesting voting outside normal hours. Rule R03_VELOCITY_SURGE triggered. A returning officer should visit this station immediately and verify the voter register against actual attendance.";
+  let typeTimer=null;
+  function typewrite(text,el){
+    let i=0; el.innerHTML='<span id="alert-cursor"></span>';
+    if(typeTimer) clearInterval(typeTimer);
+    typeTimer=setInterval(()=>{
+      if(i<text.length){ el.innerHTML=text.substring(0,++i)+'<span id="alert-cursor"></span>'; }
+      else clearInterval(typeTimer);
+    },26);
+  }
+
+  const timers=[];
+  function at(ms,fn){ timers.push(setTimeout(fn,ms)); }
+  function clearAll(){ timers.forEach(clearTimeout); timers.length=0; if(typeTimer) clearInterval(typeTimer); }
+  function setDot(n){ document.querySelectorAll('.sdot').forEach((d,i)=>d.classList.toggle('on',i===n)); }
+  function show(id){ document.getElementById(id).style.opacity='1'; }
+  function hide(id){ document.getElementById(id).style.opacity='0'; }
+
+  function init(){
+    clearAll(); particles.length=0; mapAlpha=0;
+    stations.forEach((s,i)=>{ s.score=5+Math.random()*20; s.alert=false; });
+    ['title','subtitle','signal-panel','score-panel','alert-panel','sovereignty'].forEach(hide);
+    document.getElementById('alert-text').innerHTML='<span id="alert-cursor"></span>';
+    document.getElementById('score-big').textContent='0';
+    ['sf0','sf1','sf2','sf3','sf4'].forEach(id=>document.getElementById(id).style.width='0%');
+    ['sv0','sv1','sv2','sv3','sv4'].forEach(id=>document.getElementById(id).textContent='0.00');
+    setDot(-1);
+
+    at(300, ()=>{ show('title'); show('subtitle'); setDot(0); });
+    at(2000,()=>{ show('signal-panel'); setDot(1); SIG_VALS.forEach((v,i)=>animSig(i,v,1200+i*200)); });
+    at(4500,()=>{ stations[0].score=87; stations[0].alert=true; spawnP(stations[0].x,stations[0].y,'#f87171',30); show('score-panel'); animScore(87,1200); setDot(2); });
+    at(6000,()=>{ show('alert-panel'); setDot(3); typewrite(ALERT_MSG,document.getElementById('alert-text')); });
+    at(13000,()=>{ show('sovereignty'); });
+  }
+
+  function loop(){
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle='#040810'; ctx.fillRect(0,0,W,H);
+    ctx.strokeStyle='#0a0f1a'; ctx.lineWidth=1;
+    for(let x=0;x<W;x+=40){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+    for(let y=0;y<H;y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+    t++;
+
+    mapAlpha=Math.min(1,mapAlpha+0.015);
+    // Simplified Kenya outline
+    ctx.save(); ctx.globalAlpha=mapAlpha*0.06;
+    ctx.strokeStyle='#22d3ee'; ctx.lineWidth=1.5;
+    ctx.beginPath();
+    ctx.moveTo(400,160); ctx.lineTo(600,160); ctx.lineTo(720,155); ctx.lineTo(820,200);
+    ctx.lineTo(900,300); ctx.lineTo(920,420); ctx.lineTo(860,500);
+    ctx.lineTo(640,540); ctx.lineTo(500,520); ctx.lineTo(380,460);
+    ctx.lineTo(320,380); ctx.lineTo(340,280); ctx.closePath(); ctx.stroke();
+    ctx.fillStyle='#22d3ee30'; ctx.fill();
+    ctx.fillStyle='#22d3ee'; ctx.font='bold 12px sans-serif'; ctx.textAlign='center';
+    ctx.globalAlpha=mapAlpha*0.25; ctx.fillText('KENYA — IEBC STATION MONITOR',640,560); ctx.restore();
+
+    // Connections
+    ctx.save(); ctx.globalAlpha=mapAlpha*0.12; ctx.strokeStyle='#1f2937'; ctx.lineWidth=1;
+    for(let i=0;i<stations.length;i++) for(let j=i+1;j<stations.length;j++){
+      const d=Math.hypot(stations[i].x-stations[j].x,stations[i].y-stations[j].y);
+      if(d<200){ ctx.beginPath(); ctx.moveTo(stations[i].x,stations[i].y); ctx.lineTo(stations[j].x,stations[j].y); ctx.stroke(); }
+    }
+    ctx.restore();
+
+    stations.forEach(s=>drawStation(s));
+
+    // Pulse ring on alert station
+    if(stations[0].alert){
+      const pr=((Date.now()*.001)%3)/3*120+10;
+      ctx.save(); ctx.globalAlpha=(1-pr/130)*0.4;
+      ctx.strokeStyle='#f87171'; ctx.lineWidth=1.5;
+      ctx.beginPath(); ctx.arc(stations[0].x,stations[0].y,pr,0,Math.PI*2); ctx.stroke(); ctx.restore();
+    }
+
+    // Scan line
+    const scanY=100+(H-100)*((t*0.005)%1);
+    ctx.save(); ctx.globalAlpha=0.04; ctx.fillStyle='#22d3ee'; ctx.fillRect(0,scanY,W,2); ctx.restore();
+
+    particles.forEach(p=>{
+      p.x+=p.vx; p.y+=p.vy; p.vy+=0.04; p.life-=p.decay;
+      ctx.save(); ctx.globalAlpha=p.life; ctx.fillStyle=p.color;
+      ctx.shadowBlur=8; ctx.shadowColor=p.color;
+      ctx.beginPath(); ctx.arc(p.x,p.y,p.size,0,Math.PI*2); ctx.fill(); ctx.restore();
+    });
+    for(let i=particles.length-1;i>=0;i--) if(particles[i].life<=0) particles.splice(i,1);
+
+    requestAnimationFrame(loop);
+  }
+  loop(); init();
+</script>
+</body>
+</html>

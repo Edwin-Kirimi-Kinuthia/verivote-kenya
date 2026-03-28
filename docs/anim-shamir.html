@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Shamir's Secret Sharing — VeriVote Kenya</title>
+<style>
+  *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; height:100%; overflow:hidden; background:#06040f; font-family:'Segoe UI',sans-serif; }
+  #root {
+    width:1280px; height:720px; position:absolute; top:0; left:0;
+    transform-origin:top left; background:#06040f; overflow:hidden;
+  }
+  canvas { position:absolute; top:0; left:0; width:1280px; height:720px; }
+  #ui    { position:absolute; top:0; left:0; width:1280px; height:720px; pointer-events:none; }
+
+  #title {
+    position:absolute; top:28px; left:50%; transform:translateX(-50%);
+    font-size:30px; font-weight:900; color:#c084fc; white-space:nowrap;
+    text-shadow:0 0 40px #7c3aed80; opacity:0; transition:opacity 1s;
+  }
+  #subtitle {
+    position:absolute; top:70px; left:50%; transform:translateX(-50%);
+    font-size:14px; color:#6b7280; white-space:nowrap; opacity:0; transition:opacity 1s;
+  }
+  #threshold-badge {
+    position:absolute; top:108px; left:50%; transform:translateX(-50%);
+    background:#1a0d2e; border:2px solid #7c3aed; border-radius:20px;
+    padding:6px 20px; font-size:13px; font-weight:800; color:#c084fc;
+    opacity:0; transition:opacity .6s; white-space:nowrap;
+  }
+  #result-banner {
+    position:absolute; bottom:60px; left:50%; transform:translateX(-50%);
+    background:#071a0f; border:2px solid #4ade80; border-radius:14px;
+    padding:16px 40px; text-align:center; opacity:0; transition:opacity .8s; white-space:nowrap;
+  }
+  #result-banner .rb-big { font-size:20px; font-weight:900; color:#4ade80; }
+  #result-banner .rb-sub { font-size:12px; color:#6b7280; margin-top:4px; }
+
+  .step-dot-row {
+    position:absolute; bottom:26px; left:50%; transform:translateX(-50%);
+    display:flex; gap:8px;
+  }
+  .sdot { width:8px; height:8px; border-radius:50%; background:#1f2937; transition:background .4s; }
+  .sdot.on { background:#c084fc; }
+
+  #replay {
+    position:absolute; bottom:20px; left:20px;
+    background:#1f2937; color:#9ca3af; border:1px solid #374151;
+    border-radius:8px; padding:8px 16px; font-size:12px;
+    cursor:pointer; pointer-events:all; font-weight:600;
+  }
+</style>
+</head>
+<body>
+<div id="root">
+  <canvas id="c"></canvas>
+  <div id="ui">
+    <div id="title">Shamir's Secret Sharing</div>
+    <div id="subtitle">The decryption key is split — no single person can unlock the results</div>
+    <div id="threshold-badge">Threshold: any 3 of 5 commissioners required</div>
+    <div id="result-banner">
+      <div class="rb-big">🔓 Key Reconstructed — Tally Decrypted</div>
+      <div class="rb-sub">3 shares provided · Polynomial interpolation complete · Results released</div>
+    </div>
+    <div class="step-dot-row">
+      <div class="sdot" id="sd0"></div><div class="sdot" id="sd1"></div>
+      <div class="sdot" id="sd2"></div><div class="sdot" id="sd3"></div>
+      <div class="sdot" id="sd4"></div>
+    </div>
+    <button id="replay" onclick="init()">↺ Replay</button>
+  </div>
+</div>
+<script>
+  // ── Responsive ─────────────────────────────────────────────
+  const root = document.getElementById('root');
+  function fit() {
+    const s = Math.min(window.innerWidth / 1280, window.innerHeight / 720);
+    root.style.transform = 'scale(' + s + ')';
+    root.style.left = ((window.innerWidth  - 1280 * s) / 2) + 'px';
+    root.style.top  = ((window.innerHeight - 720  * s) / 2) + 'px';
+  }
+  window.addEventListener('resize', fit);
+  fit();
+
+  // ── Canvas ─────────────────────────────────────────────────
+  const W = 1280, H = 720;
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+  canvas.width = W; canvas.height = H;
+
+  // Commissioners arc
+  const CX = 640, CY = 490, R = 240;
+  const COLORS = ['#f87171','#fb923c','#facc15','#4ade80','#818cf8'];
+  const NAMES  = ['Nairobi','Mombasa','Kisumu','Nakuru','Eldoret'];
+  const comms  = [0,1,2,3,4].map(i => {
+    const a = -Math.PI + (i/4) * Math.PI;
+    return { x: CX + R*Math.cos(a), y: CY + R*Math.sin(a), submitted: false };
+  });
+  const KEY = { x: CX, y: 200 };
+
+  // Shards
+  const shards = comms.map((c,i) => ({
+    sx: KEY.x, sy: KEY.y, tx: c.x, ty: c.y,
+    color: COLORS[i], progress: 0, visible: false, arrived: false, glowing: false
+  }));
+
+  // Recon beams (first 3 submit)
+  const reconBeams = [0,1,2].map(i => ({
+    x1: comms[i].x, y1: comms[i].y, x2: KEY.x, y2: KEY.y,
+    progress: 0, visible: false, color: COLORS[i]
+  }));
+
+  const particles = [], sparks = [];
+  function spawnP(x, y, color, n=16) {
+    for (let i=0;i<n;i++) {
+      const a=Math.random()*Math.PI*2, s=1+Math.random()*4;
+      particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:1,decay:.013+Math.random()*.02,size:2+Math.random()*3,color});
+    }
+  }
+  function spark(x,y,color) {
+    for (let i=0;i<5;i++) {
+      const a=Math.random()*Math.PI*2,s=2+Math.random()*5;
+      sparks.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:1,decay:.04,size:1+Math.random()*2,color});
+    }
+  }
+
+  function easeOut(t){ return 1-Math.pow(1-t,3); }
+  function lerp(a,b,t){ return a+(b-a)*t; }
+
+  let keyShattered=false, keyRebuilt=false, vaultOpen=false;
+  let commAlpha=0, vaultAlpha=0, keyAlpha=0;
+
+  function drawKey(x,y,alpha) {
+    if(alpha<=0) return;
+    ctx.save(); ctx.globalAlpha=alpha; ctx.translate(x,y);
+    ctx.shadowBlur=30; ctx.shadowColor='#c084fc';
+    ctx.fillStyle='#c084fc'; ctx.strokeStyle='#e879f9'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.arc(-18,-8,16,0,Math.PI*2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle='#06040f'; ctx.beginPath(); ctx.arc(-18,-8,8,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#c084fc'; ctx.strokeStyle='#e879f9';
+    ctx.fillRect(-18,-14,42,12); ctx.strokeRect(-18,-14,42,12);
+    ctx.fillStyle='#06040f'; ctx.fillRect(18,-14,5,8); ctx.fillRect(10,-14,5,8);
+    ctx.fillStyle='#fff'; ctx.font='bold 9px monospace'; ctx.textAlign='center';
+    ctx.shadowBlur=0; ctx.fillText('PRIVATE KEY',4,18);
+    ctx.restore();
+  }
+
+  function drawCommissioner(c, i, alpha) {
+    ctx.save(); ctx.globalAlpha=alpha;
+    ctx.beginPath(); ctx.arc(c.x,c.y,28,0,Math.PI*2);
+    ctx.strokeStyle=c.submitted?COLORS[i]:'#374151';
+    ctx.lineWidth=c.submitted?3:1.5;
+    ctx.fillStyle=c.submitted?'#1a0d2e':'#111827';
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle=c.submitted?COLORS[i]:'#4b5563';
+    ctx.font='18px serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText('👤',c.x,c.y);
+    ctx.fillStyle='#9ca3af'; ctx.font='10px sans-serif'; ctx.textBaseline='alphabetic';
+    ctx.fillText(NAMES[i],c.x,c.y+44);
+    ctx.restore();
+  }
+
+  function drawShard(s, idx) {
+    if (!s.visible) return;
+    const p = s.arrived ? 1 : easeOut(s.progress);
+    const px = lerp(s.sx, s.tx, p), py = lerp(s.sy, s.ty, p);
+    ctx.save();
+    ctx.shadowBlur=s.glowing?28:10; ctx.shadowColor=s.color;
+    ctx.fillStyle=s.color; ctx.globalAlpha=0.9;
+    ctx.beginPath(); ctx.moveTo(px-12,py+8); ctx.lineTo(px,py-14); ctx.lineTo(px+12,py+8); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle='#fff'; ctx.lineWidth=1; ctx.stroke();
+    ctx.fillStyle='#fff'; ctx.font='bold 9px monospace'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.shadowBlur=0; ctx.fillText('f('+(idx+1)+')',px,py+1);
+    ctx.restore();
+    if (s.glowing && Math.random()<0.25) spark(px,py,s.color);
+  }
+
+  function drawReconBeam(b) {
+    if (!b.visible) return;
+    const p = easeOut(b.progress);
+    const ex = lerp(b.x1,b.x2,p), ey = lerp(b.y1,b.y2,p);
+    ctx.save(); ctx.shadowBlur=16; ctx.shadowColor=b.color;
+    ctx.strokeStyle=b.color; ctx.lineWidth=2; ctx.setLineDash([8,6]);
+    ctx.beginPath(); ctx.moveTo(b.x1,b.y1); ctx.lineTo(ex,ey); ctx.stroke();
+    ctx.setLineDash([]); ctx.restore();
+  }
+
+  function drawVault(open, alpha) {
+    ctx.save(); ctx.globalAlpha=alpha;
+    const vx=640, vy=H-70, vw=260, vh=60;
+    ctx.shadowBlur=open?30:0; ctx.shadowColor='#4ade80';
+    ctx.strokeStyle=open?'#4ade80':'#374151'; ctx.lineWidth=3;
+    ctx.fillStyle=open?'#071a0f':'#111827';
+    ctx.beginPath(); ctx.roundRect(vx-vw/2,vy-vh/2,vw,vh,10); ctx.fill(); ctx.stroke();
+    ctx.fillStyle=open?'#4ade80':'#6b7280';
+    ctx.font='bold 13px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(open?'🔓 RESULTS UNLOCKED':'🔒 RESULTS LOCKED',vx,vy);
+    ctx.restore();
+  }
+
+  const timers=[];
+  function at(ms,fn){ timers.push(setTimeout(fn,ms)); }
+  function clearAll(){ timers.forEach(clearTimeout); timers.length=0; }
+  function setDot(n){ document.querySelectorAll('.sdot').forEach((d,i)=>d.classList.toggle('on',i===n)); }
+  function show(id){ document.getElementById(id).style.opacity=1; }
+  function hide(id){ document.getElementById(id).style.opacity=0; }
+
+  function init() {
+    clearAll(); particles.length=0; sparks.length=0;
+    shards.forEach(s=>{ s.progress=0; s.visible=false; s.arrived=false; s.glowing=false; });
+    reconBeams.forEach(b=>{ b.progress=0; b.visible=false; });
+    comms.forEach(c=>c.submitted=false);
+    keyShattered=false; keyRebuilt=false; vaultOpen=false;
+    commAlpha=0; vaultAlpha=0; keyAlpha=0;
+    ['title','subtitle','threshold-badge','result-banner'].forEach(hide);
+    setDot(-1);
+
+    at(300,  ()=>{ show('title'); show('subtitle'); });
+    at(1000, ()=>{ show('threshold-badge'); setDot(0); });
+    at(2000, ()=>{ keyShattered=true; spawnP(KEY.x,KEY.y,'#c084fc',40); setDot(1); });
+
+    [0,1,2,3,4].forEach(i=>{
+      at(2200+i*300, ()=>{ shards[i].visible=true; shards[i].glowing=true; });
+      at(2200+i*300+1400, ()=>{ shards[i].arrived=true; spawnP(comms[i].x,comms[i].y,COLORS[i],12); });
+    });
+
+    at(5800,()=>{ setDot(2); });
+    at(6500,()=>{ comms[0].submitted=true; reconBeams[0].visible=true; spawnP(comms[0].x,comms[0].y,COLORS[0],20); });
+    at(7200,()=>{ comms[1].submitted=true; reconBeams[1].visible=true; spawnP(comms[1].x,comms[1].y,COLORS[1],20); });
+    at(7900,()=>{ comms[2].submitted=true; reconBeams[2].visible=true; spawnP(comms[2].x,comms[2].y,COLORS[2],20); setDot(3); });
+    at(9200,()=>{ keyRebuilt=true; keyShattered=false; spawnP(KEY.x,KEY.y,'#c084fc',60); setDot(4); });
+    at(10000,()=>{ vaultOpen=true; spawnP(640,H-70,'#4ade80',40); show('result-banner'); });
+  }
+
+  function loop() {
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle='#06040f'; ctx.fillRect(0,0,W,H);
+    ctx.strokeStyle='#0d0a1a'; ctx.lineWidth=1;
+    for(let x=0;x<W;x+=40){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+    for(let y=0;y<H;y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+
+    if (!keyShattered) { keyAlpha=Math.min(1,keyAlpha+0.03); drawKey(KEY.x,KEY.y,keyAlpha); }
+
+    commAlpha=Math.min(1,commAlpha+0.02);
+    comms.forEach((c,i)=>drawCommissioner(c,i,commAlpha));
+
+    shards.forEach((s,i)=>{ if(s.visible&&!s.arrived) s.progress=Math.min(1,s.progress+0.012); drawShard(s,i); });
+    reconBeams.forEach(b=>{ if(b.visible) b.progress=Math.min(1,b.progress+0.015); drawReconBeam(b); });
+
+    if(keyRebuilt){
+      const pulse=0.6+0.4*Math.abs(Math.sin(Date.now()*.004));
+      drawKey(KEY.x,KEY.y,pulse);
+      if(Math.random()<0.3) spark(KEY.x,KEY.y,'#c084fc');
+    }
+
+    vaultAlpha=Math.min(1,vaultAlpha+0.02);
+    drawVault(vaultOpen,vaultAlpha);
+
+    [particles,sparks].forEach(arr=>{
+      arr.forEach(p=>{
+        p.x+=p.vx; p.y+=p.vy; p.vy+=0.05; p.life-=p.decay;
+        ctx.save(); ctx.globalAlpha=p.life; ctx.fillStyle=p.color;
+        ctx.shadowBlur=8; ctx.shadowColor=p.color;
+        ctx.beginPath(); ctx.arc(p.x,p.y,p.size,0,Math.PI*2); ctx.fill(); ctx.restore();
+      });
+      for(let i=arr.length-1;i>=0;i--) if(arr[i].life<=0) arr.splice(i,1);
+    });
+
+    requestAnimationFrame(loop);
+  }
+  loop();
+  init();
+</script>
+</body>
+</html>

@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VeriVote Kenya — Animation Hub</title>
+<style>
+  :root {
+    --bg:       #030508;
+    --surface:  #0a0d14;
+    --border:   #1f2937;
+    --green:    #4ade80;
+    --blue:     #60a5fa;
+    --cyan:     #22d3ee;
+    --gold:     #fbbf24;
+    --purple:   #c084fc;
+    --red:      #f87171;
+    --gray:     #6b7280;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: #f9fafb;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    min-height: 100vh;
+    padding-bottom: 80px;
+  }
+
+  /* ── Header ── */
+  header {
+    text-align: center;
+    padding: 60px 24px 40px;
+    position: relative;
+  }
+  header::after {
+    content: '';
+    position: absolute;
+    bottom: 0; left: 10%; right: 10%;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--border), transparent);
+  }
+
+  .logo {
+    font-size: 13px; font-weight: 700; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--green);
+    margin-bottom: 16px;
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+  }
+  .logo-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green);
+    box-shadow: 0 0 10px var(--green); animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+  h1 {
+    font-size: clamp(28px, 5vw, 48px);
+    font-weight: 900; line-height: 1.1;
+    background: linear-gradient(135deg, var(--green) 0%, var(--cyan) 40%, var(--purple) 80%);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    margin-bottom: 12px;
+  }
+  .header-sub {
+    font-size: 15px; color: var(--gray); max-width: 600px; margin: 0 auto 24px;
+    line-height: 1.6;
+  }
+  .header-badges { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+  .badge {
+    padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: 700;
+    letter-spacing: .04em; text-transform: uppercase;
+  }
+  .badge.green  { background: #052e16; color: var(--green);  border: 1px solid #166534; }
+  .badge.blue   { background: #0c1a2e; color: var(--blue);   border: 1px solid #1e3a5f; }
+  .badge.purple { background: #1a0d2e; color: var(--purple); border: 1px solid #4c1d95; }
+  .badge.gold   { background: #1a1000; color: var(--gold);   border: 1px solid #78350f; }
+
+  /* ── Grid ── */
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+    gap: 24px;
+    max-width: 1200px;
+    margin: 48px auto 0;
+    padding: 0 24px;
+  }
+
+  /* ── Card ── */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    overflow: hidden;
+    transition: transform .2s, border-color .2s, box-shadow .2s;
+    text-decoration: none;
+    display: flex; flex-direction: column;
+  }
+  .card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 20px 60px #00000060;
+  }
+  .card:hover .card-preview { opacity: .9; }
+
+  /* Preview: mini canvas animation inside card */
+  .card-preview {
+    height: 180px;
+    position: relative;
+    overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+    transition: opacity .2s;
+  }
+  .card-preview iframe {
+    width: 1280px; height: 720px;
+    border: none;
+    transform-origin: top left;
+    pointer-events: none;
+    position: absolute; top: 0; left: 0;
+  }
+  .preview-overlay {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(to bottom, transparent 40%, var(--surface) 100%);
+    z-index: 2;
+  }
+  .play-btn {
+    width: 52px; height: 52px; border-radius: 50%;
+    background: #ffffff18; backdrop-filter: blur(8px);
+    border: 2px solid #ffffff30;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px;
+    transition: transform .2s, background .2s;
+  }
+  .card:hover .play-btn {
+    transform: scale(1.1);
+    background: #ffffff28;
+  }
+
+  /* Card content */
+  .card-body {
+    padding: 20px 22px 22px;
+    flex: 1; display: flex; flex-direction: column;
+  }
+  .card-header {
+    display: flex; align-items: flex-start;
+    justify-content: space-between; gap: 12px;
+    margin-bottom: 10px;
+  }
+  .card-icon { font-size: 28px; flex-shrink: 0; }
+  .card-tag {
+    font-size: 10px; font-weight: 700; letter-spacing: .07em;
+    text-transform: uppercase; padding: 3px 8px;
+    border-radius: 6px; flex-shrink: 0; margin-top: 4px;
+  }
+
+  .card h2 {
+    font-size: 18px; font-weight: 800; margin-bottom: 8px; line-height: 1.2;
+  }
+  .card p {
+    font-size: 13px; color: var(--gray); line-height: 1.65; flex: 1;
+  }
+
+  .card-footer {
+    margin-top: 16px; padding-top: 14px;
+    border-top: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .card-concepts { display: flex; gap: 6px; flex-wrap: wrap; }
+  .concept-pill {
+    font-size: 10px; padding: 2px 8px; border-radius: 10px;
+    font-weight: 600; letter-spacing: .03em;
+  }
+  .open-btn {
+    font-size: 12px; font-weight: 700; letter-spacing: .04em;
+    display: flex; align-items: center; gap: 5px; flex-shrink: 0;
+    transition: gap .2s;
+  }
+  .card:hover .open-btn { gap: 8px; }
+
+  /* Colour schemes per card */
+  .c-green  { border-color: #166534; }
+  .c-green:hover { border-color: var(--green); box-shadow: 0 20px 60px #4ade8020; }
+  .c-green  .card-preview { background: linear-gradient(135deg, #030f07, #071a0f); }
+  .c-green  .card-tag  { background: #052e16; color: var(--green); }
+  .c-green  h2         { color: var(--green); }
+  .c-green  .open-btn  { color: var(--green); }
+  .c-green  .concept-pill { background: #052e16; color: var(--green); }
+
+  .c-cyan   { border-color: #164e63; }
+  .c-cyan:hover { border-color: var(--cyan); box-shadow: 0 20px 60px #22d3ee20; }
+  .c-cyan   .card-preview { background: linear-gradient(135deg, #030810, #04141f); }
+  .c-cyan   .card-tag  { background: #0c2a38; color: var(--cyan); }
+  .c-cyan   h2         { color: var(--cyan); }
+  .c-cyan   .open-btn  { color: var(--cyan); }
+  .c-cyan   .concept-pill { background: #0c2a38; color: var(--cyan); }
+
+  .c-gold   { border-color: #78350f; }
+  .c-gold:hover { border-color: var(--gold); box-shadow: 0 20px 60px #fbbf2420; }
+  .c-gold   .card-preview { background: linear-gradient(135deg, #0a0800, #1a1000); }
+  .c-gold   .card-tag  { background: #1a1000; color: var(--gold); }
+  .c-gold   h2         { color: var(--gold); }
+  .c-gold   .open-btn  { color: var(--gold); }
+  .c-gold   .concept-pill { background: #1a1000; color: var(--gold); }
+
+  .c-purple { border-color: #4c1d95; }
+  .c-purple:hover { border-color: var(--purple); box-shadow: 0 20px 60px #c084fc20; }
+  .c-purple .card-preview { background: linear-gradient(135deg, #06040f, #0e0516); }
+  .c-purple .card-tag  { background: #1a0d2e; color: var(--purple); }
+  .c-purple h2         { color: var(--purple); }
+  .c-purple .open-btn  { color: var(--purple); }
+  .c-purple .concept-pill { background: #1a0d2e; color: var(--purple); }
+
+  .c-blue   { border-color: #1e3a5f; }
+  .c-blue:hover { border-color: var(--blue); box-shadow: 0 20px 60px #60a5fa20; }
+  .c-blue   .card-preview { background: linear-gradient(135deg, #030810, #0d1a2e); }
+  .c-blue   .card-tag  { background: #0c1a2e; color: var(--blue); }
+  .c-blue   h2         { color: var(--blue); }
+  .c-blue   .open-btn  { color: var(--blue); }
+  .c-blue   .concept-pill { background: #0c1a2e; color: var(--blue); }
+
+  .c-red    { border-color: #7f1d1d; }
+  .c-red:hover { border-color: var(--red); box-shadow: 0 20px 60px #f8717120; }
+  .c-red    .card-preview { background: linear-gradient(135deg, #0a0305, #1a0505); }
+  .c-red    .card-tag  { background: #1a0505; color: var(--red); }
+  .c-red    h2         { color: var(--red); }
+  .c-red    .open-btn  { color: var(--red); }
+  .c-red    .concept-pill { background: #1a0505; color: var(--red); }
+
+  /* ── Featured card (full-width) ── */
+  .card.featured {
+    grid-column: 1 / -1;
+    flex-direction: row;
+  }
+  .card.featured .card-preview {
+    width: 420px; flex-shrink: 0; height: auto; min-height: 200px;
+  }
+  .card.featured .card-body { padding: 28px 28px; }
+  .card.featured h2 { font-size: 22px; }
+  .card.featured p  { font-size: 14px; }
+
+  /* ── Footer ── */
+  footer {
+    text-align: center; margin-top: 60px;
+    padding: 0 24px;
+    font-size: 12px; color: #374151;
+  }
+  footer a { color: var(--green); text-decoration: none; }
+
+  /* ── Responsive ── */
+  @media (max-width: 760px) {
+    .card.featured { flex-direction: column; }
+    .card.featured .card-preview { width: 100%; }
+    .grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-dot"></div>
+    VeriVote Kenya
+    <div class="logo-dot"></div>
+  </div>
+  <h1>Interactive Animations</h1>
+  <p class="header-sub">
+    Visual explainers for every cryptographic concept powering Kenya's sovereign election system.
+    Click any card to open the full animation.
+  </p>
+  <div class="header-badges">
+    <span class="badge green">ElGamal Encryption</span>
+    <span class="badge blue">Soul Bound Token</span>
+    <span class="badge purple">Shamir Secret Sharing</span>
+    <span class="badge gold">Homomorphic Tally</span>
+    <span class="badge green">AI Fraud Detection</span>
+    <span class="badge blue">Distress PIN</span>
+  </div>
+</header>
+
+<div class="grid">
+
+  <!-- FEATURED: System Flow -->
+  <a class="card featured c-green" href="anim-system-flow.html" target="_blank">
+    <div class="card-preview">
+      <iframe src="anim-system-flow.html" id="prev-flow" scrolling="no" tabindex="-1"></iframe>
+      <div class="preview-overlay"><div class="play-btn">▶</div></div>
+    </div>
+    <div class="card-body">
+      <div class="card-header">
+        <span class="card-icon">🔗</span>
+        <span class="card-tag">Overview</span>
+      </div>
+      <h2>End-to-End System Flow</h2>
+      <p>
+        Watch the complete VeriVote pipeline come alive — from KYC identity verification and
+        Soul Bound Token minting, through vote encryption and mixnet anonymisation, all the way
+        to the Shamir decryption ceremony and final result declaration.
+        Each step lights up in sequence with live data packets flowing between nodes.
+      </p>
+      <div class="card-footer">
+        <div class="card-concepts">
+          <span class="concept-pill">8 pipeline stages</span>
+          <span class="concept-pill">Live data packets</span>
+          <span class="concept-pill">Auto-play</span>
+        </div>
+        <span class="open-btn">Open →</span>
+      </div>
+    </div>
+  </a>
+
+  <!-- ElGamal -->
+  <a class="card c-cyan" href="anim-elgamal.html" target="_blank">
+    <div class="card-preview">
+      <iframe src="anim-elgamal.html" id="prev-elgamal" scrolling="no" tabindex="-1"></iframe>
+      <div class="preview-overlay"><div class="play-btn">▶</div></div>
+    </div>
+    <div class="card-body">
+      <div class="card-header">
+        <span class="card-icon">🔒</span>
+        <span class="card-tag">Cryptography</span>
+      </div>
+      <h2>ElGamal Encryption</h2>
+      <p>
+        See how a voter's choice transforms into two opaque integers (C1, C2) using
+        2048-bit FFDHE ElGamal. Key generation, randomised encryption, and the
+        ciphertext stored in PostgreSQL — all animated step by step.
+      </p>
+      <div class="card-footer">
+        <div class="card-concepts">
+          <span class="concept-pill">Public key</span>
+          <span class="concept-pill">C1 = g^r mod p</span>
+          <span class="concept-pill">IND-CPA</span>
+        </div>
+        <span class="open-btn">Open →</span>
+      </div>
+    </div>
+  </a>
+
+  <!-- Homomorphic -->
+  <a class="card c-gold" href="anim-homomorphic.html" target="_blank">
+    <div class="card-preview">
+      <iframe src="anim-homomorphic.html" id="prev-homo" scrolling="no" tabindex="-1"></iframe>
+      <div class="preview-overlay"><div class="play-btn">▶</div></div>
+    </div>
+    <div class="card-body">
+      <div class="card-header">
+        <span class="card-icon">➕</span>
+        <span class="card-tag">Cryptography</span>
+      </div>
+      <h2>Homomorphic Tally</h2>
+      <p>
+        40 sealed envelopes fly into an aggregate without being opened.
+        Demonstrates the core property: Enc(a) × Enc(b) = Enc(a+b).
+        Votes are tallied without any individual ballot ever being decrypted.
+      </p>
+      <div class="card-footer">
+        <div class="card-concepts">
+          <span class="concept-pill">Multiplicative HE</span>
+          <span class="concept-pill">Zero decryption</span>
+          <span class="concept-pill">Live tally bars</span>
+        </div>
+        <span class="open-btn">Open →</span>
+      </div>
+    </div>
+  </a>
+
+  <!-- Shamir -->
+  <a class="card c-purple" href="anim-shamir.html" target="_blank">
+    <div class="card-preview">
+      <iframe src="anim-shamir.html" id="prev-shamir" scrolling="no" tabindex="-1"></iframe>
+      <div class="preview-overlay"><div class="play-btn">▶</div></div>
+    </div>
+    <div class="card-body">
+      <div class="card-header">
+        <span class="card-icon">🗝️</span>
+        <span class="card-tag">Ceremony</span>
+      </div>
+      <h2>Shamir's Secret Sharing</h2>
+      <p>
+        The election private key shatters into 5 colour-coded shards and flies to
+        5 commissioners. Watch 3 of them submit their shares, the polynomial
+        reconstruct, and the results vault unlock.
+      </p>
+      <div class="card-footer">
+        <div class="card-concepts">
+          <span class="concept-pill">(3,5) threshold</span>
+          <span class="concept-pill">Polynomial interp.</span>
+          <span class="concept-pill">Vault unlock</span>
+        </div>
+        <span class="open-btn">Open →</span>
+      </div>
+    </div>
+  </a>
+
+  <!-- SBT -->
+  <a class="card c-blue" href="anim-sbt.html" target="_blank">
+    <div class="card-preview">
+      <iframe src="anim-sbt.html" id="prev-sbt" scrolling="no" tabindex="-1"></iframe>
+      <div class="preview-overlay"><div class="play-btn">▶</div></div>
+    </div>
+    <div class="card-body">
+      <div class="card-header">
+        <span class="card-icon">⛓️</span>
+        <span class="card-tag">Blockchain</span>
+      </div>
+      <h2>Soul Bound Token (SBT)</h2>
+      <p>
+        Token mints and binds to the voter with a glowing chain. A transfer attempt
+        bounces off with a red X. Then the deceased scenario: the SBT burns in fire
+        particles and the identity is permanently blocked.
+      </p>
+      <div class="card-footer">
+        <div class="card-concepts">
+          <span class="concept-pill">ERC-721</span>
+          <span class="concept-pill">Non-transferable</span>
+          <span class="concept-pill">Revocable</span>
+        </div>
+        <span class="open-btn">Open →</span>
+      </div>
+    </div>
+  </a>
+
+  <!-- AI Fraud -->
+  <a class="card c-cyan" href="anim-ai-fraud.html" target="_blank">
+    <div class="card-preview">
+      <iframe src="anim-ai-fraud.html" id="prev-ai" scrolling="no" tabindex="-1"></iframe>
+      <div class="preview-overlay"><div class="play-btn">▶</div></div>
+    </div>
+    <div class="card-body">
+      <div class="card-header">
+        <span class="card-icon">🤖</span>
+        <span class="card-tag">AI Service</span>
+      </div>
+      <h2>AI Fraud Detection</h2>
+      <p>
+        Kenya's polling stations as a live network. One station spikes red with an
+        anomaly score of 87/100. Llama 3.2 types out a plain-English security
+        briefing for the IEBC officer — entirely on-premise.
+      </p>
+      <div class="card-footer">
+        <div class="card-concepts">
+          <span class="concept-pill">Isolation Forest</span>
+          <span class="concept-pill">Llama 3.2</span>
+          <span class="concept-pill">Zero cloud</span>
+        </div>
+        <span class="open-btn">Open →</span>
+      </div>
+    </div>
+  </a>
+
+  <!-- Distress PIN -->
+  <a class="card c-red" href="anim-distress-pin.html" target="_blank">
+    <div class="card-preview">
+      <iframe src="anim-distress-pin.html" id="prev-distress" scrolling="no" tabindex="-1"></iframe>
+      <div class="preview-overlay"><div class="play-btn">▶</div></div>
+    </div>
+    <div class="card-body">
+      <div class="card-header">
+        <span class="card-icon">🆘</span>
+        <span class="card-tag">Security</span>
+      </div>
+      <h2>Distress PIN</h2>
+      <p>
+        Split screen: the coercer watches a voter enter their PIN and sees a
+        success screen. On the right, the silent distress signal travels through
+        the system and an IEBC security alert fires — invisible to the coercer.
+      </p>
+      <div class="card-footer">
+        <div class="card-concepts">
+          <span class="concept-pill">Coercion resistance</span>
+          <span class="concept-pill">Silent flag</span>
+          <span class="concept-pill">Split screen</span>
+        </div>
+        <span class="open-btn">Open →</span>
+      </div>
+    </div>
+  </a>
+
+</div>
+
+<footer>
+  <p>VeriVote Kenya · Built for the NIRU Hackathon ·
+    <a href="https://github.com/Edwin-Kirimi-Kinuthia/verivote-kenya">GitHub</a>
+    · All animations run in-browser, no external dependencies
+  </p>
+</footer>
+
+<script>
+  // Scale iframe previews to fit the card preview height (180px from 720px)
+  function scalePreview(iframe, containerHeight) {
+    const scale = containerHeight / 720;
+    iframe.style.transform = 'scale(' + scale + ')';
+  }
+
+  function initPreviews() {
+    document.querySelectorAll('.card-preview').forEach(preview => {
+      const iframe = preview.querySelector('iframe');
+      if (!iframe) return;
+      const h = preview.offsetHeight;
+      scalePreview(iframe, h);
+      // Scale width too
+      iframe.style.transformOrigin = 'top left';
+      // Center horizontally: (containerWidth - 1280*scale) / 2
+      const scale = h / 720;
+      const offset = (preview.offsetWidth - 1280 * scale) / 2;
+      iframe.style.marginLeft = offset + 'px';
+    });
+  }
+
+  // Wait for iframes to be in DOM, then scale
+  window.addEventListener('load', initPreviews);
+  window.addEventListener('resize', initPreviews);
+</script>
+</body>
+</html>

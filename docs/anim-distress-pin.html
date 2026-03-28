@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Distress PIN — VeriVote Kenya</title>
+<style>
+  *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; height:100%; overflow:hidden; background:#030508; font-family:'Segoe UI',sans-serif; }
+  #root {
+    width:1280px; height:720px; position:absolute; top:0; left:0;
+    transform-origin:top left; overflow:hidden;
+  }
+
+  /* Split panes */
+  #left-pane {
+    position:absolute; left:0; top:0; width:640px; height:720px;
+    background:#0a0a0a; border-right:2px solid #1f2937;
+  }
+  #right-pane {
+    position:absolute; left:640px; top:0; width:640px; height:720px;
+    background:#040810;
+  }
+
+  /* Pane labels */
+  .pane-label {
+    width:100%; padding:12px 24px;
+    font-size:11px; font-weight:700; letter-spacing:.08em; text-transform:uppercase;
+  }
+  #left-label  { background:#1a0505; border-bottom:2px solid #dc2626; color:#f87171; }
+  #right-label { background:#071a0f; border-bottom:2px solid #4ade80; color:#4ade80; }
+
+  /* Phone */
+  #phone-wrap { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+    text-align:center; opacity:0; transition:opacity .6s; }
+  #phone {
+    background:#1c1c1e; border-radius:28px; border:3px solid #374151;
+    padding:28px 22px; width:260px; display:inline-block;
+    box-shadow:0 0 40px #00000080;
+  }
+  .ps-header { font-size:11px; color:#6b7280; margin-bottom:6px; }
+  .ps-title  { font-size:15px; font-weight:700; color:#fff; margin-bottom:18px; }
+  .pin-dots  { display:flex; justify-content:center; gap:12px; margin-bottom:16px; }
+  .pin-dot   { width:16px; height:16px; border-radius:50%; border:2px solid #374151; transition:all .3s; }
+  .pin-dot.distress { background:#f87171; border-color:#f87171; box-shadow:0 0 8px #f87171; }
+  #pin-display { font-size:22px; font-weight:900; letter-spacing:8px; color:#4ade80;
+    font-family:monospace; margin-bottom:14px; min-height:30px; }
+  .numpad { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+  .numpad-btn { background:#2c2c2e; border-radius:10px; padding:12px;
+    font-size:16px; font-weight:700; color:#fff; text-align:center; }
+  #success-screen { display:none; padding:16px 0; text-align:center; }
+  #success-screen .ss-icon  { font-size:48px; margin-bottom:8px; }
+  #success-screen .ss-title { font-size:18px; font-weight:800; color:#4ade80; }
+  #success-screen .ss-sub   { font-size:12px; color:#6b7280; margin-top:4px; }
+
+  .coercer-bubble {
+    margin-top:16px; background:#1a0505; border:1px solid #dc2626;
+    border-radius:10px; padding:10px 14px; font-size:12px; color:#f87171;
+    opacity:0; transition:opacity .5s; max-width:300px; margin:16px auto 0;
+  }
+
+  /* Right — canvas + overlay panels */
+  #signal-canvas { position:absolute; left:0; top:44px; width:640px; height:220px; }
+
+  #alert-box {
+    position:absolute; left:20px; top:280px; width:600px;
+    background:#1a0505; border:2px solid #dc2626; border-radius:14px;
+    padding:18px; opacity:0; transition:opacity .6s;
+  }
+  .ab-title { font-size:11px; font-weight:800; letter-spacing:.06em; text-transform:uppercase;
+    color:#f87171; margin-bottom:8px; }
+  .ab-body  { font-size:13px; color:#d1d5db; line-height:1.7; }
+
+  #silent-flag {
+    position:absolute; left:20px; top:480px; width:600px;
+    background:#0a0f1a; border:1px solid #818cf8; border-radius:10px;
+    padding:14px 18px; opacity:0; transition:opacity .6s;
+    font-family:monospace; font-size:12px; color:#818cf8; line-height:1.8;
+  }
+
+  #caption {
+    position:absolute; bottom:18px; left:640px; width:640px; text-align:center;
+    font-size:11px; color:#374151; opacity:0; transition:opacity .6s;
+  }
+
+  #replay {
+    position:absolute; bottom:16px; left:16px;
+    background:#1f2937; color:#9ca3af; border:1px solid #374151;
+    border-radius:8px; padding:8px 16px; font-size:12px;
+    cursor:pointer; pointer-events:all; font-weight:600;
+  }
+</style>
+</head>
+<body>
+<div id="root">
+  <!-- LEFT: coercer's view -->
+  <div id="left-pane">
+    <div class="pane-label" id="left-label">👁️ What the coercer sees</div>
+    <div id="phone-wrap">
+      <div id="phone">
+        <div class="ps-header">VeriVote Kenya</div>
+        <div class="ps-title">Confirm Your Vote</div>
+        <div class="pin-dots">
+          <div class="pin-dot" id="d0"></div><div class="pin-dot" id="d1"></div>
+          <div class="pin-dot" id="d2"></div><div class="pin-dot" id="d3"></div>
+        </div>
+        <div id="pin-display"></div>
+        <div id="numpad-view">
+          <div class="numpad">
+            <div class="numpad-btn">1</div><div class="numpad-btn">2</div><div class="numpad-btn">3</div>
+            <div class="numpad-btn">4</div><div class="numpad-btn">5</div><div class="numpad-btn">6</div>
+            <div class="numpad-btn">7</div><div class="numpad-btn">8</div><div class="numpad-btn">9</div>
+            <div class="numpad-btn"></div><div class="numpad-btn">0</div><div class="numpad-btn">⌫</div>
+          </div>
+        </div>
+        <div id="success-screen">
+          <div class="ss-icon">✅</div>
+          <div class="ss-title">Vote Cast Successfully</div>
+          <div class="ss-sub">Thank you for participating</div>
+        </div>
+      </div>
+      <div class="coercer-bubble" id="coercer-bubble">
+        "Good. They voted correctly." — Coercer sees nothing wrong
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT: what actually happens -->
+  <div id="right-pane">
+    <div class="pane-label" id="right-label">🔴 What actually happens (silently)</div>
+    <canvas id="signal-canvas"></canvas>
+
+    <div id="alert-box">
+      <div class="ab-title">🚨 IEBC Security Alert — DISTRESS DETECTED</div>
+      <div class="ab-body">
+        Station <strong style="color:#f87171">NAI-007</strong> ·
+        Voter <strong style="color:#f87171">****2847</strong> ·
+        Distress PIN entered at <strong style="color:#fbbf24">14:32:07</strong><br>
+        Vote flagged: <code style="color:#818cf8">isDistressFlagged = true</code><br>
+        Action: Dispatch security personnel immediately.
+      </div>
+    </div>
+
+    <div id="silent-flag">
+      // Server record — voter sees NOTHING of this<br>
+      { voteId: "v_8f3a2b",<br>
+      &nbsp;&nbsp;isDistressFlagged: <span style="color:#f87171">true</span>,<br>
+      &nbsp;&nbsp;distressAt: "2027-08-09T14:32:07Z",<br>
+      &nbsp;&nbsp;alertDispatched: <span style="color:#4ade80">true</span> }
+    </div>
+  </div>
+
+  <div id="caption">Distress PIN — coercion resistance built into the vote flow</div>
+  <button id="replay" onclick="init()">↺ Replay</button>
+</div>
+
+<script>
+  // ── Responsive ─────────────────────────────────────────────
+  const root = document.getElementById('root');
+  function fit() {
+    const s = Math.min(window.innerWidth / 1280, window.innerHeight / 720);
+    root.style.transform = 'scale(' + s + ')';
+    root.style.left = ((window.innerWidth  - 1280 * s) / 2) + 'px';
+    root.style.top  = ((window.innerHeight - 720  * s) / 2) + 'px';
+  }
+  window.addEventListener('resize', fit);
+  fit();
+
+  // ── Signal canvas ─────────────────────────────────────────
+  const sc = document.getElementById('signal-canvas');
+  const sctx = sc.getContext('2d');
+  sc.width = 640; sc.height = 220;
+
+  const nodes = [
+    { x:50,  y:110, label:'Voter\nDevice',  color:'#60a5fa' },
+    { x:210, y:80,  label:'Backend\nAPI',   color:'#4ade80' },
+    { x:380, y:110, label:'DB Flag\nSet',   color:'#818cf8' },
+    { x:550, y:80,  label:'IEBC\nAlert',    color:'#f87171' },
+  ];
+
+  const sBeams = [];
+  function addSBeam(from, to) {
+    sBeams.push({ from, to, progress:0, color:nodes[to].color });
+  }
+
+  const particles = [];
+  function spawnP(x, y, color, n=10) {
+    for(let i=0;i<n;i++){
+      const a=Math.random()*Math.PI*2,s=1+Math.random()*4;
+      particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:1,decay:.02+Math.random()*.02,size:2+Math.random()*3,color});
+    }
+  }
+
+  const nodeVisible = [false,false,false,false];
+  const nodeAlpha   = [0,0,0,0];
+
+  function easeOut(t){ return 1-Math.pow(1-t,3); }
+  function lerp(a,b,t){ return a+(b-a)*t; }
+
+  function drawSCanvas() {
+    sctx.clearRect(0,0,640,220);
+    sctx.fillStyle='#040810'; sctx.fillRect(0,0,640,220);
+    sctx.strokeStyle='#0a0f1a'; sctx.lineWidth=1;
+    for(let x=0;x<640;x+=40){sctx.beginPath();sctx.moveTo(x,0);sctx.lineTo(x,220);sctx.stroke();}
+    for(let y=0;y<220;y+=40){sctx.beginPath();sctx.moveTo(0,y);sctx.lineTo(640,y);sctx.stroke();}
+
+    sctx.fillStyle='#4b5563'; sctx.font='10px sans-serif'; sctx.textAlign='center';
+    sctx.fillText('Silent distress signal path', 320, 18);
+
+    // Beams
+    sBeams.forEach(b => {
+      b.progress = Math.min(1, b.progress + 0.02);
+      const fx=nodes[b.from].x, fy=nodes[b.from].y;
+      const tx=nodes[b.to].x,   ty=nodes[b.to].y;
+      const p=easeOut(b.progress);
+      const ex=lerp(fx,tx,p), ey=lerp(fy,ty,p);
+      sctx.save(); sctx.shadowBlur=10; sctx.shadowColor=b.color;
+      sctx.strokeStyle=b.color; sctx.lineWidth=2; sctx.setLineDash([6,4]);
+      sctx.beginPath(); sctx.moveTo(fx,fy); sctx.lineTo(ex,ey); sctx.stroke();
+      sctx.setLineDash([]);
+      sctx.fillStyle=b.color; sctx.globalAlpha=0.9;
+      sctx.beginPath(); sctx.arc(ex,ey,5,0,Math.PI*2); sctx.fill();
+      sctx.restore();
+    });
+
+    // Nodes
+    nodes.forEach((n,i) => {
+      if (!nodeVisible[i]) return;
+      nodeAlpha[i] = Math.min(1, nodeAlpha[i]+0.04);
+      sctx.save(); sctx.globalAlpha=nodeAlpha[i];
+      sctx.shadowBlur=16; sctx.shadowColor=n.color;
+      sctx.fillStyle=n.color+'30'; sctx.strokeStyle=n.color; sctx.lineWidth=2;
+      sctx.beginPath(); sctx.arc(n.x,n.y,20,0,Math.PI*2); sctx.fill(); sctx.stroke();
+      sctx.fillStyle=n.color; sctx.font='bold 9px sans-serif'; sctx.textAlign='center';
+      n.label.split('\n').forEach((l,li)=>sctx.fillText(l,n.x,n.y+30+li*12));
+      sctx.restore();
+    });
+
+    // Particles (adjusted for canvas position)
+    particles.forEach(p => {
+      p.x+=p.vx; p.y+=p.vy; p.vy+=0.04; p.life-=p.decay;
+      sctx.save(); sctx.globalAlpha=p.life; sctx.fillStyle=p.color;
+      sctx.shadowBlur=6; sctx.shadowColor=p.color;
+      sctx.beginPath(); sctx.arc(p.x,p.y,p.size,0,Math.PI*2); sctx.fill(); sctx.restore();
+    });
+    for(let i=particles.length-1;i>=0;i--) if(particles[i].life<=0) particles.splice(i,1);
+  }
+
+  function loop() { drawSCanvas(); requestAnimationFrame(loop); }
+  loop();
+
+  // ── Animation control ──────────────────────────────────────
+  function show(id){ document.getElementById(id).style.opacity='1'; }
+  function hide(id){ document.getElementById(id).style.opacity='0'; }
+
+  const timers = [];
+  function at(ms,fn){ timers.push(setTimeout(fn,ms)); }
+  function clearAll(){ timers.forEach(clearTimeout); timers.length=0; }
+
+  function fillDot(i) {
+    document.getElementById('d'+i).classList.add('distress');
+    const chars=['●','●','●','●'];
+    document.getElementById('pin-display').textContent = chars.slice(0,i+1).join('');
+  }
+
+  function showSuccess() {
+    document.getElementById('numpad-view').style.display='none';
+    document.getElementById('success-screen').style.display='block';
+  }
+
+  function init() {
+    clearAll(); sBeams.length=0; particles.length=0;
+    nodeVisible.fill(false); nodeAlpha.fill(0);
+    ['d0','d1','d2','d3'].forEach(id => document.getElementById(id).classList.remove('distress'));
+    document.getElementById('pin-display').textContent = '';
+    document.getElementById('numpad-view').style.display = 'block';
+    document.getElementById('success-screen').style.display = 'none';
+    ['phone-wrap','coercer-bubble','alert-box','silent-flag','caption'].forEach(hide);
+
+    at(500,  ()=>{ show('phone-wrap'); });
+    at(1500, ()=>{ fillDot(0); });
+    at(2000, ()=>{ fillDot(1); });
+    at(2500, ()=>{ fillDot(2); });
+    at(3000, ()=>{ fillDot(3); });
+    at(3700, ()=>{ showSuccess(); });
+    at(4500, ()=>{ show('coercer-bubble'); });
+
+    // Silent signal builds on right
+    at(3800, ()=>{ nodeVisible[0]=true; spawnP(nodes[0].x,nodes[0].y,nodes[0].color,10); });
+    at(4400, ()=>{ nodeVisible[1]=true; addSBeam(0,1); spawnP(nodes[1].x,nodes[1].y,nodes[1].color,10); });
+    at(5200, ()=>{ nodeVisible[2]=true; addSBeam(1,2); spawnP(nodes[2].x,nodes[2].y,nodes[2].color,10); });
+    at(6000, ()=>{ nodeVisible[3]=true; addSBeam(2,3); spawnP(nodes[3].x,nodes[3].y,nodes[3].color,15); });
+    at(6800, ()=>{ show('alert-box'); });
+    at(7800, ()=>{ show('silent-flag'); });
+    at(8600, ()=>{ show('caption'); });
+  }
+  init();
+</script>
+</body>
+</html>

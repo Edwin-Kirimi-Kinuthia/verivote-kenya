@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Homomorphic Tally — VeriVote Kenya</title>
+<style>
+  *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; height:100%; overflow:hidden; background:#040810; font-family:'Segoe UI',sans-serif; }
+  #root {
+    width:1280px; height:720px; position:absolute; top:0; left:0;
+    transform-origin:top left; background:#040810; overflow:hidden;
+  }
+  canvas { position:absolute; top:0; left:0; width:1280px; height:720px; }
+  #ui    { position:absolute; top:0; left:0; width:1280px; height:720px; pointer-events:none; }
+
+  #title {
+    position:absolute; top:28px; left:50%; transform:translateX(-50%);
+    font-size:30px; font-weight:900; color:#fbbf24; white-space:nowrap;
+    text-shadow:0 0 40px #f59e0b80; opacity:0; transition:opacity .8s;
+  }
+  #subtitle {
+    position:absolute; top:70px; left:50%; transform:translateX(-50%);
+    font-size:14px; color:#6b7280; white-space:nowrap; opacity:0; transition:opacity .8s;
+  }
+  #key-insight {
+    position:absolute; top:108px; left:50%; transform:translateX(-50%);
+    background:#1a1000; border:2px solid #f59e0b; border-radius:20px;
+    padding:7px 24px; font-size:13px; font-weight:800; color:#fbbf24;
+    opacity:0; transition:opacity .6s; white-space:nowrap; font-family:monospace;
+  }
+
+  #result-panel {
+    position:absolute; right:40px; top:150px; width:300px;
+    background:#071a0f; border:2px solid #4ade80; border-radius:14px;
+    padding:20px; opacity:0; transition:opacity .8s;
+  }
+  .rp-title { font-size:11px; font-weight:700; letter-spacing:.08em;
+    text-transform:uppercase; color:#4ade80; margin-bottom:16px; }
+  .bar-row    { margin-bottom:14px; }
+  .bar-label  { display:flex; justify-content:space-between;
+    font-size:12px; color:#9ca3af; margin-bottom:5px; }
+  .bar-label .val { font-weight:700; }
+  .bar-track  { background:#1f2937; border-radius:4px; height:10px; overflow:hidden; }
+  .bar-fill   { height:100%; border-radius:4px; width:0%; transition:width 1.2s ease; }
+  .bar-fill.a { background:#4ade80; }
+  .bar-fill.b { background:#fbbf24; }
+  .bar-fill.c { background:#818cf8; }
+
+  #note {
+    position:absolute; bottom:100px; left:50%; transform:translateX(-50%);
+    background:#0a0a0a; border:1px solid #374151; border-radius:10px;
+    padding:12px 28px; font-size:13px; color:#6b7280; white-space:nowrap;
+    opacity:0; transition:opacity .6s;
+  }
+  #note span { color:#f87171; font-weight:700; }
+
+  #math-banner {
+    position:absolute; bottom:56px; left:50%; transform:translateX(-50%);
+    font-family:monospace; font-size:15px; color:#fbbf24;
+    text-shadow:0 0 20px #fbbf2460; white-space:nowrap;
+    opacity:0; transition:opacity .6s;
+  }
+
+  .sdots { position:absolute; bottom:26px; left:50%; transform:translateX(-50%);
+    display:flex; gap:8px; }
+  .sdot { width:8px; height:8px; border-radius:50%; background:#1f2937; transition:background .4s; }
+  .sdot.on { background:#fbbf24; }
+
+  #replay {
+    position:absolute; bottom:20px; left:20px;
+    background:#1f2937; color:#9ca3af; border:1px solid #374151;
+    border-radius:8px; padding:8px 16px; font-size:12px;
+    cursor:pointer; pointer-events:all; font-weight:600;
+  }
+</style>
+</head>
+<body>
+<div id="root">
+  <canvas id="c"></canvas>
+  <div id="ui">
+    <div id="title">Homomorphic Tally</div>
+    <div id="subtitle">1,000,000 votes counted — without opening a single one</div>
+    <div id="key-insight">Enc(a) × Enc(b) = Enc(a + b)</div>
+
+    <div id="result-panel">
+      <div class="rp-title">🗳️ Final Tally (after ceremony)</div>
+      <div class="bar-row">
+        <div class="bar-label"><span>Candidate A</span><span class="val" id="va">0</span></div>
+        <div class="bar-track"><div class="bar-fill a" id="ba"></div></div>
+      </div>
+      <div class="bar-row">
+        <div class="bar-label"><span>Candidate B</span><span class="val" id="vb">0</span></div>
+        <div class="bar-track"><div class="bar-fill b" id="bb"></div></div>
+      </div>
+      <div class="bar-row">
+        <div class="bar-label"><span>Candidate C</span><span class="val" id="vc">0</span></div>
+        <div class="bar-track"><div class="bar-fill c" id="bc"></div></div>
+      </div>
+    </div>
+
+    <div id="note">Individual votes: <span>never decrypted</span> · Only the aggregate ciphertext is opened</div>
+    <div id="math-banner">C₁_agg = ∏C1ᵢ &nbsp;·&nbsp; C₂_agg = ∏C2ᵢ &nbsp;→&nbsp; decrypt once &nbsp;→&nbsp; total</div>
+
+    <div class="sdots">
+      <div class="sdot" id="sd0"></div><div class="sdot" id="sd1"></div>
+      <div class="sdot" id="sd2"></div><div class="sdot" id="sd3"></div>
+    </div>
+    <button id="replay" onclick="init()">↺ Replay</button>
+  </div>
+</div>
+<script>
+  const root = document.getElementById('root');
+  function fit() {
+    const s = Math.min(window.innerWidth/1280, window.innerHeight/720);
+    root.style.transform='scale('+s+')';
+    root.style.left=((window.innerWidth-1280*s)/2)+'px';
+    root.style.top=((window.innerHeight-720*s)/2)+'px';
+  }
+  window.addEventListener('resize',fit); fit();
+
+  const W=1280,H=720;
+  const canvas=document.getElementById('c');
+  const ctx=canvas.getContext('2d');
+  canvas.width=W; canvas.height=H;
+
+  const COLS=8,ROWS=5;
+  const C3=['#4ade80','#fbbf24','#818cf8'];
+  const envelopes=[];
+  for(let r=0;r<ROWS;r++) for(let cc=0;cc<COLS;cc++) {
+    envelopes.push({
+      x:60+cc*100, y:150+r*88,
+      color:C3[Math.floor(Math.random()*3)],
+      phase:0, progress:0,
+      delay:r*8+cc*3+Math.random()*5,
+      wobble:Math.random()*Math.PI*2
+    });
+  }
+
+  const particles=[];
+  function spawnP(x,y,color,n=12){
+    for(let i=0;i<n;i++){
+      const a=Math.random()*Math.PI*2,s=1+Math.random()*4;
+      particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:1,decay:.015+Math.random()*.02,size:2+Math.random()*3,color});
+    }
+  }
+
+  function easeOut(t){ return 1-Math.pow(1-t,3); }
+  function lerp(a,b,t){ return a+(b-a)*t; }
+
+  function drawEnvelope(x,y,color,scale,alpha){
+    ctx.save(); ctx.globalAlpha=alpha; ctx.translate(x,y); ctx.scale(scale,scale);
+    const w=44,h=30;
+    ctx.fillStyle='#1f2937'; ctx.strokeStyle=color; ctx.lineWidth=2;
+    ctx.shadowBlur=10; ctx.shadowColor=color;
+    ctx.beginPath(); ctx.roundRect(-w/2,-h/2,w,h,4); ctx.fill(); ctx.stroke();
+    ctx.fillStyle=color+'40';
+    ctx.beginPath(); ctx.moveTo(-w/2,-h/2); ctx.lineTo(0,2); ctx.lineTo(w/2,-h/2); ctx.closePath(); ctx.fill();
+    ctx.fillStyle=color; ctx.font='11px serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.shadowBlur=0; ctx.fillText('🔒',0,4);
+    ctx.restore();
+  }
+
+  function drawAggregate(x,y,alpha){
+    const r=44;
+    const pulse=0.85+0.15*Math.sin(Date.now()*.003);
+    ctx.save(); ctx.globalAlpha=alpha; ctx.translate(x,y);
+    ctx.shadowBlur=40*pulse; ctx.shadowColor='#fbbf24';
+    ctx.fillStyle='#1a1000'; ctx.strokeStyle='#fbbf24'; ctx.lineWidth=3;
+    ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle='#fbbf24'; ctx.font='bold 11px monospace'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.shadowBlur=0; ctx.fillText('AGGREGATE',0,-8); ctx.fillText('CIPHERTEXT',0,8);
+    ctx.restore();
+  }
+
+  let flyStart=false, allMerged=false, aggAlpha=0, aggScale=0, t=0;
+
+  const timers=[];
+  function at(ms,fn){ timers.push(setTimeout(fn,ms)); }
+  function clearAll(){ timers.forEach(clearTimeout); timers.length=0; }
+  function setDot(n){ document.querySelectorAll('.sdot').forEach((d,i)=>d.classList.toggle('on',i===n)); }
+  function show(id){ document.getElementById(id).style.opacity='1'; }
+  function hide(id){ document.getElementById(id).style.opacity='0'; }
+
+  function animCount(elId,target,dur){
+    const el=document.getElementById(elId); let start=null;
+    function step(ts){
+      if(!start)start=ts;
+      const p=Math.min(1,(ts-start)/dur);
+      el.textContent=Math.round((1-Math.pow(1-p,3))*target).toLocaleString();
+      if(p<1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  }
+
+  function init(){
+    clearAll(); particles.length=0;
+    envelopes.forEach(e=>{e.phase=0;e.progress=0;});
+    flyStart=false; allMerged=false; aggAlpha=0; aggScale=0;
+    ['title','subtitle','key-insight','result-panel','note','math-banner'].forEach(hide);
+    ['ba','bb','bc'].forEach(id=>document.getElementById(id).style.width='0%');
+    ['va','vb','vc'].forEach(id=>document.getElementById(id).textContent='0');
+    setDot(-1);
+
+    at(300, ()=>{ show('title'); show('subtitle'); });
+    at(1000,()=>{ show('key-insight'); setDot(0); });
+    at(2200,()=>{ flyStart=true; setDot(1); });
+    at(2200+envelopes.length*55+1200, ()=>{
+      allMerged=true; setDot(2); spawnP(640,390,'#fbbf24',50); show('math-banner');
+    });
+    at(2200+envelopes.length*55+2800, ()=>{
+      show('note'); show('result-panel'); setDot(3);
+      at(400,()=>{
+        document.getElementById('ba').style.width='49%'; animCount('va',487231,1500);
+        at(200,()=>{ document.getElementById('bb').style.width='41%'; animCount('vb',412895,1500); });
+        at(400,()=>{ document.getElementById('bc').style.width='10%'; animCount('vc',99874,1500); });
+      });
+    });
+  }
+
+  function loop(){
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle='#040810'; ctx.fillRect(0,0,W,H);
+    ctx.strokeStyle='#0a0f1a'; ctx.lineWidth=1;
+    for(let x=0;x<W;x+=40){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
+    for(let y=0;y<H;y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+    t++;
+
+    envelopes.forEach(e=>{
+      if(e.phase===2) return;
+      if(flyStart && t>e.delay && e.phase===0) e.phase=1;
+      if(e.phase===1){
+        e.progress=Math.min(1,e.progress+0.018);
+        if(e.progress>=1){ e.phase=2; spawnP(640,390,e.color,5); return; }
+        const p=easeOut(e.progress);
+        const ex=lerp(e.x,640,p), ey=lerp(e.y,390,p);
+        const wb=Math.sin(e.progress*Math.PI*3)*8*(1-e.progress);
+        drawEnvelope(ex+wb,ey,e.color,1-p*0.3,1-p*0.6);
+      } else if(e.phase===0){
+        const bob=Math.sin(Date.now()*.002+e.wobble)*4;
+        drawEnvelope(e.x,e.y+bob,e.color,1,1);
+      }
+    });
+
+    if(flyStart){
+      aggAlpha=Math.min(1,aggAlpha+0.02);
+      aggScale=Math.min(1,aggScale+0.03);
+      if(allMerged) drawAggregate(640,390,1+0.05*Math.sin(Date.now()*.004));
+      else drawAggregate(640,390,aggAlpha*aggScale);
+    }
+
+    particles.forEach(p=>{
+      p.x+=p.vx; p.y+=p.vy; p.vy+=0.05; p.life-=p.decay;
+      ctx.save(); ctx.globalAlpha=p.life; ctx.fillStyle=p.color;
+      ctx.shadowBlur=8; ctx.shadowColor=p.color;
+      ctx.beginPath(); ctx.arc(p.x,p.y,p.size,0,Math.PI*2); ctx.fill(); ctx.restore();
+    });
+    for(let i=particles.length-1;i>=0;i--) if(particles[i].life<=0) particles.splice(i,1);
+
+    requestAnimationFrame(loop);
+  }
+  loop(); init();
+</script>
+</body>
+</html>
