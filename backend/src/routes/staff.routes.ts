@@ -21,6 +21,7 @@ import { ServiceError } from '../services/voter.service.js';
 import { prisma } from '../database/client.js';
 import type { AuthenticatedRequest } from '../types/auth.types.js';
 import { STAFF_MANAGE_ROLES } from '../types/auth.types.js';
+import type { StaffRole, JurisdictionLevel, UserRole } from '@prisma/client';
 
 const router: Router = Router();
 router.use(requireAuth, requireAdmin);
@@ -85,7 +86,7 @@ router.get('/dashboard', async (req: Request, res: Response) => {
       authReq.voter.staffRole,
       authReq.voter.jurisdictionValue ?? null,
       staffRecord?.pollingStationId ?? null,
-      (staffRecord as any)?.department ?? authReq.voter.department ?? null,
+      staffRecord?.department ?? authReq.voter.department ?? null,
     );
     res.json({ success: true, data });
   } catch (err) {
@@ -114,7 +115,12 @@ router.get('/', async (req: Request, res: Response) => {
     const jurisdictionLevel = req.query.jurisdictionLevel as string | undefined;
     const jurisdictionValue = req.query.jurisdictionValue as string | undefined;
     const isActive          = req.query.isActive === 'true' ? true : req.query.isActive === 'false' ? false : undefined;
-    const list = await listStaff({ staffRole, jurisdictionLevel, jurisdictionValue, isActive } as any);
+    const list = await listStaff({
+      staffRole:         staffRole         as StaffRole         | undefined,
+      jurisdictionLevel: jurisdictionLevel as JurisdictionLevel | undefined,
+      jurisdictionValue,
+      isActive,
+    });
     res.json({ success: true, data: list });
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
@@ -197,7 +203,7 @@ router.post(
       }
       // Promote to ADMIN if needed
       if (voter.role !== 'ADMIN') {
-        await prisma.voter.update({ where: { id: voter.id }, data: { role: 'ADMIN' as any } });
+        await prisma.voter.update({ where: { id: voter.id }, data: { role: 'ADMIN' as UserRole } });
       }
       // Idempotency: if this voter already has a staff record, return it
       const existingStaff = await prisma.iebcStaff.findUnique({ where: { voterId: voter.id } });
@@ -207,8 +213,8 @@ router.post(
       }
       const staff = await createStaff({
         voterId:           voter.id,
-        staffRole:         parsed.data.staffRole as any,
-        jurisdictionLevel: parsed.data.jurisdictionLevel as any,
+        staffRole:         parsed.data.staffRole         as StaffRole,
+        jurisdictionLevel: parsed.data.jurisdictionLevel as JurisdictionLevel,
         jurisdictionValue: parsed.data.jurisdictionValue,
         department:        parsed.data.department,
         pollingStationId:  parsed.data.pollingStationId,
@@ -276,7 +282,13 @@ router.patch('/:id', requireStaffRole(...STAFF_MANAGE_ROLES, 'NATIONAL_RO', 'COU
   }
   try {
     if (await guardCommissionTier(req, res, req.params.id)) return;
-    const updated = await updateStaff(req.params.id, parsed.data as any);
+    const updated = await updateStaff(req.params.id, {
+      staffRole:         parsed.data.staffRole         as StaffRole         | undefined,
+      jurisdictionLevel: parsed.data.jurisdictionLevel as JurisdictionLevel | undefined,
+      jurisdictionValue: parsed.data.jurisdictionValue,
+      department:        parsed.data.department,
+      isActive:          parsed.data.isActive,
+    });
     res.json({ success: true, data: updated });
   } catch (err) {
     if (err instanceof ServiceError) { res.status(err.statusCode).json({ success: false, error: err.message }); return; }

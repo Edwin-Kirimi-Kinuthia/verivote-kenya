@@ -106,9 +106,8 @@ async function assertParentInOfficerScope(
   // Walk up the tree from parentId to find a node at the officer's level
   let currentId: string | null = parentId;
   while (currentId) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const node: { id: string; name: string; level: string | null; parentId: string | null } | null
-      = await (prisma as any).electionJurisdiction.findUnique({
+      = await prisma.electionJurisdiction.findUnique({
         where:  { id: currentId },
         select: { id: true, name: true, level: true, parentId: true },
       });

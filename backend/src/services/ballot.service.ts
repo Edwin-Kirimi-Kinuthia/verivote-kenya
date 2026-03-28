@@ -18,6 +18,21 @@ import { prisma } from '../database/client.js';
 import { ServiceError } from './voter.service.js';
 import type { PositionScope } from '@prisma/client';
 
+interface RawCandidate {
+  id: string; name: string; party: string | null; description: string | null;
+  photoUrl: string | null; ballotNumber: number | null; scopeValue?: string | null;
+}
+interface RawPosition {
+  id: string; title: string; description: string | null; scope: PositionScope;
+  scopeValue: string | null; maxVotesPerVoter: number; orderIndex: number;
+  candidates: RawCandidate[];
+}
+interface JurisdictionNode {
+  id: string; name: string; level: string | null; parentId: string | null;
+  pollingStationId?: string | null;
+  positions?: RawPosition[];
+}
+
 // ── Public types ──────────────────────────────────────────────────────────────
 
 export interface BallotCandidate {
@@ -94,15 +109,14 @@ function isEligiblePosition(
  *   Candidates with no scopeValue are treated as visible to all (national-level
  *   party-list candidates, running-mates, etc.).
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function filterCandidatesForVoter(
   scope: PositionScope,
   positionScopeValue: string | null,
-  candidates: any[],
+  candidates: RawCandidate[],
   county: string,
   constituency: string,
   ward: string,
-): any[] {
+): RawCandidate[] {
   // Position has its own area — all candidates belong to that area already
   if (positionScopeValue) return candidates;
 
@@ -240,9 +254,8 @@ export async function getVoterBallot(voterId: string, electionId: string): Promi
     // voter.pollingStationId must be non-null and at least one node in this
     // election must have a pollingStationId linking to a physical station.
     const voterStationId = voter.pollingStationId ?? null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const homeNode: any | undefined = voterStationId
-      ? allNodes.find((n: any) => n.pollingStationId === voterStationId)
+    const homeNode: JurisdictionNode | undefined = voterStationId
+      ? allNodes.find((n: JurisdictionNode) => n.pollingStationId === voterStationId)
       : undefined;
 
     if (homeNode && !isDiaspora) {
@@ -278,12 +291,10 @@ export async function getVoterBallot(voterId: string, electionId: string): Promi
 
       if (!isDiaspora) {
         // Step 2: find the county node under any root that matches voter.county
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        let countyNode: any | undefined;
+        let countyNode: JurisdictionNode | undefined;
         for (const root of rootNodes) {
           const match = (childrenOf.get(root.id) ?? []).find(
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (n: any) => n.name.toLowerCase() === county.toLowerCase(),
+            (n: JurisdictionNode) => n.name.toLowerCase() === county.toLowerCase(),
           );
           if (match) { countyNode = match; break; }
         }
@@ -291,18 +302,15 @@ export async function getVoterBallot(voterId: string, electionId: string): Promi
           eligibleNodeIds.add(countyNode.id);
 
           // Step 3: find the constituency node under the matched county
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const constituencyNode = (childrenOf.get(countyNode.id) ?? []).find(
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (n: any) => n.name.toLowerCase() === constituency.toLowerCase(),
+            (n: JurisdictionNode) => n.name.toLowerCase() === constituency.toLowerCase(),
           );
           if (constituencyNode) {
             eligibleNodeIds.add(constituencyNode.id);
 
             // Step 4: find the ward node under the matched constituency
             const wardNode = (childrenOf.get(constituencyNode.id) ?? []).find(
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              (n: any) => n.name.toLowerCase() === ward.toLowerCase(),
+              (n: JurisdictionNode) => n.name.toLowerCase() === ward.toLowerCase(),
             );
             if (wardNode) {
               eligibleNodeIds.add(wardNode.id);
@@ -312,23 +320,23 @@ export async function getVoterBallot(voterId: string, electionId: string): Promi
       }
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const eligiblePositions: BallotPosition[] = treePositions
-      .filter((pos: any) => eligibleNodeIds.has(pos.jurisdictionId as string))
+    interface TreePosition extends RawPosition { jurisdictionId: string; }
+    const eligiblePositions: BallotPosition[] = (treePositions as TreePosition[])
+      .filter((pos) => eligibleNodeIds.has(pos.jurisdictionId))
       // Sort before mapping: parent nodes first (lowest depth = highest rank),
       // then by orderIndex for positions that share the same jurisdiction node.
-      .sort((a: any, b: any) => {
+      .sort((a, b) => {
         const depthDiff = (nodeDepth.get(a.jurisdictionId) ?? 0) - (nodeDepth.get(b.jurisdictionId) ?? 0);
         return depthDiff !== 0 ? depthDiff : a.orderIndex - b.orderIndex;
       })
-      .map((pos: any) => ({
+      .map((pos) => ({
         positionId:       pos.id,
         title:            pos.title,
         description:      pos.description,
         scope:            pos.scope,
         maxVotesPerVoter: pos.maxVotesPerVoter,
         orderIndex:       pos.orderIndex,
-        candidates:       (pos.candidates as any[]).map((c: any) => ({
+        candidates:       pos.candidates.map((c) => ({
           candidateId:  c.id,
           name:         c.name,
           party:        c.party,
@@ -337,7 +345,7 @@ export async function getVoterBallot(voterId: string, electionId: string): Promi
           ballotNumber: c.ballotNumber,
         })),
       }))
-      .filter((pos: any) => pos.candidates.length > 0);
+      .filter((pos) => pos.candidates.length > 0);
 
     return {
       electionId:   election.id,
@@ -348,16 +356,15 @@ export async function getVoterBallot(voterId: string, electionId: string): Promi
   }
 
   // ── Legacy scope/scopeValue ballot (original path) ──────────────────────────
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const eligiblePositions: BallotPosition[] = (election.positions as any[])
-    .filter((pos: any) => {
+  const eligiblePositions: BallotPosition[] = (election.positions as RawPosition[])
+    .filter((pos) => {
       if (isDiaspora && election.type === 'GOVERNMENT') {
         return pos.scope === 'NATIONAL';
       }
       if (pos.scope === 'CUSTOM') return isEnrolled;
       return isEligiblePosition(pos.scope, pos.scopeValue, county, constituency, ward);
     })
-    .map((pos: any) => {
+    .map((pos) => {
       const localCandidates = filterCandidatesForVoter(
         pos.scope, pos.scopeValue, pos.candidates, county, constituency, ward,
       );
@@ -368,7 +375,7 @@ export async function getVoterBallot(voterId: string, electionId: string): Promi
         scope:            pos.scope,
         maxVotesPerVoter: pos.maxVotesPerVoter,
         orderIndex:       pos.orderIndex,
-        candidates:       localCandidates.map((c: any) => ({
+        candidates:       localCandidates.map((c) => ({
           candidateId:  c.id,
           name:         c.name,
           party:        c.party,
@@ -379,7 +386,7 @@ export async function getVoterBallot(voterId: string, electionId: string): Promi
       };
     })
     // Drop template positions that have no candidates for this voter's area
-    .filter((pos: any) => pos.candidates.length > 0);
+    .filter((pos) => pos.candidates.length > 0);
 
   return {
     electionId:   election.id,

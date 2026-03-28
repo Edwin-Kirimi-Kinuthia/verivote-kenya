@@ -6,6 +6,7 @@ import { ServiceError } from '../services/voter.service.js';
 import * as svc from '../services/election-mgmt.service.js';
 import { prisma } from '../database/client.js';
 import type { AuthenticatedRequest } from '../types/auth.types.js';
+import type { ElectionType, ElectionStatus } from '@prisma/client';
 
 const router: Router = Router();
 
@@ -14,8 +15,7 @@ const router: Router = Router();
 
 router.get('/public', async (req: Request, res: Response) => {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result = await svc.listElections({ status: req.query.status as string | undefined as any });
+    const result = await svc.listElections({ status: req.query.status as ElectionStatus | undefined });
     // Filter to non-DRAFT and expose only public-safe fields
     const publicElections = result.items
       .filter(e => e.status !== 'DRAFT')
@@ -292,8 +292,8 @@ router.post('/', commissionOnly, async (req: Request, res: Response) => {
 router.get('/', async (req: Request, res: Response) => {
   try {
     const result = await svc.listElections({
-      type:   req.query.type   as string | undefined as any,
-      status: req.query.status as string | undefined as any,
+      type:   req.query.type   as ElectionType   | undefined,
+      status: req.query.status as ElectionStatus | undefined,
       page:   req.query.page   ? Number(req.query.page)  : undefined,
       limit:  req.query.limit  ? Number(req.query.limit) : undefined,
     });
@@ -360,8 +360,9 @@ router.patch('/positions/:posId', ballotWrite, async (req: Request, res: Respons
   try {
     // Fetch current position scope to validate before update
     const pos = await prisma.position.findUnique({ where: { id: req.params.posId }, select: { scope: true, scopeValue: true } });
-    const scope = (req.body as any).scope ?? pos?.scope ?? 'NATIONAL';
-    const scopeValue = (req.body as any).scopeValue ?? pos?.scopeValue;
+    const body = req.body as { scope?: string; scopeValue?: string | null };
+    const scope = body.scope ?? pos?.scope ?? 'NATIONAL';
+    const scopeValue = body.scopeValue ?? pos?.scopeValue;
     const scopeErr = checkScopePermission(req, scope, scopeValue);
     if (scopeErr) { res.status(403).json({ success: false, error: scopeErr }); return; }
     res.json({ success: true, data: await svc.updatePosition(req.params.posId, req.body) });

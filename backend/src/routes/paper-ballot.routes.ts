@@ -57,7 +57,7 @@ router.get('/manifest/:electionId', BALLOT_ROLES, async (req: Request, res: Resp
     const jurisdictionLevel = authReq.voter.jurisdictionLevel ?? 'NATIONAL';
     const jurisdictionValue = authReq.voter.jurisdictionValue ?? null;
 
-    const election = await (prisma as any).election.findUnique({
+    const election = await prisma.election.findUnique({
       where: { id: electionId },
       select: { id: true, name: true, status: true, type: true, startDate: true, endDate: true },
     });
@@ -74,7 +74,7 @@ router.get('/manifest/:electionId', BALLOT_ROLES, async (req: Request, res: Resp
       ...(!isNational && jurisdictionValue ? { jurisdictionValue } : {}),
     };
 
-    const declarations = await (prisma as any).resultDeclaration.findMany({
+    const declarations = await prisma.resultDeclaration.findMany({
       where: declarationWhere,
       include: {
         position: { select: { title: true, scope: true } },
@@ -113,7 +113,12 @@ router.get('/manifest/:electionId', BALLOT_ROLES, async (req: Request, res: Resp
     const blockchainVerifiedCount = blockchainVerified.length;
 
     // Build the per-position tally from declared results
-    const positions = declarations.map((d: any) => {
+    const positions = declarations.map((d: {
+      positionId: string; tallySnapshot: string | null; jurisdictionLevel: string | null;
+      jurisdictionValue: string | null; declaredAt: Date | null;
+      position: { title: string; scope: string } | null;
+      staff: { voter: { nationalId: string } | null } | null;
+    }) => {
       const raw = d.tallySnapshot ? JSON.parse(d.tallySnapshot as string) : {};
       const tally = Object.entries(raw as Record<string, number>)
         .sort(([, a], [, b]) => b - a)
