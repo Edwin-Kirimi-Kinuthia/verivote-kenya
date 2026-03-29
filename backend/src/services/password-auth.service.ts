@@ -2,7 +2,9 @@ import argon2 from 'argon2';
 import { voterRepository } from '../repositories/index.js';
 import { authService } from './auth.service.js';
 import { ServiceError } from './voter.service.js';
+import { prisma } from '../database/client.js';
 import type { Voter } from '../types/database.types.js';
+import type { StaffRole, JurisdictionLevel } from '../types/database.types.js';
 
 const BLOCKED_STATUSES = new Set([
   'PENDING_VERIFICATION',
@@ -42,22 +44,30 @@ export class PasswordAuthService {
       throw new ServiceError('Invalid credentials', 401);
     }
 
+    // Look up IEBC staff record to embed role claims in the JWT
+    const staffRecord = await prisma.iebcStaff.findUnique({ where: { voterId: voter.id } });
+
     const token = authService.generateToken({
-      sub: voter.id,
-      nationalId: voter.nationalId,
-      status: voter.status,
-      role: voter.role,
-      isDistress: false,
+      sub:               voter.id,
+      nationalId:        voter.nationalId,
+      status:            voter.status,
+      role:              voter.role,
+      isDistress:        false,
+      staffRole:         staffRecord?.staffRole         as StaffRole         | undefined,
+      jurisdictionLevel: staffRecord?.jurisdictionLevel as JurisdictionLevel | undefined,
+      jurisdictionValue: staffRecord?.jurisdictionValue ?? undefined,
+      department:        staffRecord?.department        ?? undefined,
     });
 
     return {
       token,
       expiresIn: authService.getExpiresIn(),
       voter: {
-        id: voter.id,
+        id:         voter.id,
         nationalId: voter.nationalId,
-        status: voter.status,
-        role: voter.role,
+        status:     voter.status,
+        role:       voter.role,
+        staffRole:  staffRecord?.staffRole ?? undefined,
       },
     };
   }
