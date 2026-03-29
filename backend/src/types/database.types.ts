@@ -161,6 +161,7 @@ export interface Vote {
   id: string;
   encryptedVoteHash: string;
   encryptedVoteData: string | null;
+  homomorphicBallot: string | null;
   serialNumber: string;
   zkpProof: string | null;
   blockchainTxHash: string | null;
@@ -169,6 +170,7 @@ export interface Vote {
   status: VoteStatus;
   isDistressFlagged: boolean;
   pollingStationId: string;
+  electionId: string | null;
   timestamp: Date;
   createdAt: Date;
   updatedAt: Date;

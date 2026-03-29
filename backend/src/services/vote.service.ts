@@ -116,11 +116,13 @@ export class VoteService {
       throw new ServiceError('Invalid PIN', 401);
     }
 
-    // For dynamic elections: validate election status and selections
+    // For dynamic elections: validate election status, selections, and per-election duplicate voting
+    let electionType: string | null = null;
     if (input.electionId) {
-      const election = await prisma.election.findUnique({ where: { id: input.electionId }, select: { status: true } });
+      const election = await prisma.election.findUnique({ where: { id: input.electionId }, select: { status: true, type: true } });
       if (!election) throw new ServiceError('Election not found', 404);
       if (election.status !== 'ACTIVE') throw new ServiceError('This election is not currently accepting votes', 400);
+      electionType = election.type;
       await validateSelections(voter.sub, input.electionId, input.selections);
     }
 
@@ -137,7 +139,36 @@ export class VoteService {
       encryptHomomorphicBallot(input.selections, encryptionService.getPublicKey(), input.electionId, allCandidates)
     );
     const serialNumber = generateSerialNumber();
-    const isRevote = voterRecord.voteCount > 0;
+
+    // ── Per-election duplicate / revote logic ───────────────────────────────
+    // The Vote table has no voterId FK (anonymity), so we use voter.lastVoteId
+    // to track whether this voter has already voted in this specific election.
+    //
+    // Rules:
+    //  - GOVERNMENT elections: one vote per voter per election — no revoting.
+    //  - Other election types: allow one revote (change of mind) in the same election.
+    //  - Legacy (no electionId): fall back to global voteCount-based revote.
+    let isRevote = voterRecord.voteCount > 0;
+
+    if (input.electionId && voterRecord.lastVoteId) {
+      const previousVote = await voteRepository.findById(voterRecord.lastVoteId);
+      const sameElection = previousVote?.electionId === input.electionId;
+
+      if (sameElection) {
+        // Voter has already voted in THIS election.
+        if (electionType === 'GOVERNMENT') {
+          throw new ServiceError('You have already voted in this election', 409);
+        }
+        // Non-government: allow revote (change of mind), treat as revote.
+        isRevote = true;
+      } else {
+        // Last vote was for a different election → fresh first vote in this election.
+        isRevote = false;
+      }
+    } else if (input.electionId && !voterRecord.lastVoteId) {
+      // Has voteCount > 0 but no lastVoteId — data inconsistency; treat as fresh vote.
+      isRevote = false;
+    }
 
     let voteId: string;
 
