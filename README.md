@@ -18,7 +18,7 @@ A sovereign, open-source election platform combining biometric identity verifica
 ### Voting
 - **ElGamal Encryption** — 2048-bit FFDHE (RFC 7919) encryption applied before any vote is stored
 - **Revoting** — Voters may change their ballot; only the latest submission counts; all prior ballots are marked SUPERSEDED on-chain
-- **Dual-PIN System** — Normal PIN + silent Distress PIN for coercion resistance
+- **Dual-PIN System** — Voter sets both Normal PIN and Distress PIN simultaneously during setup (same form, both chosen privately by the voter); Normal PIN confirms every vote; Distress PIN silently flags coercion
 - **Distress Vote Handling** — Distress vote is CONFIRMED and constitutionally counted; admin is alerted with voter contact info; escorted revote arranges a safe free revote that supersedes the coerced ballot
 - **Voting Time-Lock** — Configurable open/close window; automatic freeze 2 hours before close
 - **Receipt Verification** — Every voter receives a serial number to self-verify their vote publicly
@@ -250,9 +250,9 @@ APPROVED   FAILED ──→ Voter books in-person IEBC appointment
           registered phone (SMS) or email
                        │
                        ▼  voter opens link on their own device privately
-          Voter sets their own Normal PIN (4-digit, chosen by voter)
-          System generates Distress PIN → sent privately to voter
-          via SMS / email (never visible to the IEBC officer)
+          Voter sets both Normal PIN and Distress PIN simultaneously
+          on a single form — both chosen by the voter privately,
+          never visible to the IEBC officer or anyone else
           Voter may optionally re-enroll biometrics on their
           personal device from the same setup page
 ```

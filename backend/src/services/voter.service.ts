@@ -285,9 +285,11 @@ export class VoterService {
   }
 
   /**
-   * Set the voter's normal PIN (user-chosen) and generate a server-side distress PIN.
-   * The distress PIN is delivered via SMS/email so the voter knows it, but an
-   * attacker watching the setup screen cannot identify which PIN triggers the alert.
+   * Set the voter's Normal PIN and Distress PIN.
+   * Both PINs are chosen by the voter simultaneously on the setup page
+   * (distressPinInput provided). If distressPinInput is omitted (API
+   * fallback only), a compliant distress PIN is auto-generated and delivered
+   * to the voter's registered contact via SMS or email.
    */
   async setVoterPin(voterId: string, pin: string, distressPinInput?: string) {
     // Validate format: exactly 4 digits
