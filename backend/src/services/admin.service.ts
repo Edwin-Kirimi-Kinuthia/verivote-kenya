@@ -4,6 +4,7 @@ import { blockchainService } from './blockchain.service.js';
 import { authService } from './auth.service.js';
 import { notificationService } from './notification.service.js';
 import { ServiceError } from './voter.service.js';
+import { logger } from '../lib/logger.js';
 
 export class AdminService {
   /**
@@ -198,10 +199,87 @@ export class AdminService {
       }),
       prisma.vote.count({ where: { isDistressFlagged: true } }),
     ]);
+
+    // Reverse-lookup voter contact info for active distress votes.
+    // Vote has no voter FK (anonymity design), but a DISTRESS_FLAGGED voter's
+    // lastVoteId points to their current active distress vote.
+    const distressVoters = await prisma.voter.findMany({
+      where: { status: 'DISTRESS_FLAGGED' },
+      select: { id: true, nationalId: true, phoneNumber: true, email: true, lastVoteId: true },
+    });
+    const voterByVoteId = new Map(
+      distressVoters.filter((v) => v.lastVoteId).map((v) => [v.lastVoteId!, v])
+    );
+
+    const enrichedData = data.map((vote) => ({
+      ...vote,
+      voter: voterByVoteId.get(vote.id) ?? null,
+    }));
+
     const totalPages = Math.ceil(total / limit);
     return {
-      data,
+      data: enrichedData,
       pagination: { total, page, limit, totalPages, hasNext: page < totalPages, hasPrev: page > 1 },
+    };
+  }
+
+  /**
+   * Notify a DISTRESS_FLAGGED voter that they may safely return to their
+   * polling station for an escorted revote. The actual revote uses the
+   * existing vote-casting endpoint — this just sends the notification and
+   * logs the initiation event so there is an audit trail.
+   */
+  async initiateEscortedRevote(voterId: string, initiatedByStaffId: string) {
+    const voter = await voterRepository.findById(voterId);
+    if (!voter) throw new ServiceError('Voter not found', 404);
+    if (voter.status !== 'DISTRESS_FLAGGED') {
+      throw new ServiceError('Voter is not currently flagged as a distress case', 400);
+    }
+    if (!voter.phoneNumber && !voter.email) {
+      throw new ServiceError(
+        'Voter has no contact details on file — escalate directly to the polling station officer',
+        400
+      );
+    }
+
+    // Resolve polling station name for the notification message
+    const { prisma } = await import('../database/client.js');
+    let stationName = 'your assigned polling station';
+    let stationCode = '';
+    if (voter.pollingStationId) {
+      const station = await prisma.pollingStation.findUnique({
+        where: { id: voter.pollingStationId },
+        select: { name: true, code: true },
+      });
+      if (station) { stationName = station.name; stationCode = station.code; }
+    }
+
+    const channel: 'SMS' | 'EMAIL' = voter.phoneNumber ? 'SMS' : 'EMAIL';
+    const recipient = (channel === 'SMS' ? voter.phoneNumber : voter.email)!;
+
+    await notificationService.sendEscortedRevoteNotification({
+      channel,
+      recipient,
+      nationalId: voter.nationalId,
+      stationName,
+      stationCode,
+    });
+
+    logger.info('Escorted revote initiated', {
+      voterId,
+      initiatedByStaffId,
+      stationCode: stationCode || 'unknown',
+      channel,
+    });
+
+    return {
+      voterId,
+      nationalId: voter.nationalId,
+      contact: { phoneNumber: voter.phoneNumber, email: voter.email },
+      stationName,
+      stationCode,
+      notificationSent: true,
+      message: 'Voter has been notified. Arrange the escort with polling station officers.',
     };
   }
 

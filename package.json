@@ -38,6 +38,7 @@
     "onlyBuiltDependencies": [
       "@prisma/client",
       "@prisma/engines",
+      "@scarf/scarf",
       "argon2",
       "esbuild",
       "keccak",

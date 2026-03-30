@@ -137,6 +137,13 @@ export class VoteService {
       encryptHomomorphicBallot(input.selections, encryptionService.getPublicKey(), input.electionId, allCandidates)
     );
     const serialNumber = generateSerialNumber();
+
+    // ── Revote logic ────────────────────────────────────────────────────────
+    // Voters may change their ballot — the latest vote wins and the previous
+    // vote is marked SUPERSEDED (on the blockchain and in the DB).
+    // This also powers the distress PIN flow: a voter under coercion casts
+    // their normal vote first, then revotes using their distress PIN to
+    // silently flag the situation without alerting the coercer.
     const isRevote = voterRecord.voteCount > 0;
 
     let voteId: string;

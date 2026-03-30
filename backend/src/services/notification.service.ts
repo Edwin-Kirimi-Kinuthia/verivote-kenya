@@ -293,6 +293,92 @@ export class NotificationService {
     }
   }
 
+  /**
+   * Notify a coercion victim that IEBC has arranged a safe escorted revote.
+   * Sent after an admin calls initiate-escorted-revote.
+   */
+  async sendEscortedRevoteNotification(payload: {
+    channel: 'SMS' | 'EMAIL';
+    recipient: string;
+    nationalId: string;
+    stationName: string;
+    stationCode: string;
+  }): Promise<void> {
+    const smsMsg = [
+      `VeriVote Kenya: IEBC Security Notice.`,
+      `Your situation has been reviewed.`,
+      `You may revote safely at ${payload.stationName} (${payload.stationCode}) with an official escort.`,
+      `Present your National ID to any IEBC officer at the entrance.`,
+    ].join(' ');
+
+    const emailBody = [
+      `Dear Voter (National ID: ${payload.nationalId}),`,
+      ``,
+      `The IEBC Security Coordination Unit has reviewed your voting situation.`,
+      ``,
+      `You are entitled to cast a fresh, uncoerced vote under official escort.`,
+      ``,
+      `WHAT HAPPENS NEXT:`,
+      `1. Visit ${payload.stationName} (Station Code: ${payload.stationCode}).`,
+      `2. Present your National ID to any IEBC officer at the entrance.`,
+      `3. You will be escorted by a security official to the voting area.`,
+      `4. Cast your vote privately and freely — only your latest vote counts.`,
+      ``,
+      `Your safety is our priority. If you feel unsafe travelling to the station,`,
+      `contact IEBC Security at 0800 724 825 (toll-free, 24 h).`,
+      ``,
+      `VeriVote Kenya — IEBC Security Coordination`,
+    ].join('\n');
+
+    if (this.mockMode) {
+      logger.info('[ESCORTED REVOTE MOCK] Notification issued', {
+        nationalId: payload.nationalId,
+        channel: payload.channel,
+      });
+      return;
+    }
+
+    if (process.env.NODE_ENV !== 'production') {
+      logger.info('[ESCORTED REVOTE DEV] Notification dispatched', {
+        nationalId: payload.nationalId,
+        channel: payload.channel,
+        recipient: payload.recipient,
+      });
+    }
+
+    if (payload.channel === 'SMS') {
+      try {
+        await this.atSms!.send({ to: [payload.recipient], message: smsMsg });
+      } catch (err) {
+        if (process.env.NODE_ENV !== 'production') {
+          logger.warn('[ESCORTED REVOTE SMS FALLBACK] AT send failed', {
+            nationalId: payload.nationalId,
+            reason: (err as Error).message,
+          });
+          return;
+        }
+        throw err;
+      }
+    } else {
+      try {
+        await this.sendEmail({
+          to: payload.recipient,
+          subject: 'VeriVote Kenya — Safe Revote Arrangement',
+          text: emailBody,
+        });
+      } catch (err) {
+        if (process.env.NODE_ENV !== 'production') {
+          logger.warn('[ESCORTED REVOTE EMAIL FALLBACK] Mailtrap send failed', {
+            nationalId: payload.nationalId,
+            reason: (err as Error).message,
+          });
+          return;
+        }
+        throw err;
+      }
+    }
+  }
+
   isMockMode(): boolean {
     return this.mockMode;
   }
