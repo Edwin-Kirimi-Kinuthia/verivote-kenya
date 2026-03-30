@@ -14,7 +14,7 @@ VeriVote Kenya is an election integrity system. We take all security reports ser
 
 ### How to Report
 
-Email: **security@verivote.go.ke** (or open a [GitHub Security Advisory](https://github.com/Edwin-Kirimi-Kinuthia/verivote-kenya/security/advisories/new))
+Email: **edwinkirimikinutia@gmail.com** (or open a [GitHub Security Advisory](https://github.com/Edwin-Kirimi-Kinuthia/verivote-kenya/security/advisories/new))
 
 Include:
 - Description of the issue
