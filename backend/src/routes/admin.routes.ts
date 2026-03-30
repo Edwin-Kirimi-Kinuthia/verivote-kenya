@@ -471,4 +471,35 @@ router.post(
   },
 );
 
+/**
+ * POST /api/admin/voters/:voterId/initiate-escorted-revote
+ *
+ * Notifies a DISTRESS_FLAGGED voter that IEBC has reviewed their case and
+ * arranged a safe escorted revote. Sends an SMS or email with instructions
+ * to return to their polling station with their National ID.
+ *
+ * The actual revote uses the existing POST /api/votes/cast endpoint — the
+ * voter simply casts a new vote with their normal PIN and the distress vote
+ * is superseded automatically.
+ */
+router.post(
+  '/voters/:voterId/initiate-escorted-revote',
+  async (req: Request, res: Response) => {
+    try {
+      const requesterId = (req as AuthenticatedRequest).voter?.sub ?? '';
+      const result = await adminService.initiateEscortedRevote(req.params.voterId, requesterId);
+      res.json({ success: true, data: result });
+    } catch (error) {
+      if (error instanceof ServiceError) {
+        res.status(error.statusCode).json({ success: false, error: error.message });
+        return;
+      }
+      res.status(500).json({
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to initiate escorted revote',
+      });
+    }
+  }
+);
+
 export default router;
