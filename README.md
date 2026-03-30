@@ -12,7 +12,7 @@ A sovereign, open-source election platform combining biometric identity verifica
 - **Soul-Bound Tokens (SBTs)** — Non-transferable ERC-721 voter identity anchored on-chain; burned on death
 - **Persona KYC** — Automated national ID + liveness detection (inline iframe, no redirect)
 - **IEBC Manual Review** — In-person verification fallback with appointment scheduling
-- **WebAuthn / FIDO2** — Biometric passkey (fingerprint, Face ID) enrolled at registration
+- **WebAuthn / FIDO2** — Biometric passkey enrolled on the voter's own personal device; during in-person registration the IEBC officer's screen displays a QR code the voter scans with their phone — credential is created on the voter's device via FIDO2 cross-device (Bluetooth hybrid) transport; the officer's biometrics are never captured
 - **Deceased Voter Handling** — DECEASED status blocks future login/voting; all prior votes remain CONFIRMED and counted per constitutional requirement
 
 ### Voting
@@ -224,22 +224,37 @@ verivote-kenya/
 ### Registration
 
 ```
-Self-register (form + OTP)
+Voter self-registers online (form + OTP contact verification)
         │
         ▼
-  Persona KYC (inline)
+  Persona KYC runs inline (ID document + liveness check)
     ┌────┴────┐
     │         │
-APPROVED   FAILED → Book IEBC in-person appointment
-    │                     │
-    ▼               IEBC officer verifies
- Mint SBT                 │
-    │             ┌────────┴────────┐
-    └─────────────┤             REJECTED
-                  ▼
-       Setup JWT → voter sets PIN on own device
-       Distress PIN delivered via SMS / email
-       WebAuthn biometric enrolled (optional)
+APPROVED   FAILED ──→ Voter books in-person IEBC appointment
+    │                           │
+    │                  IEBC officer verifies identity in person
+    │                           │
+    │                  ┌────────┴────────┐
+    │                  │             REJECTED
+    └──────────────────┤
+                       ▼
+          IEBC officer's screen shows a QR code
+          Voter scans QR code with their own phone
+          WebAuthn credential created on voter's personal device
+          (FIDO2 cross-device / Bluetooth hybrid transport —
+           officer's biometrics are never captured)
+                       │
+                       ▼  officer clicks "Approve & Send Setup Link"
+          SBT minted on-chain for the voter
+          PIN setup link (JWT-embedded URL) sent to voter's
+          registered phone (SMS) or email
+                       │
+                       ▼  voter opens link on their own device privately
+          Voter sets their own Normal PIN (4-digit, chosen by voter)
+          System generates Distress PIN → sent privately to voter
+          via SMS / email (never visible to the IEBC officer)
+          Voter may optionally re-enroll biometrics on their
+          personal device from the same setup page
 ```
 
 ### Voting & Distress Protection
@@ -396,7 +411,7 @@ ELECTION_VOTING_CLOSES_AT=2027-08-09T17:00:00+03:00
 | Individual ballot privacy | Homomorphic tally — individual votes never decrypted |
 | Key custody | Shamir's Secret Sharing — no single person holds the decryption key |
 | Voter identity | Soul-Bound Token (non-transferable ERC-721); revoked on death |
-| Biometrics | WebAuthn — only public key stored, no raw biometric data |
+| Biometrics | WebAuthn / FIDO2 — enrolled on voter's own personal device via QR code scan (FIDO2 cross-device / Bluetooth hybrid); only the public key credential is stored server-side; no raw biometric data ever leaves the voter's device |
 | Transport | JWT (24 h expiry), CORS, Helmet, per-route rate limiting |
 | Webhooks | HMAC-SHA256 signature verification |
 | AI inference | On-premise Llama 3.2 via Ollama — zero data egress |
