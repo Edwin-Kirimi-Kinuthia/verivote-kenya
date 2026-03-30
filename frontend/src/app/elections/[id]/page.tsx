@@ -222,7 +222,7 @@ export default function PublicElectionDetailPage({ params }: { params: Promise<{
           </div>
         </div>
 
-        {/* Register / Vote CTA — only for open elections */}
+        {/* Register / Vote CTA */}
         {(election.status === "ACTIVE" || election.status === "NOMINATIONS") && (
           <div className="rounded-xl border border-green-200 bg-green-50 p-5 flex flex-col sm:flex-row items-center justify-between gap-4">
             <div>
@@ -251,6 +251,18 @@ export default function PublicElectionDetailPage({ params }: { params: Promise<{
                 Register to Vote
               </button>
             </div>
+          </div>
+        )}
+        {election.status === "CLOSED" && (
+          <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 flex items-center gap-3">
+            <span className="inline-flex items-center rounded-full bg-gray-500 px-3 py-1 text-xs font-semibold text-white">Voting Closed</span>
+            <p className="text-sm text-gray-600">This election has ended. No further votes are being accepted.</p>
+          </div>
+        )}
+        {election.status === "TALLIED" && (
+          <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 flex items-center gap-3">
+            <span className="inline-flex items-center rounded-full bg-blue-600 px-3 py-1 text-xs font-semibold text-white">Results Declared</span>
+            <p className="text-sm text-blue-800">Official results have been declared. See the results section below.</p>
           </div>
         )}
 

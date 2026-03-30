@@ -190,23 +190,9 @@ export default function Home() {
                 <h2 className="font-semibold text-sm">Elections Portal</h2>
                 <p className="text-xs text-green-200 mt-0.5">Live elections and official results</p>
               </div>
-              <div className="flex items-center gap-3">
-                <Link
-                  href="/vote"
-                  className="rounded-lg bg-green-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-400 transition-colors"
-                >
-                  Login to Vote
-                </Link>
-                <Link
-                  href="/register"
-                  className="rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-green-800 hover:bg-green-50 transition-colors"
-                >
-                  Register
-                </Link>
-                <Link href="/elections" className="text-xs text-green-200 hover:text-white underline underline-offset-2">
-                  View all →
-                </Link>
-              </div>
+              <Link href="/elections" className="text-xs text-green-200 hover:text-white underline underline-offset-2">
+                View all →
+              </Link>
             </div>
             <div className="divide-y divide-gray-100">
               {elections.slice(0, 5).map((e) => (
