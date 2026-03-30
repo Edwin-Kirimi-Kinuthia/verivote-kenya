@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, type FormEvent } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect, Suspense, type FormEvent } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { api } from "@/lib/api-client";
 import { useAuth } from "@/contexts/auth-context";
 import { useTranslation } from "@/contexts/language-context";
@@ -30,8 +30,10 @@ interface ResetResponse {
   verificationOptions: VerificationOptions;
 }
 
-export default function VoteLoginPage() {
+function VoteLoginPageContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const electionId = searchParams.get("electionId");
   const { login } = useAuth();
   const { t } = useTranslation();
 
@@ -86,7 +88,7 @@ export default function VoteLoginPage() {
     sessionStorage.removeItem("ballot-election-name");
     sessionStorage.removeItem("ballot-data");
     login(auth.token, auth.voter);
-    router.push("/vote/elections");
+    router.push(electionId ? `/vote/ballot?electionId=${electionId}` : "/vote/elections");
   }
 
   // ── Shared: send 2FA OTP after first factor succeeds ─────────────────────
@@ -811,4 +813,8 @@ export default function VoteLoginPage() {
   }
 
   return null;
+}
+
+export default function VoteLoginPage() {
+  return <Suspense><VoteLoginPageContent /></Suspense>;
 }
