@@ -30,16 +30,11 @@ interface PendingPosition {
   declaration: { id: string; status: string } | null;
 }
 
-interface TallyCandidate {
-  candidateId: string;
-  candidateName: string;
-  positionId: string;
-  positionTitle: string;
-  votes: number;
-}
-
 interface TallyResult {
-  candidates: TallyCandidate[];
+  positions: {
+    positionId: string;
+    candidates: { candidateId: string; votes: number }[];
+  }[];
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -137,7 +132,11 @@ export default function DeclarationsPage() {
 
   function getVotesForCandidate(candidateId: string): number {
     if (!tallyResult) return 0;
-    return tallyResult.candidates.find(c => c.candidateId === candidateId)?.votes ?? 0;
+    for (const pos of tallyResult.positions) {
+      const found = pos.candidates.find(c => c.candidateId === candidateId);
+      if (found !== undefined) return found.votes;
+    }
+    return 0;
   }
 
   async function handleDeclare(position: PendingPosition) {
@@ -179,7 +178,7 @@ export default function DeclarationsPage() {
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
-  const canDeclare = ["COMMISSIONER", "NATIONAL_RO", "COUNTY_RO", "CONSTITUENCY_RO"].includes(staffRole ?? "");
+  const canDeclare = ["CHAIRPERSON", "COMMISSIONER", "NATIONAL_RO", "COUNTY_RO", "CONSTITUENCY_RO", "PRESIDING_OFFICER"].includes(staffRole ?? "");
 
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-6">

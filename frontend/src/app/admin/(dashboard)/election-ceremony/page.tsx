@@ -537,7 +537,7 @@ export default function ElectionCeremonyPage() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Election Ceremony</h1>
           <p className="mt-1 text-sm text-gray-500">
-            Threshold homomorphic tally with dynamic Shamir's Secret Sharing.
+            Threshold homomorphic tally with dynamic Shamir&apos;s Secret Sharing.
           </p>
         </div>
         {(phase === "collecting" || phase === "done") && isCommission && (

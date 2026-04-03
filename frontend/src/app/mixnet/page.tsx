@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import Link from "next/link";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3005";
 
@@ -103,7 +104,7 @@ export default function MixnetPublicPage() {
       <nav className="bg-green-800 text-white px-6 py-3 flex items-center justify-between">
         <span className="font-bold tracking-wide">VeriVote Kenya</span>
         <div className="flex gap-6 text-sm">
-          <a href="/" className="opacity-80 hover:opacity-100">Home</a>
+          <Link href="/" className="opacity-80 hover:opacity-100">Home</Link>
           <a href="/explorer" className="opacity-80 hover:opacity-100">Explorer</a>
           <a href="/verify" className="opacity-80 hover:opacity-100">Verify</a>
           <a href="/mixnet" className="font-semibold">Mixnet</a>
@@ -177,7 +178,7 @@ export default function MixnetPublicPage() {
           <div className="bg-slate-900 rounded-lg p-4 font-mono text-sm text-green-300 space-y-1">
             <div className="text-gray-500 text-xs mb-2"># ElGamal Re-encryption</div>
             <div>Given: ciphertext (c1, c2) = (g^r, m·h^r)</div>
-            <div>Fresh randomness: r' (new per ciphertext per node)</div>
+            <div>Fresh randomness: r&apos; (new per ciphertext per node)</div>
             <div className="pt-1">
               <span className="text-yellow-300">c1&apos;</span> = c1 · g^r&apos; mod p
             </div>

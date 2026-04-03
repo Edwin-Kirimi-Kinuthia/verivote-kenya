@@ -47,6 +47,7 @@ interface CandidateTally {
 interface PositionTally {
   positionId: string;
   positionTitle: string;
+  scope: string;
   candidates: CandidateTally[];
   totalVotes: number;
   winner: string;
@@ -118,7 +119,11 @@ async function apiFetch(path: string, opts?: RequestInit) {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
+interface ElectionOption { id: string; name: string; status: string; }
+
 export default function ResultsPage() {
+  const [elections, setElections]     = useState<ElectionOption[]>([]);
+  const [electionId, setElectionId]   = useState<string>('');
   const [tally, setTally]             = useState<TallyResult | null>(null);
   const [status, setStatus]           = useState<'idle' | 'running' | 'done' | 'error'>('idle');
   const [error, setError]             = useState<string | null>(null);
@@ -129,16 +134,32 @@ export default function ResultsPage() {
 
   useEffect(() => { setIsMounted(true); }, []);
 
-  // Try loading cached tally on mount
+  // Load CLOSED/TALLIED elections for the selector
   useEffect(() => {
-    apiFetch('/api/tally/results')
+    apiFetch('/api/elections?limit=100')
+      .then((data) => {
+        const items: ElectionOption[] = (data.items ?? []).filter(
+          (e: ElectionOption) => e.status === 'CLOSED' || e.status === 'TALLIED'
+        );
+        setElections(items);
+        if (items.length === 1) setElectionId(items[0].id);
+      })
+      .catch(() => {});
+  }, []);
+
+  // Try loading cached tally when election is selected
+  useEffect(() => {
+    if (!electionId) return;
+    setTally(null);
+    setStatus('idle');
+    apiFetch(`/api/tally/results/${electionId}`)
       .then((data) => {
         setTally(data.tally);
         setLogVisible(data.tally.ceremonyLog ?? []);
         setStatus('done');
       })
       .catch(() => { /* no cached tally — idle state */ });
-  }, []);
+  }, [electionId]);
 
   // Animate log entries one by one (streaming effect)
   const streamLog = useCallback((entries: string[]) => {
@@ -154,11 +175,12 @@ export default function ResultsPage() {
   }, []);
 
   async function startCeremony() {
+    if (!electionId) { alert('Select an election first'); return; }
     setStatus('running');
     setError(null);
     setLogVisible([]);
     try {
-      const data = await apiFetch('/api/tally/start', { method: 'POST' });
+      const data = await apiFetch('/api/tally/start', { method: 'POST', body: JSON.stringify({ electionId }) });
       setTally(data.tally);
       setStatus('done');
       streamLog(data.tally.ceremonyLog ?? []);
@@ -169,9 +191,10 @@ export default function ResultsPage() {
   }
 
   async function publishOnChain() {
+    if (!electionId) return;
     setIsPublishing(true);
     try {
-      const data = await apiFetch('/api/tally/publish', { method: 'POST' });
+      const data = await apiFetch('/api/tally/publish', { method: 'POST', body: JSON.stringify({ electionId }) });
       setTally((prev) =>
         prev ? { ...prev, blockchainTxHash: data.txHash, published: true } : prev
       );
@@ -183,7 +206,8 @@ export default function ResultsPage() {
   }
 
   function downloadAuditReport() {
-    window.open(`${API}/api/tally/audit-report`, '_blank');
+    if (!electionId) return;
+    window.open(`${API}/api/tally/audit-report/${electionId}`, '_blank');
   }
 
   function printReport() {
@@ -254,6 +278,25 @@ export default function ResultsPage() {
         </div>
       </div>
 
+      {/* ── Election selector ──────────────────────────────────────────────── */}
+      <div className="rounded-lg border border-gray-200 bg-white p-4 print:hidden">
+        <label className="block text-sm font-medium text-gray-700 mb-2">Select Election</label>
+        {elections.length === 0 ? (
+          <p className="text-sm text-amber-600">No elections are CLOSED or TALLIED yet. Ask a Commissioner to close the election first.</p>
+        ) : (
+          <select
+            value={electionId}
+            onChange={(e) => setElectionId(e.target.value)}
+            className="w-full max-w-sm rounded-md border border-gray-300 py-2 px-3 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+          >
+            <option value="">— Select an election —</option>
+            {elections.map((e) => (
+              <option key={e.id} value={e.id}>{e.name} ({e.status})</option>
+            ))}
+          </select>
+        )}
+      </div>
+
       {/* ── Print-only header ──────────────────────────────────────────────── */}
       <div className="hidden print:block border-b border-gray-300 pb-4 mb-6">
         <h1 className="text-2xl font-bold">IEBC Election Audit Report</h1>
@@ -266,7 +309,7 @@ export default function ResultsPage() {
       </div>
 
       {/* ── Ceremony trigger (idle state) ─────────────────────────────────── */}
-      {status === 'idle' && (
+      {status === 'idle' && electionId && (
         <div className="bg-white border border-gray-200 rounded-xl p-8 text-center">
           <div className="mx-auto mb-4 h-16 w-16 rounded-full bg-indigo-50 flex items-center justify-center">
             <svg className="h-8 w-8 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -345,7 +388,10 @@ export default function ResultsPage() {
           </div>
 
           {/* ── Position results ────────────────────────────────────────────── */}
-          {tally.positions.map((pos) => (
+          {[...tally.positions].sort((a, b) => {
+            const SCOPE_ORDER: Record<string, number> = { NATIONAL: 0, COUNTY: 1, CONSTITUENCY: 2, WARD: 3 };
+            return (SCOPE_ORDER[a.scope ?? ""] ?? 9) - (SCOPE_ORDER[b.scope ?? ""] ?? 9);
+          }).map((pos) => (
             <div key={pos.positionId} className="bg-white border border-gray-200 rounded-xl overflow-hidden">
               {/* Winner banner */}
               <div className={`px-5 py-3 flex items-center justify-between ${pos.isTied ? "bg-gradient-to-r from-amber-500 to-amber-600" : "bg-gradient-to-r from-green-600 to-green-700"}`}>

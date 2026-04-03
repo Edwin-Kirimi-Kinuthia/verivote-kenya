@@ -34,14 +34,37 @@ router.post('/start', async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/tally/results/:electionId — return cached tally or 404
-router.get('/results/:electionId', (req: Request, res: Response) => {
-  const tally = getCachedTally(req.params.electionId);
-  if (!tally) {
-    res.status(404).json({ success: false, error: 'No tally results for this election. Run POST /api/tally/start first.' });
+// GET /api/tally/results/:electionId — return cached tally or reconstruct from DB
+router.get('/results/:electionId', async (req: Request, res: Response) => {
+  const electionId = req.params.electionId;
+
+  // Fast path: in-memory cache
+  let tally = getCachedTally(electionId);
+  if (tally) {
+    res.json({ success: true, tally });
     return;
   }
-  res.json({ success: true, tally });
+
+  // Slow path: re-hydrate from DB after backend restart
+  try {
+    const { prisma } = await import('../database/client.js');
+    const election = await prisma.election.findUnique({
+      where: { id: electionId },
+      select: { tallyResultJson: true, status: true },
+    });
+
+    if (!election?.tallyResultJson) {
+      res.status(404).json({ success: false, error: 'No tally results for this election. Run POST /api/tally/start first.' });
+      return;
+    }
+
+    // Re-run the ceremony to rebuild the in-memory cache (fast — data already in DB)
+    tally = await runDecryptionCeremony(electionId);
+    res.json({ success: true, tally });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    res.status(500).json({ success: false, error: 'Failed to load tally results', detail: msg });
+  }
 });
 
 // POST /api/tally/publish — publish results hash on-chain

@@ -57,14 +57,16 @@ export default function VotersPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const load = useCallback(async (nationalId?: string) => {
+  const load = useCallback(async (nationalId?: string, status?: string) => {
     setLoading(true);
     setError("");
     try {
       const params = new URLSearchParams({ page: String(page), limit: "20" });
       if (nationalId) params.set("nationalId", nationalId);
+      if (status) params.set("status", status);
       const res = await api.get<{ success: boolean } & PaginatedResponse<Voter>>(
         `/api/voters?${params.toString()}`
       );
@@ -78,15 +80,20 @@ export default function VotersPage() {
   }, [page]);
 
   useEffect(() => {
-    load(search || undefined);
+    load(search || undefined, statusFilter || undefined);
   }, [load]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function handleSearchChange(value: string) {
     setSearch(value);
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
-      load(value || undefined);
+      load(value || undefined, statusFilter || undefined);
     }, 300);
+  }
+
+  function handleStatusChange(value: string) {
+    setStatusFilter(value);
+    load(search || undefined, value || undefined);
   }
 
   function handlePageChange(newPage: number) {
@@ -104,7 +111,7 @@ export default function VotersPage() {
         )}
 
         <div className="rounded-lg border border-gray-200 bg-white">
-          <div className="border-b border-gray-200 px-4 py-3">
+          <div className="border-b border-gray-200 px-4 py-3 flex flex-wrap gap-3">
             <div className="relative max-w-xs">
               <svg
                 className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400"
@@ -127,6 +134,20 @@ export default function VotersPage() {
                 className="w-full rounded-md border border-gray-300 py-1.5 pl-9 pr-3 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
               />
             </div>
+            <select
+              value={statusFilter}
+              onChange={(e) => handleStatusChange(e.target.value)}
+              className="rounded-md border border-gray-300 py-1.5 px-3 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            >
+              <option value="">All statuses</option>
+              <option value="DISTRESS_FLAGGED">⚠ Distress Flagged</option>
+              <option value="REGISTERED">Registered</option>
+              <option value="VOTED">Voted</option>
+              <option value="REVOTED">Revoted</option>
+              <option value="PENDING_VERIFICATION">Pending Verification</option>
+              <option value="PENDING_MANUAL_REVIEW">Pending Manual Review</option>
+              <option value="DECEASED">Deceased</option>
+            </select>
           </div>
           {loading ? (
             <div className="p-4">

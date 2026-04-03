@@ -96,13 +96,16 @@ router.post('/register', registrationRateLimiter, async (req: Request, res: Resp
         return;
       }
     } else {
-      // Non-KYC elections: derive a deterministic synthetic ID from the voter's email
-      if (!email) {
-        res.status(400).json({ success: false, error: 'email is required for institutional/custom elections' });
+      // Non-KYC elections: require at least one contact method to identify the voter.
+      // Derive a deterministic synthetic ID from email (preferred) or phone number.
+      if (!email && !phoneNumber) {
+        res.status(400).json({ success: false, error: 'An email address or phone number is required for this election' });
         return;
       }
       if (!effectiveNationalId) {
-        const hash = crypto.createHash('sha256').update(email.toLowerCase()).digest('hex');
+        // Prefer email for the synthetic ID so re-registration with the same email is idempotent.
+        const seed = email ? email.toLowerCase() : phoneNumber!;
+        const hash = crypto.createHash('sha256').update(seed).digest('hex');
         effectiveNationalId = `E-${hash.slice(0, 16)}`; // 18 chars, fits VarChar(20)
       }
     }
@@ -136,13 +139,38 @@ router.post('/register', registrationRateLimiter, async (req: Request, res: Resp
       electionId,
     });
 
-    // Non-KYC elections return 201 (voter created, OTP verify next).
-    // KYC elections: mock mode = 201 (Persona completed inline); live = 202 (redirect to Persona).
-    const statusCode = !result.kycRequired || personaService.isMockMode() ? 201 : 202;
+    // Create election enrollment when electionId is present:
+    //   • New PERSONA_KYC voter — pre-enroll now (safe: can't log in until Persona passes)
+    //   • Already-KYC-verified voter re-enrolling in OTP_ONLY or KYC election — KYC is
+    //     stronger than OTP, so no second OTP round is needed.
+    //   • Already-KYC-verified voter + EMAIL_DOMAIN election — enrollment deferred until OTP
+    //     confirms they own the institutional email (complete-contact-verification).
+    //   • New non-KYC voter — enrollment created after OTP in complete-contact-verification.
+    let shouldEnrollNow = false;
+    if (electionId) {
+      if (result.kycRequired) {
+        shouldEnrollNow = true;
+      } else if (result.alreadyRegistered) {
+        // Defer EMAIL_DOMAIN so we still verify institutional email ownership via OTP
+        shouldEnrollNow = (electionAuthMethod as string) !== 'EMAIL_DOMAIN';
+      }
+    }
+    if (shouldEnrollNow) {
+      await prisma.electionEnrollment.upsert({
+        where:  { electionId_voterId: { electionId: electionId!, voterId: result.voterId } },
+        create: { electionId: electionId!, voterId: result.voterId },
+        update: {},
+      });
+    }
+
+    // 202 = KYC redirect (live Persona). 201 = everything else (OTP next, or already done).
+    // Already-registered + EMAIL_DOMAIN: OTP still required to prove institutional email ownership.
+    const needsPersonaRedirect = result.kycRequired && !result.alreadyRegistered && !personaService.isMockMode();
+    const statusCode = needsPersonaRedirect ? 202 : 201;
 
     res.status(statusCode).json({
       success: true,
-      data: result,
+      data: { ...result, nationalId: effectiveNationalId },
     });
   } catch (error) {
     if (error instanceof ServiceError) {
@@ -260,6 +288,45 @@ router.get('/registration-status/:inquiryId', async (req: Request, res: Response
   }
 });
 
+// POST /api/voters/persona-retry — create a new Persona inquiry for a retry attempt
+// Used when the previous inquiry is in a terminal (failed) state and the voter wants to try again.
+router.post('/persona-retry', registrationRateLimiter, async (req: Request, res: Response) => {
+  const parsed = z.object({ nationalId: z.string().min(1).max(20) }).safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ success: false, error: parsed.error.errors[0].message });
+    return;
+  }
+  try {
+    const voter = await voterRepository.findByNationalId(parsed.data.nationalId);
+    if (!voter) {
+      res.status(404).json({ success: false, error: 'Voter not found' });
+      return;
+    }
+    const retriableStatuses = ['PENDING_VERIFICATION', 'PENDING_MANUAL_REVIEW', 'VERIFICATION_FAILED'];
+    if (!retriableStatuses.includes(voter.status)) {
+      res.status(409).json({ success: false, error: 'Voter is not in a retryable KYC state' });
+      return;
+    }
+    if (personaService.isMockMode()) {
+      res.status(200).json({ success: true, data: { inquiryId: `inq_mock_retry_${voter.id}`, sessionToken: null } });
+      return;
+    }
+    const { inquiryId, sessionToken } = await personaService.createInquiry(voter.nationalId, `retry_${voter.id}_${Date.now()}`);
+    await voterRepository.update(voter.id, {
+      personaInquiryId: inquiryId,
+      status: 'PENDING_VERIFICATION',
+      personaStatus: null,
+    });
+    res.json({ success: true, data: { inquiryId, sessionToken } });
+  } catch (error) {
+    if (error instanceof ServiceError) {
+      res.status(error.statusCode).json({ success: false, error: error.message });
+      return;
+    }
+    res.status(500).json({ success: false, error: error instanceof Error ? error.message : 'Failed to create retry inquiry' });
+  }
+});
+
 // POST /api/voters/request-manual-review - Request manual IEBC verification
 const manualReviewSchema = z.object({
   nationalId: z.string().min(1).max(20),
@@ -354,10 +421,16 @@ router.get('/:id/status', requireAuth, requireSelf, async (req: Request, res: Re
   }
 });
 
+const VOTER_STATUSES = [
+  'PENDING_VERIFICATION', 'PENDING_MANUAL_REVIEW', 'VERIFICATION_FAILED',
+  'REGISTERED', 'VOTED', 'REVOTED', 'DISTRESS_FLAGGED', 'SUSPENDED', 'DECEASED',
+] as const;
+
 const voterListQuerySchema = z.object({
   page:       z.coerce.number().int().min(1).max(10000).optional().default(1),
   limit:      z.coerce.number().int().min(1).max(100).optional().default(20),
-  nationalId: z.string().regex(/^\d{8}$/).optional(),
+  nationalId: z.string().min(1).max(20).optional(),
+  status:     z.enum(VOTER_STATUSES).optional(),
 });
 
 // GET /api/voters - List voters with pagination (admin only — prevents voter enumeration)
@@ -368,8 +441,8 @@ router.get('/', adminRateLimiter, requireAuth, requireAdmin, async (req: Request
     return;
   }
   try {
-    const { page, limit, nationalId } = parsed.data;
-    const result = await voterRepository.findMany({ page, limit, nationalId });
+    const { page, limit, nationalId, status } = parsed.data;
+    const result = await voterRepository.findMany({ page, limit, nationalId, status });
 
     res.json({
       success: true,
@@ -400,19 +473,13 @@ router.post('/complete-contact-verification', registrationRateLimiter, async (re
   try {
     const result = await voterService.completeContactVerification(parsed.data.voterId);
 
-    // Auto-enroll voter in the election (non-GOVERNMENT elections use enrollment-based eligibility)
+    // Enroll voter in the election — all election types now require enrollment
     if (parsed.data.electionId) {
-      const election = await prisma.election.findUnique({
-        where:  { id: parsed.data.electionId },
-        select: { type: true },
+      await prisma.electionEnrollment.upsert({
+        where:  { electionId_voterId: { electionId: parsed.data.electionId, voterId: parsed.data.voterId } },
+        create: { electionId: parsed.data.electionId, voterId: parsed.data.voterId },
+        update: {},
       });
-      if (election && election.type !== 'GOVERNMENT') {
-        await prisma.electionEnrollment.upsert({
-          where:  { electionId_voterId: { electionId: parsed.data.electionId, voterId: parsed.data.voterId } },
-          create: { electionId: parsed.data.electionId, voterId: parsed.data.voterId },
-          update: {},
-        });
-      }
     }
 
     res.json({ success: true, data: result });

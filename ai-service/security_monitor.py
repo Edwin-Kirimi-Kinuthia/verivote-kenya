@@ -72,6 +72,30 @@ def analyze_security(monitoring_data: dict) -> list[SecurityEvent]:
         bc_pending      = stats.get("blockchainPending", 0)
         bc_confirmed    = stats.get("blockchainConfirmed", 0)
 
+        # ── SEC-01a: Any distress vote election-wide (immediate notification) ───
+        if distress_30min == 1:
+            events.append(SecurityEvent(
+                event_type="DISTRESS_VOTE_ELECTION",
+                severity="LOW",
+                description=(
+                    f"{ename}: 1 distress vote detected in last 30 min — "
+                    f"voter may be under duress. Admin should follow up."
+                ),
+                election_id=eid,
+                details={"election_name": ename, "distress_last_30min": distress_30min},
+            ))
+        elif distress_30min == 2:
+            events.append(SecurityEvent(
+                event_type="DISTRESS_VOTE_ELECTION",
+                severity="MEDIUM",
+                description=(
+                    f"{ename}: 2 distress votes detected in last 30 min — "
+                    f"possible pattern. Admin should investigate."
+                ),
+                election_id=eid,
+                details={"election_name": ename, "distress_last_30min": distress_30min},
+            ))
+
         # ── SEC-02: Election-wide distress cluster ────────────────────────────
         if distress_30min >= 5:
             events.append(SecurityEvent(
@@ -205,7 +229,7 @@ def analyze_security(monitoring_data: dict) -> list[SecurityEvent]:
             st_pending      = s.get("blockchainPending", 0)
             avg             = county_avg.get(county, 0.0)
 
-            # SEC-01: Station distress cluster
+            # SEC-01: Station distress vote detected
             if distress_st_30 >= 3:
                 events.append(SecurityEvent(
                     event_type="DISTRESS_CLUSTER_STATION",
@@ -221,6 +245,24 @@ def analyze_security(monitoring_data: dict) -> list[SecurityEvent]:
                         "county":         county,
                         "distress_count": distress_st_30,
                         "election_name":  ename,
+                    },
+                ))
+            elif distress_st_30 >= 1:
+                events.append(SecurityEvent(
+                    event_type="DISTRESS_VOTE_STATION",
+                    severity="MEDIUM",
+                    description=(
+                        f"Station {sname} ({county}): {distress_st_30} distress vote(s) "
+                        f"in last 30 min — voter may be under duress. Recommend admin follow-up."
+                    ),
+                    election_id=eid,
+                    station_id=sid,
+                    details={
+                        "station_name":   sname,
+                        "county":         county,
+                        "distress_count": distress_st_30,
+                        "election_name":  ename,
+                        "action_required": "Contact voter to confirm vote integrity",
                     },
                 ))
 

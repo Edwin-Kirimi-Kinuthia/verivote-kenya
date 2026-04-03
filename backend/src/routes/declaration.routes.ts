@@ -65,6 +65,29 @@ router.get('/', async (req: Request, res: Response) => {
   }
 });
 
+// GET /api/declarations/pending/:electionId — MUST be before /:id to avoid shadowing
+router.get(
+  '/pending/:electionId',
+  requireStaffRole('CHAIRPERSON', 'COMMISSIONER', 'NATIONAL_RO', 'COUNTY_RO', 'CONSTITUENCY_RO', 'PRESIDING_OFFICER'),
+  async (req: Request, res: Response) => {
+    try {
+      const authReq = req as AuthenticatedRequest;
+      if (!authReq.voter.staffId) {
+        res.status(403).json({ success: false, error: 'No staff record found' });
+        return;
+      }
+      const pending = await getPendingDeclarations(
+        req.params.electionId,
+        authReq.voter.staffId,
+      );
+      res.json({ success: true, data: pending });
+    } catch (err) {
+      if (err instanceof ServiceError) { res.status(err.statusCode).json({ success: false, error: err.message }); return; }
+      res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+  },
+);
+
 // GET /api/declarations/:id
 router.get('/:id', async (req: Request, res: Response) => {
   try {
@@ -80,7 +103,7 @@ router.get('/:id', async (req: Request, res: Response) => {
 // POST /api/declarations
 router.post(
   '/',
-  requireStaffRole('COMMISSIONER', 'NATIONAL_RO', 'COUNTY_RO', 'CONSTITUENCY_RO', 'PRESIDING_OFFICER'),
+  requireStaffRole('CHAIRPERSON', 'COMMISSIONER', 'NATIONAL_RO', 'COUNTY_RO', 'CONSTITUENCY_RO', 'PRESIDING_OFFICER'),
   async (req: Request, res: Response) => {
     const schema = z.object({
       electionId:    z.string().uuid(),
@@ -118,7 +141,7 @@ router.post(
 // POST /api/declarations/:id/declare
 router.post(
   '/:id/declare',
-  requireStaffRole('COMMISSIONER', 'NATIONAL_RO', 'COUNTY_RO', 'CONSTITUENCY_RO', 'PRESIDING_OFFICER'),
+  requireStaffRole('CHAIRPERSON', 'COMMISSIONER', 'NATIONAL_RO', 'COUNTY_RO', 'CONSTITUENCY_RO', 'PRESIDING_OFFICER'),
   async (req: Request, res: Response) => {
     try {
       const authReq = req as AuthenticatedRequest;
@@ -153,32 +176,6 @@ router.post(
       if (err instanceof ServiceError) { res.status(err.statusCode).json({ success: false, error: err.message }); return; }
       const msg = err instanceof Error ? err.message : 'Unknown error';
       res.status(500).json({ success: false, error: msg });
-    }
-  },
-);
-
-// GET /api/declarations/pending/:electionId
-// Returns positions visible to this officer for the given election.
-// canDeclare=true  → officer is personInCharge of the position's node (or commission-tier)
-// canDeclare=false → position belongs to a descendant node (read-only visibility)
-router.get(
-  '/pending/:electionId',
-  requireStaffRole('COMMISSIONER', 'NATIONAL_RO', 'COUNTY_RO', 'CONSTITUENCY_RO', 'PRESIDING_OFFICER'),
-  async (req: Request, res: Response) => {
-    try {
-      const authReq = req as AuthenticatedRequest;
-      if (!authReq.voter.staffId) {
-        res.status(403).json({ success: false, error: 'No staff record found' });
-        return;
-      }
-      const pending = await getPendingDeclarations(
-        req.params.electionId,
-        authReq.voter.staffId,
-      );
-      res.json({ success: true, data: pending });
-    } catch (err) {
-      if (err instanceof ServiceError) { res.status(err.statusCode).json({ success: false, error: err.message }); return; }
-      res.status(500).json({ success: false, error: 'Internal server error' });
     }
   },
 );

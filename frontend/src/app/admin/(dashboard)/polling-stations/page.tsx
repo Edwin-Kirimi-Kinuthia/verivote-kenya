@@ -444,7 +444,7 @@ function StationForm({
                 </div>
               </div>
               <p className="mt-1.5 text-xs text-gray-400">
-                Tip: right-click a location in Google Maps → "What&apos;s here?" to copy exact coordinates.
+                Tip: right-click a location in Google Maps → &quot;What&apos;s here?&quot; to copy exact coordinates.
               </p>
             </div>
 

@@ -19,7 +19,7 @@ export class PersonaService {
     this.webhookSecret = process.env.PERSONA_WEBHOOK_SECRET || '';
   }
 
-  async createInquiry(_nationalId: string, referenceId: string): Promise<{ inquiryId: string; url: string }> {
+  async createInquiry(_nationalId: string, referenceId: string): Promise<{ inquiryId: string; url: string; sessionToken?: string }> {
     if (this.mockMode) {
       return {
         inquiryId: `inq_mock_${referenceId}`,
@@ -76,7 +76,7 @@ export class PersonaService {
     }
 
     const url = `https://withpersona.com/verify?inquiry-id=${inquiryId}&session-token=${sessionToken}`;
-    return { inquiryId, url };
+    return { inquiryId, url, sessionToken };
   }
 
   async getInquiry(inquiryId: string): Promise<PersonaInquiryResult> {

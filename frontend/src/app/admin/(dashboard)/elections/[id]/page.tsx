@@ -1404,7 +1404,7 @@ export default function ElectionDetailPage({
                       onSubmit={handleAddCandidate}
                       className="border-b border-gray-200 bg-green-50 px-5 py-4 space-y-3"
                     >
-                      <p className="text-xs font-semibold text-green-800">New Candidate for "{pos.title}"</p>
+                      <p className="text-xs font-semibold text-green-800">New Candidate for &quot;{pos.title}&quot;</p>
                       {candidateError && <p className="text-sm text-red-600">{candidateError}</p>}
                       <div className="grid gap-3 sm:grid-cols-3">
                         <div className="sm:col-span-2">

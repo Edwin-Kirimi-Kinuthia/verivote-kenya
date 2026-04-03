@@ -29,6 +29,7 @@ export interface CandidateTally {
 export interface PositionTally {
   positionId: string;
   positionTitle: string;
+  scope: string;
   candidates: CandidateTally[];
   totalVotes: number;
   /** 'TIE' when two or more candidates share the highest vote count. */
@@ -105,6 +106,7 @@ export async function runDecryptionCeremony(electionId: string): Promise<TallyRe
     where: { id: electionId },
     include: {
       positions: {
+        orderBy: { orderIndex: 'asc' },
         include: {
           candidates: true,
         },
@@ -287,6 +289,7 @@ export async function runDecryptionCeremony(electionId: string): Promise<TallyRe
     return {
       positionId: pos.id,
       positionTitle: pos.title,
+      scope: pos.scope,
       candidates,
       totalVotes: totalPos,
       winner,
