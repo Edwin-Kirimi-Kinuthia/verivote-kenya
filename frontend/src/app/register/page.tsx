@@ -6,6 +6,7 @@ import { api } from "@/lib/api-client";
 import { useTranslation } from "@/contexts/language-context";
 import { AppointmentSlotPicker } from "@/components/appointment-slot-picker";
 import { CountryCodeSelect } from "@/components/country-code-select";
+import { PersonaVerification } from "@/components/persona-verification";
 import type {
   PollingStation,
   NearbyStation,
@@ -17,7 +18,9 @@ import type {
 type View =
   | "form"
   | "otp"
-  | "options"
+  | "enrolled"       // Already globally registered — just enrolled in this election
+  | "kycStart"       // Required KYC step (PERSONA_KYC elections) — shown before Persona opens
+  | "options"        // KYC-failure fallback — retry or book in-person (< 3 attempts)
   | "personaInProgress"
   | "webauthn"
   | "pinSetup"
@@ -31,17 +34,22 @@ interface RegistrationData {
   voterId: string;
   kycRequired: boolean;
   authMethod: AuthMethod;
+  nationalId?: string;        // Effective ID (synthetic for non-KYC elections) — used for OTP requests
+  alreadyRegistered?: boolean; // Voter was globally REGISTERED — enrollment only, skip KYC/OTP
   // Only present when kycRequired = true (PERSONA_KYC)
   inquiryId?: string;
   personaUrl?: string;
+  personaSessionToken?: string;
 }
 
 interface ElectionContext {
   id: string;
   name: string;
+  type: string; // GOVERNMENT | INSTITUTIONAL | CORPORATE | CUSTOM
   authMethod: AuthMethod;
   allowedDomains: string[];
   orgName: string | null;
+  eligibilityNote: string | null;
 }
 
 function RegisterPageContent() {
@@ -50,14 +58,16 @@ function RegisterPageContent() {
   const { t } = useTranslation();
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const personaAttemptsRef = useRef(0);
+  const activeInquiryIdRef = useRef<string | null>(null);
 
   const [view, setView] = useState<View>("form");
   const [stations, setStations] = useState<PollingStation[]>([]);
 
   // Election-specific registration context (loaded when ?electionId=xxx is in URL)
   const [electionCtx, setElectionCtx] = useState<ElectionContext | null>(null);
-  const [electionLoading, setElectionLoading] = useState(false);
   const electionId = searchParams.get("electionId");
+  // Start in loading state when electionId is present to avoid flash of wrong fields
+  const [electionLoading, setElectionLoading] = useState(!!electionId);
 
   // Form fields
   const [idDocumentType, setIdDocumentType] = useState<"NATIONAL_ID" | "PASSPORT">("NATIONAL_ID");
@@ -82,6 +92,7 @@ function RegisterPageContent() {
   const [otpCode, setOtpCode] = useState("");
   const [otpLoading, setOtpLoading] = useState(false);
   const [resendCooldown, setResendCooldown] = useState(0);
+  const [devOtpCode, setDevOtpCode] = useState<string | null>(null);
 
   // Manual review + booking state
   const [manualLoading, setManualLoading] = useState(false);
@@ -120,6 +131,14 @@ function RegisterPageContent() {
       .catch(() => {});
   }, []);
 
+  // Redirect to elections listing if no electionId — registration must be election-specific
+  useEffect(() => {
+    if (!electionId) {
+      router.replace("/elections");
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Load election context if electionId is in the URL
   useEffect(() => {
     if (!electionId) return;
@@ -129,8 +148,9 @@ function RegisterPageContent() {
       .then((res) => {
         if (res.success && res.data) {
           setElectionCtx(res.data);
-          // EMAIL_DOMAIN elections must use email
-          if (res.data.authMethod === "EMAIL_DOMAIN" || res.data.authMethod === "OTP_ONLY") {
+          // EMAIL_DOMAIN elections must use email (domain validation)
+          // OTP_ONLY elections can use either email or phone — don't force
+          if (res.data.authMethod === "EMAIL_DOMAIN") {
             setPreferredContact("EMAIL");
           }
         }
@@ -322,6 +342,11 @@ function RegisterPageContent() {
     setLoading(true);
     try {
       const isNonKyc = electionCtx && electionCtx.authMethod !== "PERSONA_KYC";
+      if (!isNonKyc && !pollingStationId) {
+        setError("Please select your polling station before continuing.");
+        setLoading(false);
+        return;
+      }
       const body: Record<string, unknown> = {
         preferredContact,
         phoneNumber: preferredContact === "SMS" ? (countryCode + localPhone.replace(/\D/g, "")) : undefined,
@@ -343,8 +368,17 @@ function RegisterPageContent() {
 
       setRegData(res.data ?? null);
 
-      // Trigger OTP to confirm contact
-      await requestOtp();
+      // Already-registered voter (globally verified) — just enrolled in this election, no OTP/KYC needed
+      if (res.data?.alreadyRegistered) {
+        setView("enrolled");
+        return;
+      }
+
+      // Trigger OTP to confirm contact.
+      // For non-KYC elections the voter has no nationalId form field — use the synthetic ID
+      // returned by the backend (E-<hex>) so the OTP service can find the voter record.
+      const effectiveId = res.data?.nationalId || nationalId;
+      await requestOtp(effectiveId);
       setView("otp");
     } catch (err) {
       setError(err instanceof Error ? err.message : t("common.error"));
@@ -353,19 +387,22 @@ function RegisterPageContent() {
     }
   }
 
-  async function requestOtp() {
-    await api.post("/api/auth/request-otp", {
-      nationalId,
-      purpose: "CONTACT_VERIFY",
-    });
+  async function requestOtp(id: string) {
+    const res = await api.post<{ success: boolean; data?: { mockCode?: string } }>(
+      "/api/auth/request-otp",
+      { nationalId: id, purpose: "CONTACT_VERIFY" }
+    );
     setResendCooldown(60);
+    if ((res as { data?: { mockCode?: string } }).data?.mockCode) {
+      setDevOtpCode((res as { data?: { mockCode?: string } }).data!.mockCode!);
+    }
   }
 
   async function handleResendOtp() {
     if (resendCooldown > 0) return;
     setError("");
     try {
-      await requestOtp();
+      await requestOtp(regData?.nationalId || nationalId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to resend code");
     }
@@ -379,7 +416,7 @@ function RegisterPageContent() {
     setOtpLoading(true);
     try {
       const res = await api.post<ApiResponse<unknown>>("/api/auth/verify-otp", {
-        nationalId,
+        nationalId: regData?.nationalId || nationalId,
         code: otpCode,
         purpose: "CONTACT_VERIFY",
       });
@@ -405,8 +442,8 @@ function RegisterPageContent() {
         return;
       }
 
-      // KYC election: proceed to Persona verification
-      setView("options");
+      // KYC election: go to mandatory identity verification screen
+      setView("kycStart");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Verification failed");
     } finally {
@@ -420,32 +457,57 @@ function RegisterPageContent() {
   const [personaAttempts, setPersonaAttempts] = useState(0);
 
   function handleOpenPersona() {
-    if (!regData?.personaUrl) return;
+    if (!regData?.inquiryId) return;
     personaAttemptsRef.current = 0;
     setPersonaAttempts(0);
+    activeInquiryIdRef.current = regData.inquiryId;
     setError("");
-    const tab = window.open(regData.personaUrl, "_blank", "noopener");
     setView("personaInProgress");
-    startPolling();
-    if (!tab) {
-      setError(
-        "Your browser blocked the verification tab. Please allow pop-ups for this site, then click \"Re-open Persona Tab\" below."
+    // Polling starts in onComplete (fired by PersonaVerification when user finishes)
+  }
+
+  async function handleRetryPersona() {
+    const effectiveNationalId = regData?.nationalId ?? nationalId;
+    if (!effectiveNationalId) return;
+    setLoading(true);
+    setError("");
+    try {
+      const res = await api.post<ApiResponse<{ inquiryId: string; sessionToken: string | null }>>(
+        "/api/voters/persona-retry",
+        { nationalId: effectiveNationalId }
       );
+      if (!res.success || !res.data?.inquiryId) {
+        setError(res.error ?? "Failed to start a new verification session");
+        return;
+      }
+      const newInquiryId = res.data.inquiryId;
+      activeInquiryIdRef.current = newInquiryId;
+      setRegData((prev) =>
+        prev ? { ...prev, inquiryId: newInquiryId, personaSessionToken: res.data!.sessionToken ?? undefined } : prev
+      );
+      setError("");
+      setView("personaInProgress");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to start verification");
+    } finally {
+      setLoading(false);
     }
   }
 
   function startPolling() {
-    if (!regData?.inquiryId) return;
+    const inquiryId = activeInquiryIdRef.current ?? regData?.inquiryId;
+    if (!inquiryId) return;
     if (pollRef.current) clearInterval(pollRef.current);
     pollRef.current = setInterval(() => checkPersonaStatus(), 6000);
   }
 
   async function checkPersonaStatus() {
-    if (!regData?.inquiryId) return;
+    const inquiryId = activeInquiryIdRef.current ?? regData?.inquiryId;
+    if (!inquiryId) return;
     setCheckingStatus(true);
     try {
       const res = await api.get<ApiResponse<{ status: string; setupToken?: string }>>(
-        `/api/voters/registration-status/${regData.inquiryId}`
+        `/api/voters/registration-status/${inquiryId}`
       );
       if (res.data?.status === "REGISTERED") {
         if (pollRef.current) clearInterval(pollRef.current);
@@ -462,14 +524,15 @@ function RegisterPageContent() {
         personaAttemptsRef.current += 1;
         setPersonaAttempts(personaAttemptsRef.current);
         if (personaAttemptsRef.current >= 3) {
-          setError("Verification failed after 3 attempts. Please book an in-person appointment.");
+          // All attempts exhausted — go straight to appointment booking
+          setError("Identity verification failed after 3 attempts.");
+          void handleScheduleManual();
         } else {
           setError(
-            `Verification failed. ${3 - personaAttemptsRef.current} attempt(s) remaining. ` +
-            `Click "Try Again" to re-open Persona, or choose in-person verification.`
+            `Verification failed. ${3 - personaAttemptsRef.current} attempt(s) remaining.`
           );
+          setView("options");
         }
-        setView("options");
       }
     } catch {
       // network hiccup — keep polling
@@ -589,7 +652,15 @@ function RegisterPageContent() {
         <div className="w-full max-w-md">
           <div className="mb-8 text-center">
             <h1 className="text-3xl font-bold text-gray-900">{t("register.title")}</h1>
-            <p className="mt-2 text-base text-gray-500">{t("register.subtitle")}</p>
+            <p className="mt-2 text-base text-gray-500">
+              {electionCtx?.authMethod === "PERSONA_KYC"
+                ? "Register with your National ID or Passport. Identity verification is required."
+                : electionCtx?.authMethod === "EMAIL_DOMAIN"
+                  ? "Register with your institutional email address to participate."
+                  : electionCtx?.authMethod === "OTP_ONLY"
+                    ? "Register with your email or phone number to participate."
+                    : t("register.subtitle")}
+            </p>
           </div>
 
           {/* Election context banner */}
@@ -782,8 +853,8 @@ function RegisterPageContent() {
               </div>
             </div>}
 
-            {/* Contact preference — EMAIL_DOMAIN elections require email */}
-            {!isNonKycElection && (
+            {/* Contact preference — shown for KYC and OTP_ONLY elections; EMAIL_DOMAIN is email-only */}
+            {electionCtx?.authMethod !== "EMAIL_DOMAIN" && (
               <div>
                 <p className="mb-2 text-sm font-semibold text-gray-700">How should we reach you?</p>
                 <div className="flex gap-4">
@@ -962,9 +1033,9 @@ function RegisterPageContent() {
 
             <button
               type="submit"
-              disabled={loading || (!isNonKycElection && !(
-                idDocumentType === "NATIONAL_ID" ? /^\d{5,9}$/.test(nationalId) :
-                /^[A-Z0-9]{6,12}$/i.test(nationalId)
+              disabled={loading || (!isNonKycElection && (
+                !(idDocumentType === "NATIONAL_ID" ? /^\d{5,9}$/.test(nationalId) : /^[A-Z0-9]{6,12}$/i.test(nationalId)) ||
+                !pollingStationId
               ))}
               className="w-full rounded-lg bg-green-700 px-6 py-3 text-base font-semibold text-white hover:bg-green-800 disabled:cursor-not-allowed disabled:opacity-50"
             >
@@ -1013,6 +1084,13 @@ function RegisterPageContent() {
               </p>
             )}
           </div>
+
+          {devOtpCode && (
+            <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              <strong>Dev mode:</strong> OTP code is <strong className="font-mono tracking-widest">{devOtpCode}</strong>
+              <span className="ml-2 text-xs text-amber-600">(not shown in production)</span>
+            </div>
+          )}
 
           <form
             onSubmit={handleVerifyOtp}
@@ -1066,16 +1144,144 @@ function RegisterPageContent() {
     );
   }
 
-  // ── Verification options ──────────────────────────────────────────────────
+  // ── Already registered globally — enrollment confirmation ────────────────
+
+  if (view === "enrolled") {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center px-4">
+        <div className="w-full max-w-md text-center">
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-green-100">
+            <svg className="h-9 w-9 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <h1 className="mt-4 text-2xl font-bold text-gray-900">You&apos;re enrolled!</h1>
+          <p className="mt-2 text-sm text-gray-500">
+            Your identity was already verified. You have been enrolled in{" "}
+            <strong>{electionCtx?.name ?? "this election"}</strong> and can now vote.
+          </p>
+          {electionCtx && (
+            <div className="mt-4 rounded-xl border border-green-200 bg-green-50 p-4 text-left text-sm">
+              <p className="font-semibold text-green-900">{electionCtx.name}</p>
+              {electionCtx.orgName && <p className="mt-0.5 text-green-700">{electionCtx.orgName}</p>}
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => router.push(electionId ? `/vote?electionId=${electionId}` : "/vote")}
+            className="mt-6 w-full rounded-lg bg-green-700 px-6 py-3 text-base font-semibold text-white hover:bg-green-800"
+          >
+            Proceed to Vote
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── KYC required — identity verification start screen ────────────────────
+  // Shown immediately after OTP verification for PERSONA_KYC elections.
+  // The voter has no choice here — KYC is mandatory.
+
+  if (view === "kycStart") {
+    const isGovt = electionCtx?.type === "GOVERNMENT";
+
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center px-4">
+        <div className="w-full max-w-md">
+          <div className="mb-8 text-center">
+            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-blue-100">
+              <svg className="h-9 w-9 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15 9h3.75M15 12h3.75M15 15h3.75M4.5 19.5h15a2.25 2.25 0 002.25-2.25V6.75A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25v10.5A2.25 2.25 0 004.5 19.5zm6-10.125a1.875 1.875 0 11-3.75 0 1.875 1.875 0 013.75 0zm1.294 6.336a6.721 6.721 0 01-3.17.789 6.721 6.721 0 01-3.168-.789 3.376 3.376 0 016.338 0z" />
+              </svg>
+            </div>
+            <h1 className="mt-4 text-2xl font-bold text-gray-900">Identity Verification Required</h1>
+            <p className="mt-2 text-sm text-gray-500">
+              {isGovt
+                ? "Kenyan law requires every voter to complete a government-grade identity check before being registered."
+                : "This election requires identity verification before you can be registered."}
+            </p>
+          </div>
+
+          {/* Election context */}
+          {electionCtx && (
+            <div className="mb-5 rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm">
+              <p className="font-semibold text-blue-900">{electionCtx.name}</p>
+              {electionCtx.orgName && <p className="mt-0.5 text-blue-700">{electionCtx.orgName}</p>}
+              {electionCtx.eligibilityNote && (
+                <p className="mt-2 text-xs text-blue-600">{electionCtx.eligibilityNote}</p>
+              )}
+            </div>
+          )}
+
+          {error && (
+            <div role="alert" className="mb-4 rounded-lg bg-red-50 p-4 text-sm text-red-700">
+              {error}
+            </div>
+          )}
+
+          {/* What to expect */}
+          <div className="mb-5 rounded-xl border border-gray-200 bg-white p-5 shadow-sm space-y-3">
+            <p className="text-sm font-semibold text-gray-800">What you will need:</p>
+            <ul className="space-y-2 text-sm text-gray-600">
+              <li className="flex items-start gap-2">
+                <svg className="mt-0.5 h-4 w-4 shrink-0 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+                Your {idDocumentType === "NATIONAL_ID" ? "National ID card" : "Passport"} — the same document you registered with
+              </li>
+              <li className="flex items-start gap-2">
+                <svg className="mt-0.5 h-4 w-4 shrink-0 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+                A working front-facing camera (phone or laptop)
+              </li>
+              <li className="flex items-start gap-2">
+                <svg className="mt-0.5 h-4 w-4 shrink-0 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+                Good lighting — takes about 2 minutes
+              </li>
+            </ul>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => handleOpenPersona()}
+            disabled={!regData?.inquiryId}
+            className="w-full rounded-lg bg-blue-600 px-6 py-3 text-base font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Start Identity Verification
+          </button>
+
+          <p className="mt-3 text-center text-xs text-gray-400">
+            Powered by Persona — your data is processed securely and used only for voter eligibility checks.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // ── KYC failure fallback — retry or book in-person ────────────────────────
+  // Shown only after Persona verification fails. NOT shown before the first attempt.
 
   if (view === "options") {
+    const attemptsLeft = 3 - personaAttempts;
+    const allAttemptsUsed = attemptsLeft <= 0;
+
     return (
       <div className="flex min-h-[60vh] items-center justify-center px-4">
         <div className="w-full max-w-lg">
           <div className="mb-8 text-center">
-            <h1 className="text-2xl font-bold text-gray-900">Verify Your Identity</h1>
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-red-100">
+              <svg className="h-7 w-7 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+              </svg>
+            </div>
+            <h1 className="mt-4 text-2xl font-bold text-gray-900">Verification Unsuccessful</h1>
             <p className="mt-2 text-sm text-gray-500">
-              Your contact has been confirmed. Now verify your identity to complete registration.
+              {allAttemptsUsed
+                ? "You have used all 3 attempts. Please book an in-person appointment at your nearest IEBC office."
+                : `Identity verification did not succeed. You have ${attemptsLeft} attempt${attemptsLeft === 1 ? "" : "s"} remaining.`}
             </p>
           </div>
 
@@ -1085,29 +1291,31 @@ function RegisterPageContent() {
             </div>
           )}
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            {/* Online KYC */}
-            <div className="flex flex-col rounded-xl border-2 border-blue-200 bg-white p-6 shadow-sm">
-              <div className="mb-3 flex items-center gap-3">
-                <svg className="h-8 w-8 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 9h3.75M15 12h3.75M15 15h3.75M4.5 19.5h15a2.25 2.25 0 002.25-2.25V6.75A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25v10.5A2.25 2.25 0 004.5 19.5zm6-10.125a1.875 1.875 0 11-3.75 0 1.875 1.875 0 013.75 0zm1.294 6.336a6.721 6.721 0 01-3.17.789 6.721 6.721 0 01-3.168-.789 3.376 3.376 0 016.338 0z" />
-                </svg>
-                <h2 className="text-base font-semibold text-gray-900">{t("register.personaTitle")}</h2>
+          <div className={`grid gap-4 ${allAttemptsUsed ? "" : "sm:grid-cols-2"}`}>
+            {/* Retry KYC — only if attempts remain */}
+            {!allAttemptsUsed && (
+              <div className="flex flex-col rounded-xl border-2 border-blue-200 bg-white p-6 shadow-sm">
+                <div className="mb-3 flex items-center gap-3">
+                  <svg className="h-8 w-8 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+                  </svg>
+                  <h2 className="text-base font-semibold text-gray-900">Try Again</h2>
+                </div>
+                <p className="mb-4 flex-1 text-sm text-gray-500">
+                  Make sure your ID is flat, well-lit, and fully in frame. Hold still during the selfie.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void handleRetryPersona()}
+                  disabled={loading}
+                  className="w-full rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {loading ? "Starting…" : "Re-open Verification"}
+                </button>
               </div>
-              <p className="mb-4 flex-1 text-sm text-gray-500">
-                Complete a quick Government ID + Selfie check online. Takes about 2 minutes.
-              </p>
-              <button
-                type="button"
-                onClick={handleOpenPersona}
-                disabled={!regData?.personaUrl}
-                className="w-full rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
-              >
-                {t("register.personaButton")}
-              </button>
-            </div>
+            )}
 
-            {/* In-person */}
+            {/* In-person / manual review */}
             <div className="flex flex-col rounded-xl border-2 border-amber-200 bg-white p-6 shadow-sm">
               <div className="mb-3 flex items-center gap-3">
                 <svg className="h-8 w-8 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -1132,80 +1340,31 @@ function RegisterPageContent() {
     );
   }
 
-  // ── Persona in-progress — new tab, polling-based auto-advance ───────────
+  // ── Persona in-progress — Persona Embedded SDK ──────────────────────────
 
-  if (view === "personaInProgress") {
+  if (view === "personaInProgress" && regData?.inquiryId) {
     return (
-      <div className="flex min-h-[60vh] items-center justify-center px-4">
-        <div className="w-full max-w-md text-center">
-          <div className="mb-6">
-            <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-blue-100">
-              {checkingStatus ? (
-                <svg className="h-8 w-8 animate-spin text-blue-600" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                </svg>
-              ) : (
-                <svg className="h-8 w-8 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
-                </svg>
-              )}
-            </div>
-            <h1 className="text-2xl font-bold text-gray-900">Identity Verification</h1>
-            <p className="mt-2 text-sm text-gray-500">
-              Persona has opened in a new tab. Complete your Government ID + Selfie check there.
-              This page will advance automatically once verification is complete.
-            </p>
-            {personaAttempts > 0 && (
-              <span className="mt-3 inline-block rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-800">
-                Attempt {personaAttempts + 1} / 3
-              </span>
-            )}
-          </div>
-
-          {error && (
-            <div role="alert" className="mb-4 rounded-lg bg-red-50 p-4 text-sm text-red-700">
-              {error}
-            </div>
-          )}
-
-          <div className="mb-5 rounded-xl border border-blue-100 bg-blue-50 p-4">
-            <p className="text-xs text-blue-700">
-              Status is checked automatically every 6 seconds. Click <strong>Check Status</strong> manually after finishing in the Persona tab.
-            </p>
-          </div>
-
-          <div className="space-y-2">
-            <button
-              type="button"
-              onClick={checkPersonaStatus}
-              disabled={checkingStatus}
-              className="w-full rounded-lg bg-green-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-green-800 disabled:opacity-50"
-            >
-              {checkingStatus ? "Checking…" : "Check Status"}
-            </button>
-            <a
-              href={regData?.personaUrl ?? "#"}
-              target="_blank"
-              rel="noopener noreferrer"
-              className={`block w-full rounded-lg border border-blue-300 bg-white px-4 py-2.5 text-center text-sm font-semibold text-blue-700 hover:bg-blue-50 ${!regData?.personaUrl ? "pointer-events-none opacity-50" : ""}`}
-            >
-              Re-open Persona Tab
-            </a>
-            <button
-              type="button"
-              onClick={() => {
-                if (pollRef.current) clearInterval(pollRef.current);
-                setError("");
-                setView("options");
-              }}
-              className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      </div>
+      <PersonaVerification
+        key={personaAttempts}
+        inquiryId={regData.inquiryId}
+        sessionToken={regData.personaSessionToken}
+        environment={process.env.NEXT_PUBLIC_PERSONA_ENV === "production" ? "production" : "sandbox"}
+        onComplete={(_id, _status) => {
+          // SDK fires when user finishes the flow client-side.
+          // Start polling for the backend webhook confirmation.
+          startPolling();
+        }}
+        onCancel={() => setView("options")}
+        onError={() => {
+          personaAttemptsRef.current += 1;
+          setPersonaAttempts(personaAttemptsRef.current);
+          if (personaAttemptsRef.current >= 3) {
+            void handleScheduleManual();
+          } else {
+            setView("options");
+          }
+        }}
+      />
     );
   }
 

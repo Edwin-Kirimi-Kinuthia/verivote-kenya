@@ -5,8 +5,9 @@ import { otpService } from '../services/otp.service.js';
 import { authService } from '../services/auth.service.js';
 import { voterRepository } from '../repositories/index.js';
 import { ServiceError } from '../services/voter.service.js';
+import { prisma } from '../database/client.js';
 import { requireAuth, authRateLimiter, otpRateLimiter } from '../middleware/index.js';
-import type { AuthenticatedRequest } from '../types/auth.types.js';
+import type { AuthenticatedRequest, StaffRole, JurisdictionLevel } from '../types/auth.types.js';
 
 const router: Router = Router();
 
@@ -164,12 +165,21 @@ router.post('/verify-otp', otpRateLimiter, async (req: Request, res: Response) =
       return;
     }
 
+    // Look up IEBC staff record to embed role claims (for voters who are also staff)
+    const staffRecord = voter.role === 'ADMIN'
+      ? await prisma.iebcStaff.findUnique({ where: { voterId: voter.id } })
+      : null;
+
     const token = authService.generateToken({
       sub: voter.id,
       nationalId: voter.nationalId,
       status: voter.status,
       role: voter.role,
       isDistress: false,
+      staffId:           staffRecord?.id               ?? undefined,
+      staffRole:         staffRecord?.staffRole         as StaffRole         | undefined,
+      jurisdictionLevel: staffRecord?.jurisdictionLevel as JurisdictionLevel | undefined,
+      jurisdictionValue: staffRecord?.jurisdictionValue ?? undefined,
     });
 
     res.json({

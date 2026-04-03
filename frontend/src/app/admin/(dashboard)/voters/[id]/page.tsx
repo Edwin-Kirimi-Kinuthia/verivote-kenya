@@ -17,6 +17,13 @@ type DeceasedResult = {
   note: string;
 };
 
+type EscortedRevoteResult = {
+  voterId: string;
+  message: string;
+  contact: string;
+  channel: string;
+};
+
 export default function VoterDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -26,6 +33,9 @@ export default function VoterDetailPage() {
   const [deceasedResult, setDeceasedResult] = useState<DeceasedResult | null>(null);
   const [markingDeceased, setMarkingDeceased] = useState(false);
   const [deceasedError, setDeceasedError] = useState("");
+  const [escortedRevoteResult, setEscortedRevoteResult] = useState<EscortedRevoteResult | null>(null);
+  const [initiatingRevote, setInitiatingRevote] = useState(false);
+  const [revoteError, setRevoteError] = useState("");
 
   useEffect(() => {
     async function load() {
@@ -149,6 +159,61 @@ export default function VoterDetailPage() {
             )}
           </dl>
         </div>
+
+        {/* Distress Flag — Escorted Revote */}
+        {voter.status === "DISTRESS_FLAGGED" && (
+          <div className="rounded-lg border border-orange-300 bg-orange-50 p-6">
+            <h2 className="mb-1 text-sm font-semibold text-orange-900">Distress Vote Detected</h2>
+            <p className="mb-4 text-xs text-orange-700">
+              This voter cast their ballot using the distress PIN, indicating they may have been
+              coerced. IEBC security should review and, if confirmed safe, arrange a supervised
+              revote. Clicking below will send a notification to the voter with instructions to
+              return to their polling station.
+            </p>
+            {revoteError && (
+              <div className="mb-3 rounded bg-red-50 px-3 py-2 text-xs text-red-700">{revoteError}</div>
+            )}
+            {escortedRevoteResult ? (
+              <div className="rounded bg-orange-100 p-3 text-xs text-orange-900 space-y-1">
+                <p className="font-medium">Notification sent successfully.</p>
+                <p>{escortedRevoteResult.message}</p>
+                <p className="font-mono">Sent to: {escortedRevoteResult.contact} ({escortedRevoteResult.channel})</p>
+              </div>
+            ) : (
+              <button
+                type="button"
+                disabled={initiatingRevote}
+                onClick={async () => {
+                  if (!confirm(
+                    `Send an escorted revote notification to voter ${voter.nationalId}?\n\n` +
+                    "This will notify the voter to return to their polling station for a supervised revote. " +
+                    "Proceed only after IEBC security has confirmed the voter is now safe."
+                  )) return;
+                  setInitiatingRevote(true);
+                  setRevoteError("");
+                  try {
+                    const res = await api.post<ApiResponse<EscortedRevoteResult>>(
+                      `/api/admin/voters/${voter.voterId}/initiate-escorted-revote`,
+                      {}
+                    );
+                    if (res.success && res.data) {
+                      setEscortedRevoteResult(res.data);
+                    } else {
+                      setRevoteError(res.error ?? "Failed to initiate escorted revote");
+                    }
+                  } catch (err) {
+                    setRevoteError(err instanceof Error ? err.message : "Unknown error");
+                  } finally {
+                    setInitiatingRevote(false);
+                  }
+                }}
+                className="rounded bg-orange-700 px-4 py-2 text-xs font-semibold text-white hover:bg-orange-800 disabled:opacity-50"
+              >
+                {initiatingRevote ? "Sending…" : "Initiate Escorted Revote"}
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Mark as Deceased */}
         {voter.status !== "DECEASED" && (

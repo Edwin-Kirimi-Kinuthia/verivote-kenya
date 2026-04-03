@@ -100,6 +100,8 @@ const HEALTH_COLORS: Record<string, { bg: string; text: string; label: string }>
   HEALTHY:  { bg: "bg-green-600",  text: "text-white", label: "HEALTHY"  },
 };
 const EVENT_ICONS: Record<string, string> = {
+  DISTRESS_VOTE_STATION:     "🆘",
+  DISTRESS_VOTE_ELECTION:    "🚨",
   DISTRESS_CLUSTER_STATION:  "🆘",
   DISTRESS_CLUSTER_ELECTION: "🚨",
   MASS_DISTRESS:             "⚠️",

@@ -15,7 +15,7 @@ describe("SoulBoundToken", function () {
   beforeEach(async function () {
     [owner, voter1, voter2] = await ethers.getSigners();
     const factory = await ethers.getContractFactory("SoulBoundToken");
-    sbt = await factory.deploy();
+    sbt = (await factory.deploy()) as unknown as SoulBoundToken;
   });
 
   describe("Minting", function () {

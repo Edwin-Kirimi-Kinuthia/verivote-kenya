@@ -16,7 +16,7 @@ describe("VoteRecording", function () {
   beforeEach(async function () {
     [owner, recorder, unauthorized] = await ethers.getSigners();
     const factory = await ethers.getContractFactory("VoteRecording");
-    voteRecording = await factory.deploy(recorder.address);
+    voteRecording = (await factory.deploy(recorder.address)) as unknown as VoteRecording;
   });
 
   describe("Recording votes", function () {

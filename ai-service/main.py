@@ -27,6 +27,9 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).parent / ".env")
+
 import joblib
 import numpy as np
 from fastapi import FastAPI, HTTPException, Request

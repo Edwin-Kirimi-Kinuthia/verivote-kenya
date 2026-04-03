@@ -137,21 +137,18 @@ app.use(helmet({
   permittedCrossDomainPolicies: false,
   dnsPrefetchControl: { allow: false },
 }));
-// Capture raw body for webhook signature verification (must be before json parser)
-app.use((req: Request, _res: Response, next: NextFunction) => {
-  if (req.path === '/api/voters/persona-webhook') {
-    let raw = '';
-    req.on('data', (chunk: Buffer) => { raw += chunk.toString(); });
-    req.on('end', () => {
-      (req as Request & { rawBody?: string }).rawBody = raw;
-      try { req.body = JSON.parse(raw); } catch { req.body = {}; }
-      next();
-    });
-  } else {
-    next();
-  }
-});
-app.use(express.json({ limit: '1mb' }));
+// Parse JSON bodies. For the Persona webhook route, capture the raw body buffer
+// so the route handler can verify the HMAC-SHA256 signature.
+// Using the built-in `verify` callback avoids the double-stream-read bug that
+// occurs when a separate raw-body middleware precedes express.json().
+app.use(express.json({
+  limit: '1mb',
+  verify: (req: Request, _res: Response, buf: Buffer) => {
+    if (req.path === '/api/voters/persona-webhook') {
+      (req as Request & { rawBody?: string }).rawBody = buf.toString('utf8');
+    }
+  },
+}));
 app.use(express.urlencoded({ extended: true }));
 app.use(globalRateLimiter);
 

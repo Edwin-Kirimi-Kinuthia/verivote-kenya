@@ -34,11 +34,11 @@ async function apiPost<T>(path: string, body: unknown): Promise<T> {
 // ── OTP input — 6 individual boxes ───────────────────────────────────────────
 
 function OtpInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const refs = Array.from({ length: 6 }, () => useRef<HTMLInputElement>(null));
+  const inputRefs = useRef<(HTMLInputElement | null)[]>([null, null, null, null, null, null]);
 
   function handleKey(i: number, e: KeyboardEvent<HTMLInputElement>) {
-    if (e.key === "Backspace" && !refs[i].current?.value && i > 0) {
-      refs[i - 1].current?.focus();
+    if (e.key === "Backspace" && !inputRefs.current[i]?.value && i > 0) {
+      inputRefs.current[i - 1]?.focus();
     }
   }
 
@@ -48,14 +48,14 @@ function OtpInput({ value, onChange }: { value: string; onChange: (v: string) =>
     chars[i] = digit;
     const next = chars.join("").padEnd(0, "").slice(0, 6);
     onChange(next.slice(0, 6));
-    if (digit && i < 5) refs[i + 1].current?.focus();
+    if (digit && i < 5) inputRefs.current[i + 1]?.focus();
   }
 
   function handlePaste(e: React.ClipboardEvent) {
     const pasted = e.clipboardData.getData("text").replace(/\D/g, "").slice(0, 6);
     if (pasted.length === 6) {
       onChange(pasted);
-      refs[5].current?.focus();
+      inputRefs.current[5]?.focus();
       e.preventDefault();
     }
   }
@@ -65,7 +65,7 @@ function OtpInput({ value, onChange }: { value: string; onChange: (v: string) =>
       {Array.from({ length: 6 }).map((_, i) => (
         <input
           key={i}
-          ref={refs[i]}
+          ref={(el) => { inputRefs.current[i] = el; }}
           type="text"
           inputMode="numeric"
           maxLength={1}

@@ -150,8 +150,7 @@ export async function getActiveElectionsForVoter(voterId: string): Promise<Activ
   return elections
     .filter(e => {
       if (e._count.positions === 0) return false;        // no positions = nothing to vote on
-      if (e.type === 'GOVERNMENT') return true;          // all gov elections visible
-      return e.enrollments.length > 0;                  // must be enrolled for others
+      return e.enrollments.length > 0;                  // must be enrolled in every election
     })
     .map(e => ({
       electionId:    e.id,
@@ -193,8 +192,8 @@ export async function getVoterBallot(voterId: string, electionId: string): Promi
     throw new ServiceError('This election is not currently active', 400);
   }
 
-  // For non-government elections, voter must be enrolled
-  if (election.type !== 'GOVERNMENT' && election.enrollments.length === 0) {
+  // All elections require enrollment — GOVERNMENT elections now enroll at registration
+  if (election.enrollments.length === 0) {
     throw new ServiceError('You are not enrolled in this election', 403);
   }
 

@@ -53,6 +53,7 @@ export class PasswordAuthService {
       status:            voter.status,
       role:              voter.role,
       isDistress:        false,
+      staffId:           staffRecord?.id               ?? undefined,
       staffRole:         staffRecord?.staffRole         as StaffRole         | undefined,
       jurisdictionLevel: staffRecord?.jurisdictionLevel as JurisdictionLevel | undefined,
       jurisdictionValue: staffRecord?.jurisdictionValue ?? undefined,

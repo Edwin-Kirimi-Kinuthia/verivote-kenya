@@ -58,7 +58,17 @@ export class VoterService {
     const existing = await voterRepository.findByNationalId(nationalId);
     if (existing) {
       if (existing.status === 'REGISTERED') {
-        throw new ServiceError('National ID is already registered', 409);
+        if (!contactInfo?.electionId) {
+          throw new ServiceError('National ID is already registered', 409);
+        }
+        // Voter already verified globally — skip KYC/OTP, just signal for enrollment
+        return {
+          voterId:           existing.id,
+          kycRequired:       false,
+          authMethod,
+          alreadyRegistered: true,
+          nationalId:        existing.nationalId,
+        };
       }
       if (existing.status === 'VERIFICATION_FAILED') {
         throw new ServiceError(
@@ -94,9 +104,9 @@ export class VoterService {
       }
 
       // KYC election: issue a fresh Persona inquiry
-      const { inquiryId, url } = await personaService.createInquiry(nationalId, existing.id);
+      const { inquiryId, url, sessionToken } = await personaService.createInquiry(nationalId, existing.id);
       await voterRepository.updatePersonaStatus(existing.id, inquiryId, 'created');
-      return { voterId: existing.id, kycRequired: true, authMethod, inquiryId, personaUrl: url };
+      return { voterId: existing.id, kycRequired: true, authMethod, inquiryId, personaUrl: url, personaSessionToken: sessionToken };
     }
 
     // New voter — hash password if provided, then create record
@@ -118,9 +128,9 @@ export class VoterService {
     }
 
     // KYC election: create Persona inquiry for identity verification
-    const { inquiryId, url } = await personaService.createInquiry(nationalId, voter.id);
+    const { inquiryId, url, sessionToken } = await personaService.createInquiry(nationalId, voter.id);
     await voterRepository.updatePersonaStatus(voter.id, inquiryId, 'created');
-    return { voterId: voter.id, kycRequired: true, authMethod, inquiryId, personaUrl: url };
+    return { voterId: voter.id, kycRequired: true, authMethod, inquiryId, personaUrl: url, personaSessionToken: sessionToken };
   }
 
   /**
@@ -193,7 +203,10 @@ export class VoterService {
       throw new ServiceError('Voter not found for inquiry', 404);
     }
 
-    if (voter.status !== 'PENDING_VERIFICATION') {
+    // Allow re-processing if the voter previously failed and is in PENDING_MANUAL_REVIEW
+    // (retry from the KYC-failure fallback screen). Block any other status transitions.
+    const retryableStatuses = ['PENDING_VERIFICATION', 'PENDING_MANUAL_REVIEW'];
+    if (!retryableStatuses.includes(voter.status)) {
       throw new ServiceError('Voter is not pending verification', 409);
     }
 

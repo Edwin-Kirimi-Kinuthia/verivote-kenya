@@ -34,9 +34,9 @@ export class PinResetService {
     // Create Persona inquiry for biometric verification option
     let personaOption = null;
     if (!personaService.isMockMode()) {
-      const { inquiryId, url } = await personaService.createInquiry(nationalId, `reset_${voter.id}`);
+      const { inquiryId, url, sessionToken } = await personaService.createInquiry(nationalId, `reset_${voter.id}`);
       await voterRepository.update(voter.id, { pinResetInquiryId: inquiryId });
-      personaOption = { inquiryId, url };
+      personaOption = { inquiryId, url, sessionToken };
     }
 
     return {

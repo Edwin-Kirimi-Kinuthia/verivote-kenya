@@ -280,7 +280,10 @@ export default function PublicElectionDetailPage({ params }: { params: Promise<{
               <span className="text-xl">🏛️</span>
             </div>
             <div className="divide-y divide-gray-100">
-              {declarations.map((decl) => {
+              {[...declarations].sort((a, b) => {
+                const SCOPE_ORDER: Record<string, number> = { NATIONAL: 0, COUNTY: 1, CONSTITUENCY: 2, WARD: 3 };
+                return (SCOPE_ORDER[a.positionScope ?? ""] ?? 9) - (SCOPE_ORDER[b.positionScope ?? ""] ?? 9);
+              }).map((decl) => {
                 const tally   = decl.tallySnapshot;
                 const entries = tally ? Object.entries(tally) as [string, number][] : [];
                 const total   = entries.reduce((s, [, v]) => s + v, 0);

@@ -1,27 +1,39 @@
 "use client";
 
-import { useState, useEffect, Suspense, type FormEvent } from "react";
+import { useState, useEffect, useRef, useCallback, Suspense, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { api } from "@/lib/api-client";
 import { useAuth } from "@/contexts/auth-context";
 import { useTranslation } from "@/contexts/language-context";
 import { AppointmentSlotPicker } from "@/components/appointment-slot-picker";
+import { PersonaVerification } from "@/components/persona-verification";
 import type { ApiResponse, AuthData, BookedAppointmentResult } from "@/lib/types";
 
 const ELIGIBLE_STATUSES = ["REGISTERED", "VOTED", "REVOTED", "DISTRESS_FLAGGED"];
 
 type LoginTab = "password" | "biometric";
+type AuthMethod = "PERSONA_KYC" | "EMAIL_DOMAIN" | "OTP_ONLY";
+
+interface ElectionContext {
+  id: string;
+  name: string;
+  authMethod: AuthMethod;
+  orgName: string | null;
+}
+
 type View =
   | "login"
   | "otp-verify"
   | "resetForm"
   | "resetOptions"
+  | "biometricReset"
+  | "biometricResetDone"
   | "appointmentBooking"
   | "appointmentConfirmed";
 
 interface VerificationOptions {
   inPerson: { description: string; pollingStationId: string | null };
-  biometric: { description: string; inquiryId?: string; url?: string };
+  biometric: { description: string; inquiryId?: string; url?: string; sessionToken?: string };
 }
 
 interface ResetResponse {
@@ -61,6 +73,9 @@ function VoteLoginPageContent() {
   const [biometricLoading, setBiometricLoading] = useState(false);
   const [biometricError, setBiometricError] = useState("");
 
+  // Election context (loaded when ?electionId= is in URL)
+  const [electionCtx, setElectionCtx] = useState<ElectionContext | null>(null);
+
   // PIN reset state
   const [view, setView] = useState<View>("login");
   const [resetNationalId, setResetNationalId] = useState("");
@@ -68,6 +83,17 @@ function VoteLoginPageContent() {
   const [resetError, setResetError] = useState("");
   const [verificationOptions, setVerificationOptions] = useState<VerificationOptions | null>(null);
   const [bookedAppointment, setBookedAppointment] = useState<BookedAppointmentResult | null>(null);
+  const biometricPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Load election context so we can adapt the identifier field label/behaviour
+  useEffect(() => {
+    if (!electionId) return;
+    api
+      .get<{ success: boolean; data: ElectionContext }>(`/api/elections/public/${electionId}`)
+      .then((res) => { if (res.success && res.data) setElectionCtx(res.data); })
+      .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [electionId]);
 
   useEffect(() => {
     if (resendCooldown <= 0) return;
@@ -300,7 +326,15 @@ function VoteLoginPageContent() {
     setVerificationOptions(null);
   }
 
+  function stopBiometricPolling() {
+    if (biometricPollRef.current) {
+      clearInterval(biometricPollRef.current);
+      biometricPollRef.current = null;
+    }
+  }
+
   function switchToLogin() {
+    stopBiometricPolling();
     setView("login");
     setResetError("");
     setVerificationOptions(null);
@@ -311,7 +345,34 @@ function VoteLoginPageContent() {
     setError("");
   }
 
+  const startBiometricPolling = useCallback(() => {
+    stopBiometricPolling();
+    biometricPollRef.current = setInterval(async () => {
+      try {
+        const res = await api.get<{ success: boolean; data?: { pinResetRequested: boolean; pinLastResetAt: string | null } }>(
+          `/api/pin-reset/status?nationalId=${encodeURIComponent(resetNationalId)}`
+        );
+        if (res.success && res.data && !res.data.pinResetRequested && res.data.pinLastResetAt) {
+          stopBiometricPolling();
+          setView("biometricResetDone");
+        }
+      } catch {
+        // network hiccup — keep polling
+      }
+    }, 3000);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resetNationalId]);
+
   // ── Login view ────────────────────────────────────────────────────────────
+
+  // True when the election uses email/phone rather than a government ID
+  const isNonKycElection = electionCtx && electionCtx.authMethod !== "PERSONA_KYC";
+
+  // Label and placeholder adapt to the election's auth method
+  const identifierLabel = isNonKycElection ? "Email or Phone Number" : t("pin.nationalId");
+  const identifierPlaceholder = isNonKycElection
+    ? "email@example.com or +254712345678"
+    : "ID or Passport number";
 
   if (view === "login") {
     return (
@@ -321,6 +382,15 @@ function VoteLoginPageContent() {
             <h1 className="text-3xl font-bold text-gray-900">{t("pin.title")}</h1>
             <p className="mt-2 text-base text-gray-500">Sign in to cast your vote</p>
           </div>
+
+          {/* Election context banner */}
+          {electionCtx && (
+            <div className="mb-4 rounded-xl border border-green-200 bg-green-50 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-green-600 mb-1">Voting in</p>
+              <p className="text-sm font-semibold text-green-900">{electionCtx.name}</p>
+              {electionCtx.orgName && <p className="text-xs text-green-700">{electionCtx.orgName}</p>}
+            </div>
+          )}
 
           {/* Tabs */}
           <div className="mb-1 flex rounded-xl border border-gray-200 bg-gray-100 p-1">
@@ -375,17 +445,21 @@ function VoteLoginPageContent() {
               <form onSubmit={handlePasswordLogin} className="space-y-5">
                 <div>
                   <label htmlFor="nationalId" className="mb-2 block text-sm font-semibold text-gray-700">
-                    {t("pin.nationalId")}
+                    {identifierLabel}
                   </label>
                   <input
                     id="nationalId"
                     type="text"
-                    inputMode="text"
-                    maxLength={12}
+                    inputMode={isNonKycElection ? "email" : "text"}
+                    maxLength={isNonKycElection ? 100 : 12}
                     required
                     value={nationalId}
-                    onChange={(e) => { setNationalId(e.target.value.toUpperCase()); if (error) setError(""); }}
-                    placeholder="ID or Passport number"
+                    onChange={(e) => {
+                      const val = isNonKycElection ? e.target.value : e.target.value.toUpperCase();
+                      setNationalId(val);
+                      if (error) setError("");
+                    }}
+                    placeholder={identifierPlaceholder}
                     className={`w-full rounded-lg border px-4 py-3 text-base transition-colors focus:ring-2 focus:outline-none ${
                       error ? "border-red-400 focus:border-red-500 focus:ring-red-200" : "border-gray-300 focus:border-green-700 focus:ring-green-700"
                     }`}
@@ -477,17 +551,21 @@ function VoteLoginPageContent() {
 
                 <div>
                   <label htmlFor="biometricId" className="mb-2 block text-sm font-semibold text-gray-700">
-                    {t("pin.nationalId")}
+                    {identifierLabel}
                   </label>
                   <input
                     id="biometricId"
                     type="text"
-                    inputMode="text"
-                    maxLength={12}
+                    inputMode={isNonKycElection ? "email" : "text"}
+                    maxLength={isNonKycElection ? 100 : 12}
                     required
                     value={nationalId}
-                    onChange={(e) => { setNationalId(e.target.value.toUpperCase()); if (biometricError) setBiometricError(""); }}
-                    placeholder="ID or Passport number"
+                    onChange={(e) => {
+                      const val = isNonKycElection ? e.target.value : e.target.value.toUpperCase();
+                      setNationalId(val);
+                      if (biometricError) setBiometricError("");
+                    }}
+                    placeholder={identifierPlaceholder}
                     className="w-full rounded-lg border border-gray-300 px-4 py-3 text-base focus:border-green-700 focus:ring-2 focus:ring-green-700 focus:outline-none"
                   />
                 </div>
@@ -689,14 +767,13 @@ function VoteLoginPageContent() {
               <div className="rounded-xl border-2 border-blue-200 bg-white p-6 shadow-sm">
                 <h2 className="mb-2 text-lg font-semibold text-gray-900">{t("pinReset.biometricTitle")}</h2>
                 <p className="mb-4 text-sm text-gray-500">{t("pinReset.biometricDesc")}</p>
-                <a
-                  href={verificationOptions.biometric.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                <button
+                  type="button"
+                  onClick={() => { setView("biometricReset"); startBiometricPolling(); }}
                   className="block w-full rounded-lg bg-blue-600 px-6 py-3 text-center text-base font-semibold text-white hover:bg-blue-700"
                 >
                   {t("pinReset.startBiometric")}
-                </a>
+                </button>
               </div>
             )}
 
@@ -729,6 +806,51 @@ function VoteLoginPageContent() {
               {t("pinReset.backToLogin")}
             </button>
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Biometric reset — inline Persona iframe ───────────────────────────────
+
+  if (view === "biometricReset" && verificationOptions?.biometric.inquiryId) {
+    return (
+      <PersonaVerification
+        inquiryId={verificationOptions.biometric.inquiryId}
+        sessionToken={verificationOptions.biometric.sessionToken}
+        environment={process.env.NEXT_PUBLIC_PERSONA_ENV === "production" ? "production" : "sandbox"}
+        onComplete={() => {
+          // SDK fires when user finishes — start polling for backend confirmation
+          startBiometricPolling();
+        }}
+        onCancel={() => { stopBiometricPolling(); setView("resetOptions"); }}
+      />
+    );
+  }
+
+  // ── Biometric reset done — waiting for setup link ─────────────────────────
+
+  if (view === "biometricResetDone") {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center px-4">
+        <div className="w-full max-w-md text-center">
+          <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-green-100">
+            <svg className="h-8 w-8 text-green-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+            </svg>
+          </div>
+          <h1 className="text-2xl font-bold text-gray-900">Verification Successful</h1>
+          <p className="mt-3 text-base text-gray-500">
+            Your identity has been confirmed. A PIN setup link has been sent to your registered phone or email.
+            Follow the link to create a new PIN and fingerprint.
+          </p>
+          <button
+            type="button"
+            onClick={switchToLogin}
+            className="mt-8 w-full rounded-lg bg-green-700 px-6 py-3 text-base font-semibold text-white hover:bg-green-800"
+          >
+            Back to Login
+          </button>
         </div>
       </div>
     );
